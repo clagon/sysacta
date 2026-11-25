@@ -74,9 +74,11 @@
 12. **トレイ**: WPF-UI.Tray はウィンドウのビジュアルツリーに依存するため、ウィンドウなしで動く H.NotifyIcon.Wpf (MIT) を採用。`TrayIcon` は `McpServerHost` とデリゲートだけに依存し、DB なしで実機テスト可能。
 13. **UI テストプロジェクト追加**: spec の一覧に `Sysacta.App.Tests` を追加(XAML のエラーは実行時にしか出ないため)。非Windowsでは `IsTestProject=false`。
 14. **UI テストは `App` をインスタンス化しない**: WPF はディスパッチャー開始時に `App.OnStartup` を実行するため、実プロファイルの DB 作成・サーバー起動が走っていた(CI ランナーで `%LOCALAPPDATA%\Sysacta\sysacta.db` を検出して判明)。共有スタイルを `Styles.xaml` に分離し、テストは素の `Application` に同じ辞書を読み込む。`scripts/smoke-app.ps1` は実プロファイルが既に存在すると失敗し、回帰を検出する。
-15. **pack URI** はアセンブリ名を明示 (`/Sysacta;component/...`)。
-16. **UI 文言は日本語**、ツールの description / エラーメッセージ(エージェント向け)は英語。
-17. **NAudio.Wasapi 3.3.0**(22.0.0 は非掲載の誤版のため不使用)。Core Audio は既定デバイスの役割に `Multimedia` を使う。
+15. **起動処理の堅牢化**: 手動確認で、テーマを Light/Dark に保存すると次回起動時に `SystemThemeWatcher.UnWatch`(未ロードのウィンドウで例外)により起動処理が中断し、トレイとサーバーが作られない不具合が見つかった。監視中かつロード済みのときだけ UnWatch し、トレイを最初に作成、テーマ適用の失敗は無視する。App.Tests とスモークテスト(Dark を保存して再起動)で回帰を検査。
+16. **WPF UI のスクロール**: WPF UI 4.x は Page の `CanContentScroll` 既定値を true にし、true のときページを高さ無制限の DynamicScrollViewer で包む。全ページで `False` を指定して各ページが自分でスクロールする(App.Tests で検査)。
+17. **pack URI** はアセンブリ名を明示 (`/Sysacta;component/...`)。
+18. **UI 文言は日本語**、ツールの description / エラーメッセージ(エージェント向け)は英語。
+19. **NAudio.Wasapi 3.3.0**(22.0.0 は非掲載の誤版のため不使用)。Core Audio は既定デバイスの役割に `Multimedia` を使う。
 
 ## 仕様書との差分・未決事項
 
