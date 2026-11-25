@@ -39,6 +39,7 @@ public class AuthenticationTests
         Assert.Equal(AuditOutcome.AuthFailed, e.Outcome);
         Assert.Null(e.ClientId);
         Assert.Equal("127.0.0.1", e.RemoteAddress);
+        Assert.Equal("""{"method":"POST","path":"/mcp"}""", e.Arguments);
         Assert.DoesNotContain("AAAA", JsonSerializer.Serialize(e), StringComparison.Ordinal);
     }
 
@@ -296,6 +297,14 @@ public class HttpBoundaryTests
 
         using var response = await http.SendAsync(request, Ct);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.StartsWith("Host not allowed.", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+
+        // Recorded so that "nothing in the audit log" really means "the request never arrived".
+        var e = Assert.Single(f.Audit.Query(new AuditQuery()));
+        Assert.Equal(AuditOutcome.Denied, e.Outcome);
+        Assert.Equal("HostNotAllowed", e.ErrorCode);
+        Assert.Equal("http", e.Source);
+        Assert.Contains($"\"host\":\"{host}\"", e.Arguments, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -326,6 +335,10 @@ public class HttpBoundaryTests
         using var response = await http.SendAsync(request, Ct);
         Assert.Equal(expected, response.StatusCode);
         Assert.False(response.Headers.Contains("Access-Control-Allow-Origin"));
+        if (expected == HttpStatusCode.Forbidden)
+        {
+            Assert.Equal("OriginNotAllowed", Assert.Single(f.Audit.Query(new AuditQuery())).ErrorCode);
+        }
     }
 
     [Fact]

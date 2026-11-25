@@ -21,7 +21,10 @@ public sealed record ServerEndpointOptions
     /// <summary>Per client token (spec §10 provisional value).</summary>
     public int RequestsPerMinutePerClient { get; init; } = 60;
 
-    /// <summary>Authentication failures per remote address per minute that are processed (and audited) before 429.</summary>
+    /// <summary>
+    /// Rejected requests (authentication, Host, Origin) audited per remote address per minute. Authentication failures
+    /// beyond this get 429 without an audit record; Host/Origin rejections stay 403 but are no longer recorded.
+    /// </summary>
     public int AuthFailuresPerMinutePerAddress { get; init; } = 30;
 
     public int MaxConcurrentConnections { get; init; } = 64;

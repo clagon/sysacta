@@ -74,7 +74,7 @@
           <TextBlock Style="{StaticResource Caption}"><Run Text="{Binding Source, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Remote, Mode=OneWay}" /></TextBlock>
           <TextBlock Style="{StaticResource FieldLabel}" Text="結果 / 所要時間" />
           <TextBlock Style="{StaticResource Caption}"><Run Text="{Binding Outcome, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding ErrorCode, Mode=OneWay}" /><Run Text=" " /><Run Text="{Binding Duration, Mode=OneWay}" /></TextBlock>
-          <TextBlock Style="{StaticResource FieldLabel}" Text="引数 (許可リストの項目のみ)" />
+          <TextBlock Style="{StaticResource FieldLabel}" Text="引数 (許可リストの項目のみ) / 拒否したリクエスト" />
           <TextBox FontFamily="Cascadia Mono, Consolas" FontSize="12" IsReadOnly="True" Text="{Binding Arguments, Mode=OneWay}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>

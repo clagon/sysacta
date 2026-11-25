@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Http;
 using Sysacta.Core.Auditing;
@@ -21,7 +22,7 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
     private readonly HashSet<string> _allowedHosts = BuildAllowedHosts(options);
     private readonly HashSet<string> _allowedOrigins = new(options.AllowedOrigins.Select(o => o.TrimEnd('/')), StringComparer.OrdinalIgnoreCase);
 
-    private readonly PartitionedRateLimiter<string> _authFailureLimiter = PartitionedRateLimiter.Create<string, string>(address =>
+    private readonly PartitionedRateLimiter<string> _rejectionLimiter = PartitionedRateLimiter.Create<string, string>(address =>
         RateLimitPartition.GetFixedWindowLimiter(address, _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = options.AuthFailuresPerMinutePerAddress,
@@ -31,49 +32,35 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
 
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
+        var remote = context.Connection.RemoteIpAddress?.ToString();
+
         if (!IsHostAllowed(context.Request.Host))
         {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            Audit(context, remote, AuditOutcome.Denied, "HostNotAllowed", ("host", context.Request.Host.Value));
+            await RejectAsync(context, StatusCodes.Status403Forbidden,
+                "Host not allowed. Add this host name to the allowed host names in the Sysacta console (Connection).");
             return;
         }
 
         if (context.Request.Headers.Origin is { Count: > 0 } origin && !_allowedOrigins.Contains(origin.ToString().TrimEnd('/')))
         {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            Audit(context, remote, AuditOutcome.Denied, "OriginNotAllowed", ("origin", origin.ToString()));
+            await RejectAsync(context, StatusCodes.Status403Forbidden,
+                "Origin not allowed. Add this origin to the allowed origins in the Sysacta console (Connection).");
             return;
         }
 
-        var remote = context.Connection.RemoteIpAddress?.ToString();
         var result = authenticator.Authenticate(context.Request.Headers.Authorization.Count == 1 ? context.Request.Headers.Authorization.ToString() : null);
         if (!result.Succeeded)
         {
-            using var lease = _authFailureLimiter.AttemptAcquire(remote ?? "unknown");
-            if (!lease.IsAcquired)
+            if (!Audit(context, remote, AuditOutcome.AuthFailed, result.Failure.ToString()!))
             {
                 context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
                 return;
             }
 
-            try
-            {
-                // Never record the token or header. Unknown clients are recorded with a null client id.
-                audit.Write(new AuditEvent
-                {
-                    RequestId = Guid.CreateVersion7().ToString("N"),
-                    Timestamp = time.GetUtcNow(),
-                    Source = "http",
-                    Outcome = AuditOutcome.AuthFailed,
-                    ErrorCode = result.Failure.ToString(),
-                    RemoteAddress = remote,
-                });
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                // The request is rejected either way; an audit outage must not turn 401 into 500.
-            }
-
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.Headers.WWWAuthenticate = "Bearer";
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;
         }
 
@@ -84,6 +71,62 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
 
         await next(context);
     }
+
+    /// <summary>
+    /// Records a rejected request (Host/Origin/authentication) with its method and path, and the offending Host/Origin
+    /// value if any. Never records the query string, headers like Authorization, or the body. Rejections are recorded at
+    /// most <see cref="ServerEndpointOptions.AuthFailuresPerMinutePerAddress"/> times per minute per address (behind a
+    /// reverse proxy all requests share 127.0.0.1); returns false when that limit is exceeded.
+    /// </summary>
+    private bool Audit(HttpContext context, string? remote, AuditOutcome outcome, string code, (string Name, string? Value) detail = default)
+    {
+        using var lease = _rejectionLimiter.AttemptAcquire(remote ?? "unknown");
+        if (!lease.IsAcquired)
+        {
+            return false;
+        }
+
+        var request = new Dictionary<string, string?>
+        {
+            ["method"] = context.Request.Method,
+            ["path"] = Truncate(context.Request.Path.Value, 200),
+        };
+        if (detail.Name is not null)
+        {
+            request[detail.Name] = Truncate(detail.Value, 200);
+        }
+
+        try
+        {
+            audit.Write(new AuditEvent
+            {
+                RequestId = Guid.CreateVersion7().ToString("N"),
+                Timestamp = time.GetUtcNow(),
+                Source = "http",
+                Outcome = outcome,
+                ErrorCode = code,
+                Arguments = JsonSerializer.Serialize(request),
+                RemoteAddress = remote,
+            });
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // The request is rejected either way; an audit outage must not turn 401/403 into 500.
+        }
+
+        return true;
+    }
+
+    /// <summary>403 with a short, fixed plain-text reason (never echoes request values).</summary>
+    private static Task RejectAsync(HttpContext context, int status, string reason)
+    {
+        context.Response.StatusCode = status;
+        context.Response.ContentType = "text/plain; charset=utf-8";
+        context.Response.Headers.XContentTypeOptions = "nosniff";
+        return context.Response.WriteAsync(reason);
+    }
+
+    private static string? Truncate(string? value, int max) => value is { Length: > 0 } v && v.Length > max ? v[..max] : value;
 
     /// <summary>Recreates the caller from the authenticated principal. Throws if the request was not authenticated.</summary>
     public static Caller CallerFrom(ClaimsPrincipal? user)

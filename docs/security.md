@@ -16,9 +16,9 @@
 ## HTTP リクエストの経路
 
 1. **Kestrel 制限** (`McpServerHost.Build`): 本文 256 KiB (超過 413)、同時接続 64、`Server` ヘッダーなし、ログ出力なし。待受は既定 `127.0.0.1:8765`。
-2. **Host 検証** (`RequestGuards.IsHostAllowed`): `localhost`、ループバックIP、バインド先IP、設定済みホスト名のみ。`0.0.0.0` 待受時は IP リテラルの Host を許可(IP リテラルは DNS rebinding の対象にならない)。それ以外は 403。
-3. **Origin 検証**: Origin ヘッダーがある場合のみ、設定済みの Origin と完全一致しなければ 403(`null` も拒否)。CORS ヘッダーは一切返さない。Origin のない非ブラウザークライアントは許可。
-4. **Bearer 認証** (`TokenAuthenticator`): すべてのリクエスト(localhost でも、initialize/discover でも)に必須。失敗は 401 + `WWW-Authenticate: Bearer`、監査に `auth_failed`(クライアントIDは null、トークンは記録しない)。認証失敗は接続元アドレスごとに 30 回/分まで処理し、超過分は 429 で監査しない(監査ログの肥大化防止)。
+2. **Host 検証** (`RequestGuards.IsHostAllowed`): `localhost`、ループバックIP、バインド先IP、設定済みホスト名のみ。`0.0.0.0` 待受時は IP リテラルの Host を許可(IP リテラルは DNS rebinding の対象にならない)。それ以外は 403(固定文言の理由を本文に返す)。監査に `denied` / `HostNotAllowed` とメソッド・パス・Host を記録。
+3. **Origin 検証**: Origin ヘッダーがある場合のみ、設定済みの Origin と完全一致しなければ 403(`null` も拒否)。監査に `OriginNotAllowed`。CORS ヘッダーは一切返さない。Origin のない非ブラウザークライアントは許可。
+4. **Bearer 認証** (`TokenAuthenticator`): すべてのリクエスト(localhost でも、initialize/discover でも)に必須。失敗は 401 + `WWW-Authenticate: Bearer`、監査に `auth_failed`(クライアントIDは null、メソッドとパスのみ記録。クエリ文字列・ヘッダー・トークンは記録しない)。拒否(認証・Host・Origin)の監査は接続元アドレスごとに 30 件/分まで。超過分の認証失敗は 429、Host/Origin の拒否は 403 のまま記録しない(監査ログの肥大化防止)。
 5. **レート制限**: 認証済みクライアントごとに 60 リクエスト/分(超過 429)。
 6. **MCP**: `/mcp` の Streamable HTTP(stateless)のみ。stdio・レガシー SSE (`/sse`, `/message`) はマップしない。その他のパスは 404。
 7. **tools/list**: `ToolExecutor.ListTools(caller)` が実効権限で絞り込む。**これは表示上の絞り込みで、認可ではない。**
@@ -82,4 +82,5 @@
 - 管理者として起動した場合、ツールの操作も管理者権限で実行される。
 - `0.0.0.0` などで HTTP を非ループバック公開した場合、トークンは平文で流れる(UI で警告。HTTPS リバースプロキシを推奨)。
 - 署名なしのバイナリは SmartScreen / Smart App Control によりブロックされ得る(このプロジェクトの開発機でも、未署名の `SQLitePCLRaw.batteries_v2.dll` がブロックされた)。コード署名は未決定(spec §15)。
+- リバースプロキシ(Tailscale Serve など)経由では、すべての接続元が `127.0.0.1` になる。監査ログの接続元で遠隔のクライアントを区別できず、拒否の記録件数の上限(アドレス単位)も共有される。転送ヘッダーは信用しない方針のため、これは仕様。
 - MCP SDK が JSON-RPC の `arguments` を辞書として受け取るため、ツール引数の重複キーは SDK 側で解消され、Sysacta の重複検出は MCP 経由では働かない。

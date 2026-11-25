@@ -49,7 +49,7 @@
           <ui:TextBox Margin="0,6,0,0" MinHeight="48" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding AllowedOrigins}" AutomationProperties.Name="許可するOrigin" />
 
           <TextBlock Style="{StaticResource FieldLabel}" Text="外部URL (任意)" />
-          <TextBlock Style="{StaticResource Caption}" Text="リバースプロキシ経由で使うURL。接続設定のコピーに使われます。" />
+          <TextBlock Style="{StaticResource Caption}" Text="リバースプロキシ経由で使うURL。接続設定のコピーに使われます。Tailscale Serve の例: tailscale serve --bg --set-path /sysacta http://127.0.0.1:8765/mcp (転送先に /mcp を含めます)" />
           <ui:TextBox Margin="0,6,0,0" PlaceholderText="https://pc.tailnet-name.ts.net/mcp" Text="{Binding ExternalUrl}" AutomationProperties.Name="外部URL" />
         </StackPanel>
       </Border>

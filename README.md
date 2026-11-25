@@ -69,7 +69,19 @@ On first start Sysacta opens the management console, starts the MCP server on `h
 
 3. Allow or deny individual tools per client on the same page; enable or disable tools globally on **ツール** (Tools). Changes apply to the next request.
 
-Every request needs a valid token, including from localhost. For remote access keep the localhost binding and put an HTTPS reverse proxy (for example Tailscale Serve) in front, then add its host name under **接続** (Connection) → allowed hosts.
+Every request needs a valid token, including from localhost.
+
+### Remote access (Tailscale Serve)
+
+Keep the default localhost binding and let an HTTPS reverse proxy forward to the `/mcp` endpoint. With Tailscale Serve, include `/mcp` in the target, because Serve strips the mount path before forwarding:
+
+```bash
+tailscale serve --bg --set-path /sysacta http://127.0.0.1:8765/mcp
+```
+
+Then, in the console under **接続** (Connection), add the proxy's host name (for example `my-pc.tailnet-name.ts.net`) to the allowed host names and set the external URL (`https://my-pc.tailnet-name.ts.net/sysacta`) so that "copy connection settings" uses it. Clients use that external URL.
+
+Troubleshooting: rejected requests are recorded in the audit log with their method and path — `HostNotAllowed` / `OriginNotAllowed` (403) or an authentication failure code (401). If nothing appears in the audit log, the request did not reach Sysacta; check the proxy and that the client process actually has the token (for example, Codex reads `bearer_token_env_var` in its background app-server, which must be restarted after the variable is set). Behind a proxy every request appears to come from `127.0.0.1`, so the audit log cannot tell remote clients apart by address, and the per-address limit on recorded rejections is shared.
 
 ## Architecture and specification
 
