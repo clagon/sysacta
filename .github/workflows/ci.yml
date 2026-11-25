@@ -24,7 +24,7 @@ jobs:
       # Tests needing an audio device skip themselves on runners without one.
       - name: Test
         run: dotnet test Sysacta.sln -c Release --no-build --logger "trx" --results-directory TestResults
-      # Launches the real exe (tray only): DB migration, MCP server on 127.0.0.1:8765, 401 without token, single instance.
+      # Launches the real exe: server start, 401, close-to-tray, single instance, and a TypeScript SDK MCP client.
       - name: Smoke test the application
         shell: pwsh
         run: ./scripts/smoke-app.ps1
