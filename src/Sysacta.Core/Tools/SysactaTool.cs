@@ -84,7 +84,7 @@ public abstract class SysactaTool
 public abstract class SysactaTool<TArgs, TData> : SysactaTool
     where TArgs : class
 {
-    private readonly Lazy<JsonElement> _inputSchema = new(() => JsonSerializer.SerializeToElement(ToolJson.SchemaFor(typeof(TArgs))));
+    private readonly Lazy<JsonElement> _inputSchema = new(() => JsonSerializer.SerializeToElement(ToolJson.SchemaFor(typeof(TArgs), forArguments: true)));
     private readonly Lazy<JsonElement> _outputSchema = new(() => JsonSerializer.SerializeToElement(ToolJson.EnvelopeSchemaFor(typeof(TData))));
 
     public sealed override JsonElement InputSchema => _inputSchema.Value;

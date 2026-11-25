@@ -9,7 +9,7 @@ public class ToolJsonTests
     [Fact]
     public void Schema_is_strict_object_with_constraints()
     {
-        var schema = ToolJson.SchemaFor(typeof(AudioSetVolumeArgs));
+        var schema = ToolJson.SchemaFor(typeof(AudioSetVolumeArgs), forArguments: true);
 
         Assert.Equal("object", (string?)schema["type"]);
         Assert.False((bool)schema["additionalProperties"]!);
@@ -22,6 +22,46 @@ public class ToolJsonTests
         Assert.Equal("output", (string?)direction["default"]);
         Assert.Equal(512, (int)schema["properties"]!["device"]!["maxLength"]!);
         Assert.NotNull(schema["properties"]!["device"]!["description"]);
+    }
+
+    [Fact]
+    public void Schemas_never_use_type_arrays_and_keep_nullability_only_in_results()
+    {
+        foreach (var tool in new SysactaTool[] { new AudioGetStateTool(null!, null!), new AudioSetVolumeTool(null!, null!) })
+        {
+            AssertNoTypeArrays(JsonNode.Parse(tool.InputSchema.GetRawText()), $"{tool.Name} input");
+            AssertNoTypeArrays(JsonNode.Parse(tool.OutputSchema.GetRawText()), $"{tool.Name} output");
+        }
+
+        var device = ToolJson.SchemaFor(typeof(AudioGetStateArgs), forArguments: true)["properties"]!["device"]!;
+        Assert.Equal("string", (string?)device["type"]);
+        Assert.Equal(512, (int)device["maxLength"]!);
+
+        var volume = ToolJson.SchemaFor(typeof(AudioGetStateData), forArguments: false)["properties"]!["volume"]!;
+        Assert.NotNull(volume["description"]);
+        Assert.Equal(["integer", "null"], volume["anyOf"]!.AsArray().Select(b => (string?)b!["type"]));
+    }
+
+    private static void AssertNoTypeArrays(JsonNode? node, string where)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                Assert.False(o["type"] is JsonArray, $"{where}: array 'type' in {o.ToJsonString()}");
+                foreach (var (_, child) in o)
+                {
+                    AssertNoTypeArrays(child, where);
+                }
+
+                break;
+            case JsonArray a:
+                foreach (var child in a)
+                {
+                    AssertNoTypeArrays(child, where);
+                }
+
+                break;
+        }
     }
 
     [Fact]

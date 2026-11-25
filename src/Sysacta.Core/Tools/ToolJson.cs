@@ -39,8 +39,13 @@ public static class ToolJson
         return options;
     }
 
-    /// <summary>Builds a JSON Schema for <paramref name="type"/> including Description/Range/StringLength/DefaultValue.</summary>
-    public static JsonObject SchemaFor(Type type)
+    /// <summary>
+    /// Builds a JSON Schema for <paramref name="type"/> including Description/Range/StringLength/DefaultValue.
+    /// Nullable members never use an array <c>type</c> (e.g. <c>["string","null"]</c>), which some MCP clients reject:
+    /// in arguments (<paramref name="forArguments"/>) null is dropped because optional arguments are simply omitted;
+    /// in results it becomes <c>anyOf: [{type: X, ...}, {type: "null"}]</c>.
+    /// </summary>
+    public static JsonObject SchemaFor(Type type, bool forArguments)
     {
         var exporterOptions = new JsonSchemaExporterOptions
         {
@@ -89,7 +94,80 @@ public static class ToolJson
             },
         };
 
-        return (JsonObject)Options.GetJsonSchemaAsNode(type, exporterOptions);
+        var root = (JsonObject)Options.GetJsonSchemaAsNode(type, exporterOptions);
+        RemoveTypeArrays(root, forArguments);
+        return root;
+    }
+
+    private static readonly HashSet<string> AnnotationKeywords = new(StringComparer.Ordinal) { "description", "default", "title" };
+
+    private static void RemoveTypeArrays(JsonNode? node, bool forArguments)
+    {
+        switch (node)
+        {
+            case JsonArray array:
+                foreach (var item in array)
+                {
+                    RemoveTypeArrays(item, forArguments);
+                }
+
+                return;
+            case not JsonObject:
+                return;
+        }
+
+        var schema = (JsonObject)node;
+        foreach (var (_, child) in schema.ToList())
+        {
+            RemoveTypeArrays(child, forArguments);
+        }
+
+        if (schema["type"] is not JsonArray types)
+        {
+            return;
+        }
+
+        var concrete = types.Select(t => (string?)t).Where(t => t != "null").ToList();
+        var nullable = concrete.Count < types.Count;
+        if (schema["enum"] is JsonArray values && (forArguments || concrete.Count != 1))
+        {
+            foreach (var n in values.Where(v => v is null).ToList())
+            {
+                values.Remove(n);
+            }
+        }
+
+        if (concrete.Count == 1 && (forArguments || !nullable))
+        {
+            schema["type"] = concrete[0];
+            return;
+        }
+
+        // Results: { anyOf: [ { type: X, <constraints> }, { type: "null" } ] }, annotations stay on the outer schema.
+        var branch = new JsonObject();
+        foreach (var (key, value) in schema.ToList())
+        {
+            if (!AnnotationKeywords.Contains(key))
+            {
+                schema.Remove(key);
+                branch[key] = value;
+            }
+        }
+
+        var anyOf = new JsonArray();
+        foreach (var t in concrete)
+        {
+            var b = (JsonObject)branch.DeepClone();
+            b["type"] = t;
+            anyOf.Add(b);
+        }
+
+        if (nullable && !forArguments)
+        {
+            anyOf.Add(new JsonObject { ["type"] = "null" });
+        }
+
+        schema["anyOf"] = anyOf;
     }
 
     /// <summary>The output schema: the §9 envelope with <paramref name="dataType"/> as <c>data</c>.</summary>
@@ -100,7 +178,7 @@ public static class ToolJson
         {
             ["status"] = new JsonObject { ["enum"] = new JsonArray("success", "error", "partial", "unknown") },
             ["verification"] = new JsonObject { ["enum"] = new JsonArray("verified", "accepted", "not_applicable", "unknown") },
-            ["data"] = SchemaFor(dataType),
+            ["data"] = SchemaFor(dataType, forArguments: false),
             ["error"] = new JsonObject
             {
                 ["type"] = "object",
