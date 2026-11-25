@@ -36,6 +36,9 @@ public class XamlSmokeTests
             ];
             foreach (var page in pages)
             {
+                // Otherwise WPF UI's NavigationView wraps the page in an infinite-height scroll viewer and inner
+                // ScrollViewers/lists never get a height constraint (content becomes unreachable).
+                Assert.True(ScrollViewer.GetCanContentScroll(page), $"{page.GetType().Name} must set ScrollViewer.CanContentScroll=\"True\".");
                 Layout(page);
             }
 

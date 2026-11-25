@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     xmlns:vm="clr-namespace:Sysacta.App.ViewModels"
+    ScrollViewer.CanContentScroll="True"
     Title="監査ログ">
   <Grid Margin="32,24,32,24">
     <Grid.RowDefinitions>

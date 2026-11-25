@@ -198,7 +198,7 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
             Title = title,
             Content = message,
             PrimaryButtonText = action,
-            PrimaryButtonAppearance = ControlAppearance.Danger,
+            PrimaryButtonAppearance = ControlAppearance.Primary,
             CloseButtonText = "キャンセル",
         };
         return await box.ShowDialogAsync() == Wpf.Ui.Controls.MessageBoxResult.Primary;
