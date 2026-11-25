@@ -49,35 +49,38 @@
 
       <TextBlock Style="{StaticResource SectionHeader}" Text="登録済み" />
       <TextBlock Style="{StaticResource EmptyState}" Text="クライアントはまだありません。上のフォームから発行してください。" Visibility="{Binding HasClients, Converter={StaticResource InverseBoolToVisibility}}" />
-      <ListView MaxHeight="300" ItemsSource="{Binding Clients}" SelectedItem="{Binding Selected}" Visibility="{Binding HasClients, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="クライアント一覧">
-        <ListView.ItemTemplate>
-          <DataTemplate>
-            <Grid Margin="4,6">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="90" />
-                <ColumnDefinition Width="150" />
-                <ColumnDefinition Width="150" />
-              </Grid.ColumnDefinitions>
-              <StackPanel>
-                <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold" Text="{Binding Name}" />
-                <TextBlock Style="{StaticResource Caption}">
-                  <Run Text="作成 " /><Run Text="{Binding Created, Mode=OneWay}" />
-                </TextBlock>
-              </StackPanel>
-              <TextBlock Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource Body}" Text="{Binding Status}" />
-              <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                <TextBlock Style="{StaticResource Caption}" Text="有効期限" />
-                <TextBlock Style="{StaticResource Body}" Text="{Binding Expires}" />
-              </StackPanel>
-              <StackPanel Grid.Column="3" VerticalAlignment="Center">
-                <TextBlock Style="{StaticResource Caption}" Text="最終利用" />
-                <TextBlock Style="{StaticResource Body}" Text="{Binding LastUsed}" />
-              </StackPanel>
-            </Grid>
-          </DataTemplate>
-        </ListView.ItemTemplate>
-      </ListView>
+      <!-- Same surface as the other lists; the Fluent ListView provides the selection indicator. -->
+      <Border Style="{StaticResource Surface}" Padding="4" Visibility="{Binding HasClients, Converter={StaticResource BoolToVisibility}}">
+        <ui:ListView MaxHeight="300" Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Stretch" ItemsSource="{Binding Clients}" SelectedItem="{Binding Selected}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="クライアント一覧">
+          <ui:ListView.ItemTemplate>
+            <DataTemplate>
+              <Grid Margin="4,6">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="90" />
+                  <ColumnDefinition Width="150" />
+                  <ColumnDefinition Width="150" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,12,0">
+                  <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold" Text="{Binding Name}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Style="{StaticResource Caption}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis">
+                    <Run Text="作成 " /><Run Text="{Binding Created, Mode=OneWay}" />
+                  </TextBlock>
+                </StackPanel>
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource Body}" Text="{Binding Status}" />
+                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                  <TextBlock Style="{StaticResource Caption}" Text="有効期限" />
+                  <TextBlock Style="{StaticResource Body}" Text="{Binding Expires}" />
+                </StackPanel>
+                <StackPanel Grid.Column="3" VerticalAlignment="Center">
+                  <TextBlock Style="{StaticResource Caption}" Text="最終利用" />
+                  <TextBlock Style="{StaticResource Body}" Text="{Binding LastUsed}" />
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ui:ListView.ItemTemplate>
+        </ui:ListView>
+      </Border>
 
       <StackPanel Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}">
         <Grid Margin="0,24,0,8">

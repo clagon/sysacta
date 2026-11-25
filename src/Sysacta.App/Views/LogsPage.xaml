@@ -42,7 +42,7 @@
         <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <TextBlock Style="{StaticResource EmptyState}" Text="条件に一致する記録はありません。" Visibility="{Binding HasEvents, Converter={StaticResource InverseBoolToVisibility}}" />
-      <DataGrid
+      <ui:DataGrid
           AutoGenerateColumns="False"
           CanUserAddRows="False"
           CanUserDeleteRows="False"
@@ -54,14 +54,14 @@
           SelectionMode="Single"
           Visibility="{Binding HasEvents, Converter={StaticResource BoolToVisibility}}"
           AutomationProperties.Name="監査ログ一覧">
-        <DataGrid.Columns>
+        <ui:DataGrid.Columns>
           <DataGridTextColumn Width="150" Binding="{Binding Time}" Header="日時" />
           <DataGridTextColumn Width="*" Binding="{Binding Tool}" Header="ツール" />
           <DataGridTextColumn Width="140" Binding="{Binding Client}" Header="クライアント" />
           <DataGridTextColumn Width="90" Binding="{Binding Outcome}" Header="結果" />
           <DataGridTextColumn Width="170" Binding="{Binding ErrorCode}" Header="コード" />
-        </DataGrid.Columns>
-      </DataGrid>
+        </ui:DataGrid.Columns>
+      </ui:DataGrid>
 
       <!-- Detail pane -->
       <Border Grid.Column="1" Width="300" Margin="12,0,0,0" Style="{StaticResource Surface}" VerticalAlignment="Top" Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}">
