@@ -151,7 +151,7 @@ public class AccessPolicyTests
 
         public override ToolAvailability GetAvailability() => ToolAvailability.Unavailable(ErrorCodes.NotSupported, "No display.");
 
-        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolTarget target, CancellationToken cancellationToken) =>
+        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolExecution execution, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

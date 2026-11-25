@@ -36,7 +36,7 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
 
         if (!IsHostAllowed(context.Request.Host))
         {
-            Audit(context, remote, AuditOutcome.Denied, "HostNotAllowed", ("host", ShapeOrInvalid(context.Request.Host.Value, HostShape())));
+            Audit(context, remote, AuditOutcome.Denied, "HostNotAllowed");
             await RejectAsync(context, StatusCodes.Status403Forbidden,
                 "Host not allowed. Add this host name to the allowed host names in the Sysacta console (Connection).");
             return;
@@ -44,7 +44,7 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
 
         if (context.Request.Headers.Origin is { Count: > 0 } origin && !_allowedOrigins.Contains(origin.ToString().TrimEnd('/')))
         {
-            Audit(context, remote, AuditOutcome.Denied, "OriginNotAllowed", ("origin", ShapeOrInvalid(origin.ToString(), OriginShape())));
+            Audit(context, remote, AuditOutcome.Denied, "OriginNotAllowed");
             await RejectAsync(context, StatusCodes.Status403Forbidden,
                 "Origin not allowed. Add this origin to the allowed origins in the Sysacta console (Connection).");
             return;
@@ -73,12 +73,13 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
     }
 
     /// <summary>
-    /// Records a rejected request (Host/Origin/authentication) with its method and path, and the offending Host/Origin
-    /// value if any. Never records the query string, headers like Authorization, or the body. Rejections are recorded at
+    /// Records a rejected request (Host/Origin/authentication) with fixed values only (SEC-03): a reason code, the
+    /// method if it is a standard one, and whether the path was the MCP endpoint. Nothing the client typed (path, query,
+    /// Host, Origin, headers, body) is stored, because no format check can prove such text carries no secret. Rejections are recorded at
     /// most <see cref="ServerEndpointOptions.AuthFailuresPerMinutePerAddress"/> times per minute per address (behind a
     /// reverse proxy all requests share 127.0.0.1); returns false when that limit is exceeded.
     /// </summary>
-    private bool Audit(HttpContext context, string? remote, AuditOutcome outcome, string code, (string Name, string? Value) detail = default)
+    private bool Audit(HttpContext context, string? remote, AuditOutcome outcome, string code)
     {
         using var lease = _rejectionLimiter.AttemptAcquire(remote ?? "unknown");
         if (!lease.IsAcquired)
@@ -86,17 +87,11 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
             return false;
         }
 
-        // Only fixed categories and validated shapes are recorded (SEC-03): the raw path or an arbitrary header could
-        // carry a token or other text the client never meant to store.
         var request = new Dictionary<string, string?>
         {
             ["method"] = KnownMethods.Contains(context.Request.Method) ? context.Request.Method : "other",
             ["path"] = string.Equals(context.Request.Path.Value, McpServerHost.EndpointPath, StringComparison.OrdinalIgnoreCase) ? McpServerHost.EndpointPath : "other",
         };
-        if (detail.Name is not null)
-        {
-            request[detail.Name] = detail.Value;
-        }
 
         try
         {
@@ -129,16 +124,6 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
     }
 
     private static readonly HashSet<string> KnownMethods = new(StringComparer.Ordinal) { "GET", "POST", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS" };
-
-    private static string ShapeOrInvalid(string? value, System.Text.RegularExpressions.Regex shape) =>
-        value is not null && shape.IsMatch(value) ? value : "(invalid)";
-
-    /// <summary>host[:port] or [ipv6][:port]; tokens never match (their "sya_" prefix contains '_').</summary>
-    [System.Text.RegularExpressions.GeneratedRegex(@"^(\[[0-9A-Fa-f:.]{2,45}\]|[A-Za-z0-9.-]{1,253})(:[0-9]{1,5})?$")]
-    private static partial System.Text.RegularExpressions.Regex HostShape();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"^https?://(\[[0-9A-Fa-f:.]{2,45}\]|[A-Za-z0-9.-]{1,253})(:[0-9]{1,5})?$")]
-    private static partial System.Text.RegularExpressions.Regex OriginShape();
 
     public void Dispose() => _rejectionLimiter.Dispose();
 

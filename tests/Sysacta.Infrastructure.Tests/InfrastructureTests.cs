@@ -98,7 +98,7 @@ public class AccessStoreTests
     {
         using var t = new TempDatabase();
         t.Database.Migrate();
-        var store = new AccessStore(t.Database, TimeProvider.System);
+        var store = new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate());
 
         store.SyncTools([Tool("audio_get_state", DefaultPolicy.On), Tool("power_sleep", DefaultPolicy.Off), Tool("audio_set_default", DefaultPolicy.Experimental)], "0.1.0");
         Assert.True(store.IsToolEnabled("audio_get_state"));
@@ -117,7 +117,7 @@ public class AccessStoreTests
     {
         using var t = new TempDatabase();
         t.Database.Migrate();
-        var store = new AccessStore(t.Database, TimeProvider.System);
+        var store = new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate());
 
         var issued = store.IssueClient("Agent", null, ["audio_get_state"]);
 
@@ -140,7 +140,7 @@ public class AccessStoreTests
     {
         using var t = new TempDatabase();
         t.Database.Migrate();
-        var store = new AccessStore(t.Database, TimeProvider.System);
+        var store = new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate());
         var auth = new TokenAuthenticator(store, TimeProvider.System);
         var issued = store.IssueClient("Agent", null, ["audio_get_state"]);
 
@@ -170,7 +170,7 @@ public class AccessStoreTests
     {
         using var t = new TempDatabase();
         t.Database.Migrate();
-        var store = new AccessStore(t.Database, TimeProvider.System);
+        var store = new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate());
         var id = store.IssueClient("Agent", null, []).Client.Id;
 
         store.SetClientGrant(id, "audio_set_volume", true);
@@ -188,7 +188,7 @@ public class AccessStoreTests
     {
         using var t = new TempDatabase();
         t.Database.Migrate();
-        var store = new AccessStore(t.Database, TimeProvider.System);
+        var store = new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate());
         Assert.Throws<ArgumentException>(() => store.SetAlias("audio", "dev-1", alias, ["dev-1"]));
     }
 
@@ -197,7 +197,7 @@ public class AccessStoreTests
     {
         using var t = new TempDatabase();
         t.Database.Migrate();
-        var store = new AccessStore(t.Database, TimeProvider.System);
+        var store = new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate());
         store.SetAlias("audio", "dev-1", "Desk", ["dev-1"]);
 
         Assert.Equal("dev-1", store.Resolve("audio", "desk"));
@@ -213,7 +213,7 @@ public class AccessStoreTests
     {
         using var t = new TempDatabase();
         t.Database.Migrate();
-        Assert.Throws<ArgumentException>(() => new AccessStore(t.Database, TimeProvider.System).IssueClient(name, null, []));
+        Assert.Throws<ArgumentException>(() => new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate()).IssueClient(name, null, []));
     }
 }
 

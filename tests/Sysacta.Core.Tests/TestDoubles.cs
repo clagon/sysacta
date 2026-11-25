@@ -115,7 +115,7 @@ internal sealed class EchoTool(Func<EchoArgs, EchoData>? body = null) : SysactaT
 
     public override ToolDescriptor Descriptor { get; } = new("system_get_echo", ToolCategories.System, "Echo", "Echo", DefaultPolicy.On, ReadOnly: true, AuditedArguments: ["value"]);
 
-    protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolTarget target, CancellationToken cancellationToken)
+    protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref Calls);
         return Task.FromResult(new ToolOutcome<EchoData>(body?.Invoke(args) ?? new EchoData(args.Value), Verification.NotApplicable));
@@ -141,15 +141,16 @@ internal sealed class GateTool(TimeSpan? timeout = null) : SysactaTool<GateArgs,
     public int Completed;
     public readonly ConcurrentQueue<string> Entered = new();
 
-    public override ToolDescriptor Descriptor { get; } = new("power_set_gate", ToolCategories.Power, "Gate", "Gate", DefaultPolicy.Off, ReadOnly: false, AuditedArguments: ["resource"], timeout ?? TimeSpan.FromSeconds(10));
+    public override ToolDescriptor Descriptor { get; } = new("power_set_gate", ToolCategories.Power, "Gate", "Gate", DefaultPolicy.Off, ReadOnly: false, AuditedArguments: [], timeout ?? TimeSpan.FromSeconds(10));
 
     public SemaphoreSlim Gate(string resource) => _gates.GetOrAdd(resource, _ => new SemaphoreSlim(0));
 
     protected override ValueTask<ToolTarget> ResolveTargetAsync(GateArgs args, CancellationToken cancellationToken) =>
         ValueTask.FromResult(new ToolTarget([$"test:{args.Resource}"], args.Resource));
 
-    protected override Task<ToolOutcome<EchoData>> ExecuteAsync(GateArgs args, ToolTarget target, CancellationToken cancellationToken)
+    protected override Task<ToolOutcome<EchoData>> ExecuteAsync(GateArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
+        execution.BeginSideEffect(); // the blocking call below stands for the native write
         Interlocked.Increment(ref Started);
         Entered.Enqueue(args.Resource);
         var now = _active.AddOrUpdate(args.Resource, 1, (_, v) => v + 1);
@@ -228,6 +229,16 @@ internal static class TestJson
 internal sealed class Harness
 {
     public FakeAccessStore Store { get; } = new();
+
+    /// <summary>Shared with the executor, like AccessStore in production.</summary>
+    public AuthorizationGate Gate { get; } = new();
+
+    /// <summary>Applies a permission change the way AccessStore does (inside the gate's update scope).</summary>
+    public void Update(Action change)
+    {
+        using var scope = Gate.BeginUpdate();
+        change();
+    }
     public RecordingAuditLog Audit { get; } = new();
     public ToolExecutor Executor { get; }
 
@@ -238,6 +249,6 @@ internal sealed class Harness
 
     public Harness(Func<FakeAccessStore, IEnumerable<SysactaTool>> tools, ExecutorLimits? limits = null)
     {
-        Executor = new ToolExecutor(new ToolRegistry(tools(Store)), new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, limits);
+        Executor = new ToolExecutor(new ToolRegistry(tools(Store)), new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, Gate, limits);
     }
 }

@@ -30,13 +30,16 @@ public sealed partial class ToolExecutor
     private readonly IAuditLog _audit;
     private readonly TimeProvider _time;
     private readonly ExecutorLimits _limits;
+    private readonly AuthorizationGate _gate;
     private readonly ResourceLocks _locks = new();
     private readonly SemaphoreSlim _slots;
     private int _admitted;
 
-    public ToolExecutor(ToolRegistry registry, AccessPolicy policy, IAuditLog audit, TimeProvider time, ExecutorLimits? limits = null)
+    /// <param name="gate">The same gate instance the permission store uses for its updates (see <see cref="AuthorizationGate"/>).</param>
+    public ToolExecutor(ToolRegistry registry, AccessPolicy policy, IAuditLog audit, TimeProvider time, AuthorizationGate gate, ExecutorLimits? limits = null)
     {
         _registry = registry;
+        _gate = gate;
         _policy = policy;
         _audit = audit;
         _time = time;
@@ -95,7 +98,7 @@ public sealed partial class ToolExecutor
             return call.Finish(AuditOutcome.Denied, ToolResult.Fail(ex.Code, ex.Message));
         }
 
-        call.AuditArguments = tool.SanitizeForAudit(args);
+        call.AuditArguments = tool.SanitizeForAudit(args, resolvedTarget: null);
 
         if (Interlocked.Increment(ref _admitted) > _limits.MaxConcurrent + _limits.MaxQueued)
         {
@@ -116,6 +119,9 @@ public sealed partial class ToolExecutor
             try
             {
                 target = await resolution.WaitAsync(token).ConfigureAwait(false);
+
+                // From now on the record names the resolved target (an OS / registry id), never the raw input.
+                call.AuditArguments = tool.SanitizeForAudit(args, target.TargetId);
                 if (!tool.Descriptor.ReadOnly)
                 {
                     var keys = target.LockKeys.Count > 0 ? target.LockKeys : [$"tool:{tool.Name}"];
@@ -150,21 +156,29 @@ public sealed partial class ToolExecutor
                 return call.Finish(AuditOutcome.Denied, ToolResult.Fail(ErrorCodes.AuditUnavailable, "The audit log is unavailable; state changes are refused.", retryable: true));
             }
 
-            // Re-authorize as the very last step before the work starts (spec §6): revocation, re-issue, expiry or a
-            // permission change made while the call was queued, or while the pending record was written (a SQLite write
-            // can wait for the busy timeout), must apply. A denial replaces the pending record. Changes committed after
-            // this point race with the OS call itself and cannot be undone (accepted, see docs/security.md).
+            // Early re-check before starting the work (cheap exit for changes made while queued). The authoritative check
+            // for state changes is ToolExecution.BeginSideEffect, at the point where the change actually starts.
             decision = _policy.Evaluate(caller, tool);
             if (decision != AccessDecision.Allowed)
             {
                 return call.Finish(AuditOutcome.Denied, AccessPolicy.ToResult(decision, tool));
             }
 
-            var work = Task.Run(() => tool.RunAsync(args, target, token), CancellationToken.None);
+            var execution = new ToolExecution(target, () =>
+            {
+                var d = _policy.Evaluate(caller, tool);
+                return d == AccessDecision.Allowed ? null : AccessPolicy.ToResult(d, tool);
+            }, _gate);
+            var work = Task.Run(() => tool.RunAsync(args, execution, token), CancellationToken.None);
             try
             {
                 var (data, verification) = await work.WaitAsync(token).ConfigureAwait(false);
                 return call.Finish(AuditOutcome.Success, new ToolResult { Status = ToolStatus.Success, Verification = verification, Data = data });
+            }
+            catch (SideEffectRefusedException ex)
+            {
+                // Authorization was lost before the side effect started; nothing was changed.
+                return call.Finish(AuditOutcome.Denied, ex.Result);
             }
             catch (ToolOutcomeUnknownException ex)
             {
@@ -186,14 +200,16 @@ public sealed partial class ToolExecutor
                 var (code, message) = cancellationToken.IsCancellationRequested
                     ? (ErrorCodes.Cancelled, "The request was cancelled during execution.")
                     : (ErrorCodes.Timeout, "The operation did not complete within the time limit.");
-                return tool.Descriptor.ReadOnly
-                    ? call.Finish(AuditOutcome.Error, ToolResult.Fail(code, message, retryable: true))
+
+                // Before the start point the change can be ruled out: abandoning makes BeginSideEffect refuse to start.
+                return tool.Descriptor.ReadOnly || execution.TryAbandon()
+                    ? call.Finish(AuditOutcome.Error, ToolResult.Fail(code, message + " Nothing was changed.", retryable: true))
                     : call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(code, message + " Whether the change was applied is unknown."));
             }
             catch (Exception)
             {
-                // Never return raw exception text. A failed state change may have partially happened.
-                return tool.Descriptor.ReadOnly
+                // Never return raw exception text. After the start point a failed change may have partially happened.
+                return tool.Descriptor.ReadOnly || execution.TryAbandon()
                     ? call.Finish(AuditOutcome.Error, ToolResult.Fail(ErrorCodes.InternalError, "An internal error occurred."))
                     : call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(ErrorCodes.InternalError, "An internal error occurred. Whether the change was applied is unknown."));
             }
@@ -210,14 +226,11 @@ public sealed partial class ToolExecutor
     private static string NewRequestId() => Guid.CreateVersion7().ToString("N");
 
     /// <summary>
-    /// Unknown names come from the client and are recorded only if they look like a tool name, so arbitrary text
-    /// (possibly a token pasted into the wrong field) never reaches the audit log.
+    /// Only registered names are recorded (SEC-03). A name the client made up is replaced by a fixed value, because no
+    /// shape check can prove that client text carries no secret.
     /// </summary>
     private static string AuditToolName(ToolRegistry registry, string toolName) =>
-        registry.Find(toolName) is not null || ToolNameShape().IsMatch(toolName) ? toolName : "(invalid name)";
-
-    [System.Text.RegularExpressions.GeneratedRegex("^[a-z][a-z0-9_]{0,63}$")]
-    private static partial System.Text.RegularExpressions.Regex ToolNameShape();
+        registry.Find(toolName) is { } tool ? tool.Name : "(unknown tool)";
 
     private sealed class HeldResources(ToolExecutor owner, CancellationTokenSource cancellation)
     {

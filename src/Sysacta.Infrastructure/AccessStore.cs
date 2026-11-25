@@ -14,7 +14,11 @@ public sealed record IssuedClient(ClientRecord Client, string Token);
 /// The request pipeline sees it only as <see cref="IAccessStore"/> / <see cref="IDeviceAliases"/> (read-only);
 /// the management methods are used by the console only. Reads always hit the database, so changes apply immediately.
 /// </summary>
-public sealed class AccessStore(SysactaDatabase database, TimeProvider time) : IAccessStore, IDeviceAliases
+/// <remarks>
+/// Every write that changes what a client may do runs inside <see cref="AuthorizationGate.BeginUpdate"/> of the gate
+/// shared with the executor, so it is ordered against the start of state-changing operations (SEC-01).
+/// </remarks>
+public sealed class AccessStore(SysactaDatabase database, TimeProvider time, AuthorizationGate gate) : IAccessStore, IDeviceAliases
 {
     private static readonly TimeSpan LastUsedResolution = TimeSpan.FromMinutes(1);
 
@@ -63,6 +67,7 @@ public sealed class AccessStore(SysactaDatabase database, TimeProvider time) : I
     /// </summary>
     public void SyncTools(IEnumerable<ToolDescriptor> tools, string appVersion)
     {
+        using var update = gate.BeginUpdate();
         using var c = database.Open();
         using var tx = c.BeginTransaction();
         var fresh = Convert.ToInt64(ScalarTx(c, tx, "SELECT COUNT(*) FROM tools")) == 0;
@@ -78,6 +83,7 @@ public sealed class AccessStore(SysactaDatabase database, TimeProvider time) : I
 
     public void SetToolEnabled(string toolName, bool enabled)
     {
+        using var update = gate.BeginUpdate();
         using var c = database.Open();
         if (Execute(c, "UPDATE tools SET enabled = $e WHERE tool_name = $n", ("$e", enabled ? 1 : 0), ("$n", toolName)) == 0)
         {
@@ -89,6 +95,7 @@ public sealed class AccessStore(SysactaDatabase database, TimeProvider time) : I
 
     public IssuedClient IssueClient(string name, DateTimeOffset? expiresAt, IEnumerable<string> grantedTools)
     {
+        using var update = gate.BeginUpdate();
         name = ValidateName(name);
         var (token, hash) = ClientTokens.Generate();
         var client = new ClientRecord(Guid.NewGuid().ToString("N"), name, time.GetUtcNow(), expiresAt, null, null);
@@ -115,6 +122,7 @@ public sealed class AccessStore(SysactaDatabase database, TimeProvider time) : I
         }
 
         var (token, hash) = ClientTokens.Generate();
+        using var update = gate.BeginUpdate();
         using var c = database.Open();
         Execute(c, "UPDATE clients SET token_hash = $h WHERE id = $id", ("$h", hash), ("$id", clientId));
         return new IssuedClient(client, token);
@@ -122,18 +130,21 @@ public sealed class AccessStore(SysactaDatabase database, TimeProvider time) : I
 
     public void RevokeClient(string clientId)
     {
+        using var update = gate.BeginUpdate();
         using var c = database.Open();
         Execute(c, "UPDATE clients SET revoked_at = $t WHERE id = $id AND revoked_at IS NULL", ("$t", ToDb(time.GetUtcNow())), ("$id", clientId));
     }
 
     public void DeleteClient(string clientId)
     {
+        using var update = gate.BeginUpdate();
         using var c = database.Open();
         Execute(c, "DELETE FROM clients WHERE id = $id", ("$id", clientId));
     }
 
     public void SetClientExpiry(string clientId, DateTimeOffset? expiresAt)
     {
+        using var update = gate.BeginUpdate();
         using var c = database.Open();
         Execute(c, "UPDATE clients SET expires_at = $e WHERE id = $id", ("$e", ToDb(expiresAt)), ("$id", clientId));
     }
@@ -168,6 +179,7 @@ public sealed class AccessStore(SysactaDatabase database, TimeProvider time) : I
 
     public void SetClientGrant(string clientId, string toolName, bool allowed)
     {
+        using var update = gate.BeginUpdate();
         using var c = database.Open();
         Execute(c, "INSERT INTO client_permissions (client_id, tool_name, allowed) VALUES ($c, $t, $a) ON CONFLICT (client_id, tool_name) DO UPDATE SET allowed = excluded.allowed",
             ("$c", clientId), ("$t", toolName), ("$a", allowed ? 1 : 0));

@@ -114,7 +114,7 @@ internal static class TestHost
     {
         var store = new NoAccess();
         var audit = new NoAudit();
-        var executor = new Sysacta.Core.Tools.ToolExecutor(new Sysacta.Core.Tools.ToolRegistry([]), new Sysacta.Core.Security.AccessPolicy(store, TimeProvider.System), audit, TimeProvider.System);
+        var executor = new Sysacta.Core.Tools.ToolExecutor(new Sysacta.Core.Tools.ToolRegistry([]), new Sysacta.Core.Security.AccessPolicy(store, TimeProvider.System), audit, TimeProvider.System, new Sysacta.Core.Security.AuthorizationGate());
         return new Sysacta.Mcp.McpServerHost(executor, new Sysacta.Core.Security.TokenAuthenticator(store, TimeProvider.System), audit, TimeProvider.System, "test");
     }
 

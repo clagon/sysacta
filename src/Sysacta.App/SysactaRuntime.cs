@@ -28,14 +28,16 @@ public sealed class SysactaRuntime : IAsyncDisposable
         Database = new SysactaDatabase(Path.Combine(dataDirectory, "sysacta.db"));
         Database.Migrate();
 
-        Access = new AccessStore(Database, _time);
+        // One gate shared by the permission store (updates) and the executor (start of state changes), SEC-01.
+        var gate = new AuthorizationGate();
+        Access = new AccessStore(Database, _time, gate);
         Audit = new AuditLog(Database);
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
         Registry = new ToolRegistry(ToolCatalog.Create(Access));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
-        Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time);
+        Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate);
         Host = new McpServerHost(Executor, new TokenAuthenticator(Access, _time), Audit, _time, Version);
     }
 

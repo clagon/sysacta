@@ -35,14 +35,14 @@ public sealed class AudioSetVolumeTool(IAudioEndpoints endpoints, IDeviceAliases
         Description: "Sets the absolute master volume (0-100) of an audio endpoint and verifies it by reading it back. Uses the default device when 'device' is omitted. Does not change mute.",
         DefaultPolicy: DefaultPolicy.On,
         ReadOnly: false,
-        AuditedArguments: ["level", "device", "direction"]);
+        AuditedArguments: ["level", "direction"]); // the device is recorded as the resolved target id, never as typed
 
     protected override ValueTask<ToolTarget> ResolveTargetAsync(AudioSetVolumeArgs args, CancellationToken cancellationToken) =>
         ValueTask.FromResult(AudioTarget.Resolve(endpoints, aliases, args.Device, args.Direction));
 
-    protected override Task<ToolOutcome<AudioSetVolumeData>> ExecuteAsync(AudioSetVolumeArgs args, ToolTarget target, CancellationToken cancellationToken)
+    protected override Task<ToolOutcome<AudioSetVolumeData>> ExecuteAsync(AudioSetVolumeArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
-        var id = target.TargetId!;
+        var id = execution.TargetId!;
         var before = endpoints.GetEndpoint(id);
         if (before.State != AudioDeviceState.Active || before.VolumeScalar is not { } previousScalar)
         {
@@ -56,8 +56,10 @@ public sealed class AudioSetVolumeTool(IAudioEndpoints endpoints, IDeviceAliases
             return Task.FromResult(new ToolOutcome<AudioSetVolumeData>(new(device, previous, previous, Changed: false), Verification.Verified));
         }
 
-        // Last point before the side effect. Cancellation after this line yields status "unknown" in the executor.
+        // Start point of the change: re-checks authorization (a revocation or permission change that completed before
+        // this line refuses the call) and from here on a timeout reports "unknown". Nothing above changed state.
         cancellationToken.ThrowIfCancellationRequested();
+        execution.BeginSideEffect();
         endpoints.SetVolumeScalar(id, args.Level / 100f);
 
         AudioEndpointState after;

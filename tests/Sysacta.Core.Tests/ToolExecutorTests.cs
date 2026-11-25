@@ -335,7 +335,7 @@ public class ToolExecutorTests
         var tool = new EchoTool();
         var broken = new BrokenStore();
         var audit = new RecordingAuditLog();
-        var executor = new ToolExecutor(new ToolRegistry([tool]), new AccessPolicy(broken, TimeProvider.System), audit, TimeProvider.System);
+        var executor = new ToolExecutor(new ToolRegistry([tool]), new AccessPolicy(broken, TimeProvider.System), audit, TimeProvider.System, new AuthorizationGate());
 
         var result = await executor.ExecuteAsync(Caller.Client("c1", "c1", null, new string('0', 64)), tool.Name, TestJson.Args(new { value = 1 }), Ct);
 
@@ -375,7 +375,7 @@ public class ToolExecutorTests
         protected override ValueTask<ToolTarget> ResolveTargetAsync(EchoArgs args, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("secret detail");
 
-        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolTarget target, CancellationToken cancellationToken) =>
+        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolExecution execution, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 
@@ -429,7 +429,7 @@ public class ToolExecutorTests
             return ValueTask.FromResult(ToolTarget.None);
         }
 
-        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolTarget target, CancellationToken cancellationToken) =>
+        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolExecution execution, CancellationToken cancellationToken) =>
             Task.FromResult(new ToolOutcome<EchoData>(new EchoData(1), Verification.Verified));
     }
 
@@ -471,10 +471,10 @@ public class ToolExecutorTests
     }
 
     [Theory]
-    [InlineData("audio_secret_tool", "audio_secret_tool")]
-    [InlineData("Bearer sya_MARKERmarker0123456789", "(invalid name)")]
-    [InlineData("C:\\Users\\someone\\file.txt", "(invalid name)")]
-    public async Task Unknown_tool_names_are_audited_only_when_they_look_like_tool_names(string name, string recorded)
+    [InlineData("audio_secret_tool", "(unknown tool)")]
+    [InlineData("Bearer sya_MARKERmarker0123456789", "(unknown tool)")]
+    [InlineData("system_get_echo", "system_get_echo")]
+    public async Task Only_registered_tool_names_are_audited(string name, string recorded)
     {
         var h = new Harness(null, new EchoTool());
         var (caller, _) = h.Store.AddClient("c1");

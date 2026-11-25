@@ -17,6 +17,7 @@ public sealed class ServerFixture : IAsyncDisposable
     private readonly string _dir = Directory.CreateTempSubdirectory("sysacta-mcp-").FullName;
 
     public SysactaDatabase Database { get; }
+    public AuthorizationGate Gate { get; }
     public AccessStore Store { get; }
     public AuditLog Audit { get; }
     public ToolExecutor Executor { get; }
@@ -28,12 +29,13 @@ public sealed class ServerFixture : IAsyncDisposable
     {
         Database = new SysactaDatabase(Path.Combine(_dir, "sysacta.db"));
         Database.Migrate();
-        Store = new AccessStore(Database, TimeProvider.System);
+        Gate = new AuthorizationGate();
+        Store = new AccessStore(Database, TimeProvider.System, Gate);
         Audit = new AuditLog(Database);
         var registry = new ToolRegistry([new AudioGetStateTool(AudioDevice, Store), new AudioSetVolumeTool(AudioDevice, Store), Blocking]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
         Store.SetToolEnabled(Blocking.Name, true);
-        Executor = new ToolExecutor(registry, new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System);
+        Executor = new ToolExecutor(registry, new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, Gate);
         Host = new McpServerHost(Executor, new TokenAuthenticator(Store, TimeProvider.System), Audit, TimeProvider.System, "test");
     }
 
@@ -110,7 +112,7 @@ public sealed class FakeAudio : IAudioEndpoints
     {
         lock (_gate)
         {
-            return id == "spk"
+            return string.Equals(id, "spk", StringComparison.OrdinalIgnoreCase) // GetDevice may accept other spellings
                 ? new AudioEndpointState("spk", "Speakers", AudioDirection.Output, AudioDeviceState.Active, _volume, false)
                 : throw new ToolFailureException(ErrorCodes.TargetNotFound, "The specified audio device was not found.");
         }
@@ -141,13 +143,14 @@ public sealed class BlockingTool : SysactaTool<BlockArgs, BlockData>
 
     public int Started => Volatile.Read(ref _started);
 
-    public override ToolDescriptor Descriptor { get; } = new("system_set_block", ToolCategories.System, "Block", "Test only", DefaultPolicy.Off, ReadOnly: false, AuditedArguments: ["resource"], TimeSpan.FromSeconds(20));
+    public override ToolDescriptor Descriptor { get; } = new("system_set_block", ToolCategories.System, "Block", "Test only", DefaultPolicy.Off, ReadOnly: false, AuditedArguments: [], TimeSpan.FromSeconds(20));
 
     protected override ValueTask<ToolTarget> ResolveTargetAsync(BlockArgs args, CancellationToken cancellationToken) =>
         ValueTask.FromResult(new ToolTarget([$"test:{args.Resource}"], args.Resource));
 
-    protected override Task<ToolOutcome<BlockData>> ExecuteAsync(BlockArgs args, ToolTarget target, CancellationToken cancellationToken)
+    protected override Task<ToolOutcome<BlockData>> ExecuteAsync(BlockArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
+        execution.BeginSideEffect();
         Interlocked.Increment(ref _started);
         Gates.GetOrAdd(args.Resource, _ => new SemaphoreSlim(0)).Wait(CancellationToken.None);
         return Task.FromResult(new ToolOutcome<BlockData>(new BlockData(true), Verification.Verified));

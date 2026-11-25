@@ -17,7 +17,11 @@ public sealed record ToolAvailability(bool IsAvailable, string? ErrorCode, strin
 /// Resolve aliases/defaults to a concrete id here, before locking; never fall back to another device later.
 /// </summary>
 /// <param name="LockKeys">Resource keys, e.g. <c>audio:device:{id}</c>. Ignored for read-only tools.</param>
-/// <param name="TargetId">Concrete resolved id passed to <c>ExecuteAsync</c> (null when the tool has no target).</param>
+/// <param name="TargetId">
+/// Concrete resolved id passed to <c>ExecuteAsync</c> (null when the tool has no target). It is recorded in the audit
+/// log as <c>target</c>, so it must be an identifier obtained from the OS or Sysacta's own registry, never the
+/// caller's raw input.
+/// </param>
 public sealed record ToolTarget(IReadOnlyList<string> LockKeys, string? TargetId)
 {
     public static readonly ToolTarget None = new([], null);
@@ -50,16 +54,18 @@ public abstract class SysactaTool
 
     internal abstract ValueTask<ToolTarget> ResolveAsync(object arguments, CancellationToken cancellationToken);
 
-    internal abstract Task<(JsonNode? Data, Verification Verification)> RunAsync(object arguments, ToolTarget target, CancellationToken cancellationToken);
+    internal abstract Task<(JsonNode? Data, Verification Verification)> RunAsync(object arguments, ToolExecution execution, CancellationToken cancellationToken);
 
-    /// <summary>Allow-listed arguments for the audit log, as JSON text (null when nothing is allowed).</summary>
-    internal string? SanitizeForAudit(object arguments)
+    /// <summary>Argument type, for the audit allow-list check at registration.</summary>
+    internal abstract Type ArgumentsType { get; }
+
+    /// <summary>
+    /// Allow-listed arguments for the audit log, as JSON text (null when nothing is recorded). Only number, boolean and
+    /// enum arguments can be listed (checked at registration), so client-chosen text never reaches the log. A resolved
+    /// target id is added as <c>target</c> when given (see <see cref="ToolTarget.TargetId"/>).
+    /// </summary>
+    internal string? SanitizeForAudit(object arguments, string? resolvedTarget)
     {
-        if (Descriptor.AuditedArguments.Count == 0)
-        {
-            return null;
-        }
-
         var all = JsonSerializer.SerializeToNode(arguments, arguments.GetType(), ToolJson.Options) as JsonObject;
         var kept = new JsonObject();
         foreach (var name in Descriptor.AuditedArguments)
@@ -70,7 +76,27 @@ public abstract class SysactaTool
             }
         }
 
-        return kept.ToJsonString();
+        if (resolvedTarget is not null)
+        {
+            kept["target"] = resolvedTarget;
+        }
+
+        return kept.Count == 0 ? null : kept.ToJsonString();
+    }
+
+    /// <summary>Throws when an audited argument is not a number, boolean or enum (text could carry secrets).</summary>
+    internal void ValidateAuditedArguments()
+    {
+        foreach (var name in Descriptor.AuditedArguments)
+        {
+            var property = ArgumentsType.GetProperties().FirstOrDefault(p => JsonNamingPolicy.SnakeCaseLower.ConvertName(p.Name) == name)
+                ?? throw new ArgumentException($"Tool '{Name}' audits unknown argument '{name}'.");
+            var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            if (!(type.IsEnum || type == typeof(bool) || type == typeof(int) || type == typeof(long) || type == typeof(double) || type == typeof(decimal)))
+            {
+                throw new ArgumentException($"Tool '{Name}' audits '{name}', which is not a number, boolean or enum. Text arguments are never audited; record the resolved target id instead.");
+            }
+        }
     }
 }
 
@@ -101,19 +127,22 @@ public abstract class SysactaTool<TArgs, TData> : SysactaTool
 
     /// <summary>
     /// Perform the operation. Runs on a thread-pool (MTA) thread while the resource locks are held.
-    /// For state changes: read the previous state, apply, read back and return <see cref="Verification.Verified"/>
-    /// only if the read-back matches; return a no-op success when already in the requested state.
+    /// For state changes: read the previous state, return a no-op success when already in the requested state, call
+    /// <see cref="ToolExecution.BeginSideEffect"/> immediately before the first OS call that changes state, apply, read
+    /// back and return <see cref="Verification.Verified"/> only if the read-back matches.
     /// </summary>
-    protected abstract Task<ToolOutcome<TData>> ExecuteAsync(TArgs args, ToolTarget target, CancellationToken cancellationToken);
+    protected abstract Task<ToolOutcome<TData>> ExecuteAsync(TArgs args, ToolExecution execution, CancellationToken cancellationToken);
 
     internal sealed override object Parse(JsonElement? arguments) => ToolJson.ParseArguments<TArgs>(arguments);
 
     internal sealed override ValueTask<ToolTarget> ResolveAsync(object arguments, CancellationToken cancellationToken) =>
         ResolveTargetAsync((TArgs)arguments, cancellationToken);
 
-    internal sealed override async Task<(JsonNode? Data, Verification Verification)> RunAsync(object arguments, ToolTarget target, CancellationToken cancellationToken)
+    internal sealed override Type ArgumentsType => typeof(TArgs);
+
+    internal sealed override async Task<(JsonNode? Data, Verification Verification)> RunAsync(object arguments, ToolExecution execution, CancellationToken cancellationToken)
     {
-        var outcome = await ExecuteAsync((TArgs)arguments, target, cancellationToken).ConfigureAwait(false);
+        var outcome = await ExecuteAsync((TArgs)arguments, execution, cancellationToken).ConfigureAwait(false);
         return (JsonSerializer.SerializeToNode(outcome.Data, ToolJson.Options), outcome.Verification);
     }
 }

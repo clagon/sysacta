@@ -26,10 +26,11 @@ MCP tools/call ─▶ RequestGuards (Host/Origin → Bearer認証 → 監査:認
                    4. 待機キュー上限 (超過 → BUSY)
                    5. ResolveTargetAsync: ID/別名/既定 → 具体的なID とロックキー
                    6. リソースロック (状態変更ツールのみ) → 実行スロット
-                   7. 再認可 (待機中の失効・権限変更を反映)
-                   8. 監査 pending を永続化 (状態変更のみ。失敗 → 実行しない)
+                   7. 監査 pending を永続化 (状態変更のみ。失敗 → 実行しない)
+                   8. 再認可 (待機中・pending 書き込み中の失効・権限変更を反映)
                    9. ExecuteAsync (タイムアウト付き。ネイティブ処理が終わるまでロック保持)
-                  10. 監査の最終結果
+                        └ 状態変更ツール: 読み取り → execution.BeginSideEffect() (最終の認可点・開始点) → OS 書き込み → 読み戻し
+                  10. 監査の最終結果 (記録は固定値・登録名・解決済み target・数値/真偽値/列挙値の引数のみ)
 ```
 
 ## 手順
@@ -85,7 +86,7 @@ public sealed class DisplaySetBrightnessTool(IDisplays displays, IDeviceAliases 
         Description: "Sets the absolute brightness (0-100) ... and verifies it by reading it back.",
         DefaultPolicy: DefaultPolicy.On,
         ReadOnly: false,
-        AuditedArguments: ["level", "device"],     // 監査に残してよい引数だけ
+        AuditedArguments: ["level"],               // 数値・真偽値・列挙値だけ。デバイスは解決済みの target として自動で記録される
         Timeout: TimeSpan.FromSeconds(10));        // 既定 5 秒。DDC/CI など遅いものだけ延ばす
 
     protected override ValueTask<ToolTarget> ResolveTargetAsync(DisplaySetBrightnessArgs args, CancellationToken ct)
@@ -105,7 +106,9 @@ public sealed class DisplaySetBrightnessTool(IDisplays displays, IDeviceAliases 
 - 引数クラスが入力スキーマと検証の唯一の定義。スキーマを手書きしない。使える属性: `Description` / `Range` / `StringLength` / `DefaultValue` / `required`。enum は snake_case 文字列になる。
 - 省略可能な引数は「省略」で表す。明示的な `null` と、公開した綴り以外の列挙値(`"Output"`、`"output, input"` など)は検証で拒否される。
 - OS に渡す識別子(デバイス ID・別名など)には `[NoControlCharacters]` を付ける(検証で拒否され、監査にも残らない)。
-- 状態変更ツールの排他キーと実行対象には、入力の文字列ではなく OS が返した正規の ID を使う(参考: `AudioTarget.Resolve`)。
+- 状態変更ツールの排他キーと実行対象には、入力の文字列ではなく OS が返した正規の ID を使う(参考: `AudioTarget.Resolve`)。`ToolTarget.TargetId` は監査ログに `target` として記録されるので、OS や登録情報から得た識別子だけを入れる。
+- **状態変更ツールは、最初の OS 書き込みの直前に `execution.BeginSideEffect()` を必ず呼ぶ。** ここで最終の認可が行われ(直前に完了した失効や権限変更で拒否される)、以降のタイムアウトは `unknown`、それより前なら「何も変更していない」になる。読み取りや検証、no-op の判定はその前に済ませる。呼んだ後に入れてよいのは OS への書き込みと読み戻しだけ。
+- `AuditedArguments` には数値・真偽値・列挙値の引数だけを書く(文字列はツール登録時にエラー)。
 - null 許容(`string?` / `int?`)は配列形式の `type` にならないよう自動変換される: 引数では null を含めない単一の型(省略可能な引数は「省略」で表す)、結果では `anyOf: [{type}, {type: "null"}]`。一部の MCP クライアント(単一 `type` の方言)で拒否されないため。
 - 値は絶対値で受け取る(相対値・トグルを避ける)。`all` などの一括指定は spec §8 で許可されたものだけ。
 - 対象の解決は `ResolveTargetAsync` で行い、別名が解決できない・機器が見つからない場合に別の機器へフォールバックしない(`TARGET_NOT_FOUND`)。

@@ -157,7 +157,7 @@ public class ToolRegistryTests
     {
         public override ToolDescriptor Descriptor { get; } = new("AudioThing", ToolCategories.Audio, "x", "x", DefaultPolicy.On, true, []);
 
-        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolTarget target, CancellationToken cancellationToken) =>
+        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolExecution execution, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

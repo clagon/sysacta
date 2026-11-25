@@ -94,7 +94,7 @@ public class AudioToolTests
         Assert.Equal(30, (int)r.Data["current_volume"]!);
         Assert.True((bool)r.Data["changed"]!);
         Assert.Equal(("spk", 0.3f), Assert.Single(_audio.SetCalls));
-        Assert.Equal("""{"level":30,"device":null,"direction":"output"}""", _h.Audit.Final(r.RequestId).Arguments);
+        Assert.Equal("""{"level":30,"direction":"output","target":"spk"}""", _h.Audit.Final(r.RequestId).Arguments);
     }
 
     [Fact]

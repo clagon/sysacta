@@ -232,7 +232,7 @@ public class AuthorizationTests
         var audit = f.Audit.Query(new AuditQuery(ClientId: issued.Client.Id));
         var e = Assert.Single(audit, a => a.ToolName == "audio_set_volume");
         Assert.Equal(AuditOutcome.Success, e.Outcome);
-        Assert.Equal("""{"level":25,"device":null,"direction":"output"}""", e.Arguments);
+        Assert.Equal("""{"level":25,"direction":"output","target":"spk"}""", e.Arguments);
         Assert.Equal(s.GetProperty("request_id").GetString(), e.RequestId);
         Assert.Equal("mcp", e.Source);
     }
@@ -312,7 +312,7 @@ public class HttpBoundaryTests
         Assert.Equal(AuditOutcome.Denied, e.Outcome);
         Assert.Equal("HostNotAllowed", e.ErrorCode);
         Assert.Equal("http", e.Source);
-        Assert.Contains($"\"host\":\"{host}\"", e.Arguments, StringComparison.Ordinal);
+        Assert.Equal("""{"method":"POST","path":"/mcp"}""", e.Arguments); // fixed values only, never the Host text
     }
 
     [Theory]
@@ -495,44 +495,97 @@ public class LifecycleTests
     }
 }
 
+/// <summary>
+/// SEC-03: text a client controls never reaches the audit log. A synthetic secret is sent through every path that
+/// used to be recorded and must not appear in the database files (including the WAL) or in CSV/JSON exports.
+/// </summary>
 public class RejectionAuditTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    private const string Secret = "SYNTHETICSECRETzq9";
+
+    private static HttpRequestMessage ListRequest() => ServerFixture.JsonRpc("""{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}""");
+
     [Fact]
-    public async Task Rejected_requests_record_only_categories_and_validated_values()
+    public async Task Client_controlled_text_is_not_stored_anywhere()
     {
         await using var f = await ServerFixture.StartAsync(new ServerEndpointOptions { Port = 0, AllowedOrigins = ["https://app.example"] });
-        const string marker = "sya_MARKERmarkerMARKER0123456789abcdefghijklmn";
+        var issued = f.Issue("audio_get_state", "audio_set_volume");
+        var secret = Secret.ToLowerInvariant();
 
-        // A token pasted into the URL path, with no Authorization header.
-        using (var http = f.Http())
-        using (var request = ServerFixture.JsonRpc("""{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""))
+        // Authenticated calls: an unregistered tool name and raw device input (unknown, and resolvable via a case variant).
+        await using (var c = await f.ClientAsync(issued.Token))
         {
-            request.RequestUri = new Uri("/mcp/" + marker, UriKind.Relative);
-            using var response = await http.SendAsync(request, Ct);
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            await Assert.ThrowsAsync<ModelContextProtocol.McpProtocolException>(() => c.CallToolAsync("audio_" + secret, new Dictionary<string, object?>(), cancellationToken: Ct).AsTask());
+            await c.CallToolAsync("audio_set_volume", new Dictionary<string, object?> { ["level"] = 10, ["device"] = "x-" + Secret }, cancellationToken: Ct);
+            await c.CallToolAsync("audio_get_state", new Dictionary<string, object?> { ["device"] = "x-" + Secret }, cancellationToken: Ct);
         }
 
-        // An Origin that is not a plain origin.
+        // Rejected HTTP requests: secret in the path, in Host, in Origin and as a malformed credential.
         using (var http = f.Http())
-        using (var request = ServerFixture.JsonRpc("""{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""))
         {
-            request.Headers.TryAddWithoutValidation("Origin", "https://evil.example/" + marker);
-            using var response = await http.SendAsync(request, Ct);
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using var inPath = ListRequest();
+            inPath.RequestUri = new Uri("/mcp/" + Secret, UriKind.Relative);
+            (await http.SendAsync(inPath, Ct)).Dispose();
+
+            using var inHost = ListRequest();
+            inHost.Headers.Host = secret + ".example";
+            (await http.SendAsync(inHost, Ct)).Dispose();
+
+            using var inOrigin = ListRequest();
+            inOrigin.Headers.TryAddWithoutValidation("Origin", "https://" + secret + ".example");
+            (await http.SendAsync(inOrigin, Ct)).Dispose();
+
+            using var inAuth = ListRequest();
+            inAuth.Headers.TryAddWithoutValidation("Authorization", "Bearer " + Secret);
+            (await http.SendAsync(inAuth, Ct)).Dispose();
         }
 
         var events = f.Audit.Query(new AuditQuery());
+        Assert.Contains(events, e => e.ErrorCode == "HostNotAllowed");
+        Assert.Contains(events, e => e.ErrorCode == "OriginNotAllowed");
+        Assert.Contains(events, e => e.ToolName == "(unknown tool)");
         Assert.Contains(events, e => e.Arguments == """{"method":"POST","path":"other"}""");
-        Assert.Contains(events, e => e.ErrorCode == "OriginNotAllowed" && e.Arguments!.Contains("\"origin\":\"(invalid)\"", StringComparison.Ordinal));
 
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        var bytes = System.Text.Encoding.UTF8.GetBytes("MARKERmarker");
+        // Exports
+        using var csv = new StringWriter();
+        AuditLog.ExportCsv(events, csv);
+        using var json = new MemoryStream();
+        AuditLog.ExportJson(events, json);
+        AssertAbsent(Encoding.UTF8.GetBytes(csv.ToString()), "CSV export");
+        AssertAbsent(json.ToArray(), "JSON export");
+
+        // Database, WAL and any other file next to it, read while the host still runs (WAL not yet checkpointed).
         foreach (var file in Directory.GetFiles(Path.GetDirectoryName(f.Database.Path)!))
         {
-            Assert.Equal(-1, File.ReadAllBytes(file).AsSpan().IndexOf(bytes));
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            AssertAbsent(copy.ToArray(), Path.GetFileName(file));
         }
+    }
+
+    private static void AssertAbsent(byte[] content, string where)
+    {
+        foreach (var form in new[] { Secret, Secret.ToLowerInvariant() })
+        {
+            Assert.True(content.AsSpan().IndexOf(Encoding.UTF8.GetBytes(form)) < 0, $"Synthetic secret found in {where}.");
+            Assert.True(content.AsSpan().IndexOf(Encoding.Unicode.GetBytes(form)) < 0, $"Synthetic secret (UTF-16) found in {where}.");
+        }
+    }
+
+    [Fact]
+    public async Task Resolved_device_is_recorded_as_the_os_id_not_as_typed()
+    {
+        await using var f = await ServerFixture.StartAsync();
+        var issued = f.Issue("audio_get_state");
+        await using var c = await f.ClientAsync(issued.Token);
+
+        await c.CallToolAsync("audio_get_state", new Dictionary<string, object?> { ["device"] = "SPK" }, cancellationToken: Ct);
+
+        var e = Assert.Single(f.Audit.Query(new AuditQuery(ToolName: "audio_get_state")));
+        Assert.Equal("""{"direction":"output","target":"spk"}""", e.Arguments);
     }
 }
 

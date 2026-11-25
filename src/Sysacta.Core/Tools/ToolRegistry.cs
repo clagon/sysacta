@@ -23,6 +23,8 @@ public sealed partial class ToolRegistry
                 throw new ArgumentException($"Duplicate tool name '{d.Name}'.");
             }
 
+            tool.ValidateAuditedArguments();
+
             if (d.EffectiveTimeout <= TimeSpan.Zero)
             {
                 throw new ArgumentException($"Tool '{d.Name}' has a non-positive timeout.");

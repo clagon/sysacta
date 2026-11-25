@@ -34,14 +34,14 @@ public sealed class AudioGetStateTool(IAudioEndpoints endpoints, IDeviceAliases 
         Description: "Returns the master volume (0-100), mute state and identity of an audio endpoint. Uses the default device when 'device' is omitted.",
         DefaultPolicy: DefaultPolicy.On,
         ReadOnly: true,
-        AuditedArguments: ["device", "direction"]);
+        AuditedArguments: ["direction"]); // the device is recorded as the resolved target id, never as typed
 
     protected override ValueTask<ToolTarget> ResolveTargetAsync(AudioGetStateArgs args, CancellationToken cancellationToken) =>
         ValueTask.FromResult(AudioTarget.Resolve(endpoints, aliases, args.Device, args.Direction));
 
-    protected override Task<ToolOutcome<AudioGetStateData>> ExecuteAsync(AudioGetStateArgs args, ToolTarget target, CancellationToken cancellationToken)
+    protected override Task<ToolOutcome<AudioGetStateData>> ExecuteAsync(AudioGetStateArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
-        var state = endpoints.GetEndpoint(target.TargetId!);
+        var state = endpoints.GetEndpoint(execution.TargetId!);
         var data = new AudioGetStateData(
             AudioTarget.Describe(endpoints, state),
             state.VolumeScalar is { } v ? AudioTarget.ToLevel(v) : null,
