@@ -71,7 +71,10 @@ public class TokenAuthenticatorTests
     public void Token_of_one_client_cannot_be_altered_into_another()
     {
         var (_, token) = _store.AddClient("c1");
-        var tampered = token[..^1] + (token[^1] == 'A' ? 'B' : 'A');
+        // Change a middle character: the last base64url character of 32 bytes only allows some values (padding bits),
+        // so tampering with it would sometimes be rejected as Malformed instead (still rejected, but a different path).
+        var i = ClientTokens.Prefix.Length + 10;
+        var tampered = token[..i] + (token[i] == 'A' ? 'B' : 'A') + token[(i + 1)..];
         Assert.Equal(AuthFailure.UnknownToken, _auth.Authenticate("Bearer " + tampered).Failure);
     }
 }
