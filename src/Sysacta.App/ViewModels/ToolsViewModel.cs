@@ -1,0 +1,150 @@
+using System.Collections.ObjectModel;
+using System.Text.Json;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Sysacta.Core.Security;
+using Sysacta.Core.Tools;
+using Wpf.Ui.Controls;
+
+namespace Sysacta.App.ViewModels;
+
+public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewModel
+{
+    private static readonly JsonSerializerOptions IndentedJson = new(ToolJson.Options) { WriteIndented = true };
+
+    public ObservableCollection<ToolCategoryGroup> Categories { get; } = [];
+
+    public override async Task RefreshAsync()
+    {
+        var states = await Task.Run(() => runtime.Registry.All.ToDictionary(t => t.Name, t => runtime.Access.IsToolEnabled(t.Name)));
+        Categories.Clear();
+        foreach (var group in runtime.Registry.All.GroupBy(t => t.Descriptor.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
+        {
+            var items = group.OrderBy(t => t.Name, StringComparer.Ordinal).Select(t => new ToolItem(this, t, states[t.Name]));
+            Categories.Add(new ToolCategoryGroup(this, CategoryLabel(group.Key), [.. items]));
+        }
+    }
+
+    internal async Task SetEnabledAsync(ToolItem item, bool enabled)
+    {
+        await RunAsync(async () =>
+        {
+            await Task.Run(() => runtime.Access.SetToolEnabled(item.Name, enabled));
+            Notify(InfoBarSeverity.Success, enabled ? $"{item.Name} を有効にしました" : $"{item.Name} を無効にしました", "すべてのクライアントに即時に反映されます。");
+        });
+    }
+
+    /// <summary>Runs a read-only tool through the same executor as MCP (validated, globally authorized and audited).</summary>
+    internal async Task TestAsync(ToolItem item)
+    {
+        await RunAsync(async () =>
+        {
+            var result = await runtime.Executor.ExecuteAsync(Caller.LocalConsole, item.Name, null, CancellationToken.None);
+            item.TestResult = JsonSerializer.Serialize(result, IndentedJson);
+            item.HasTestResult = true;
+        });
+    }
+
+    private static string CategoryLabel(string category) => category switch
+    {
+        ToolCategories.Audio => "オーディオ",
+        ToolCategories.Display => "ディスプレイ",
+        ToolCategories.Media => "メディア",
+        ToolCategories.Power => "電源",
+        ToolCategories.System => "システム",
+        ToolCategories.Apps => "アプリ・プロセス",
+        ToolCategories.Network => "ネットワーク",
+        ToolCategories.Bluetooth => "Bluetooth",
+        ToolCategories.Notification => "通知",
+        _ => category,
+    };
+}
+
+public sealed partial class ToolCategoryGroup(ToolsViewModel owner, string name, IReadOnlyList<ToolItem> items) : ObservableObject
+{
+    public string Name { get; } = name;
+
+    public IReadOnlyList<ToolItem> Items { get; } = items;
+
+    [RelayCommand]
+    private async Task EnableAllAsync()
+    {
+        foreach (var item in Items.Where(i => i.IsAvailable && !i.IsEnabled && !i.IsExperimental))
+        {
+            item.SetWithoutSaving(true);
+            await owner.SetEnabledAsync(item, true);
+        }
+    }
+
+    [RelayCommand]
+    private async Task DisableAllAsync()
+    {
+        foreach (var item in Items.Where(i => i.IsEnabled))
+        {
+            item.SetWithoutSaving(false);
+            await owner.SetEnabledAsync(item, false);
+        }
+    }
+}
+
+public sealed partial class ToolItem : ObservableObject
+{
+    private readonly ToolsViewModel _owner;
+    private bool _suppressSave;
+
+    public ToolItem(ToolsViewModel owner, SysactaTool tool, bool enabled)
+    {
+        _owner = owner;
+        _isEnabled = enabled;
+        Name = tool.Name;
+        Title = tool.Descriptor.Title;
+        Description = tool.Descriptor.Description;
+        IsExperimental = tool.Descriptor.DefaultPolicy == DefaultPolicy.Experimental;
+        PolicyLabel = tool.Descriptor.DefaultPolicy switch
+        {
+            DefaultPolicy.On => tool.Descriptor.ReadOnly ? "既定で有効・読み取り" : "既定で有効・状態変更",
+            DefaultPolicy.Off => "既定で無効・注意が必要な操作",
+            _ => "実験的・非公開APIを使用",
+        };
+        var availability = tool.GetAvailability();
+        IsAvailable = availability.IsAvailable;
+        AvailabilityText = availability.IsAvailable ? "" : $"この環境では利用できません: {availability.Reason}";
+        CanTest = tool.Descriptor.ReadOnly && availability.IsAvailable;
+    }
+
+    public string Name { get; }
+    public string Title { get; }
+    public string Description { get; }
+    public string PolicyLabel { get; }
+    public bool IsExperimental { get; }
+    public bool IsAvailable { get; }
+    public string AvailabilityText { get; }
+    public bool CanTest { get; }
+
+    [ObservableProperty]
+    private bool _isEnabled;
+
+    [ObservableProperty]
+    private string _testResult = "";
+
+    [ObservableProperty]
+    private bool _hasTestResult;
+
+    internal void SetWithoutSaving(bool value)
+    {
+        _suppressSave = true;
+        IsEnabled = value;
+        _suppressSave = false;
+    }
+
+    partial void OnIsEnabledChanged(bool value)
+    {
+        if (!_suppressSave)
+        {
+            _ = _owner.SetEnabledAsync(this, value);
+        }
+    }
+
+    [RelayCommand]
+    private Task TestAsync() => _owner.TestAsync(this);
+}

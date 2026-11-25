@@ -1,0 +1,183 @@
+using System.Collections.Concurrent;
+using System.ComponentModel.DataAnnotations;
+using System.Net;
+using System.Net.Http.Headers;
+using Microsoft.Data.Sqlite;
+using ModelContextProtocol.Client;
+using Sysacta.Core.Security;
+using Sysacta.Core.Tools;
+using Sysacta.Core.Tools.Audio;
+using Sysacta.Infrastructure;
+
+namespace Sysacta.Mcp.Tests;
+
+/// <summary>A real Kestrel MCP host on a random loopback port, backed by a temporary SQLite database.</summary>
+public sealed class ServerFixture : IAsyncDisposable
+{
+    private readonly string _dir = Directory.CreateTempSubdirectory("sysacta-mcp-").FullName;
+
+    public SysactaDatabase Database { get; }
+    public AccessStore Store { get; }
+    public AuditLog Audit { get; }
+    public ToolExecutor Executor { get; }
+    public McpServerHost Host { get; }
+    public FakeAudio AudioDevice { get; } = new();
+    public BlockingTool Blocking { get; } = new();
+
+    private ServerFixture()
+    {
+        Database = new SysactaDatabase(Path.Combine(_dir, "sysacta.db"));
+        Database.Migrate();
+        Store = new AccessStore(Database, TimeProvider.System);
+        Audit = new AuditLog(Database);
+        var registry = new ToolRegistry([new AudioGetStateTool(AudioDevice, Store), new AudioSetVolumeTool(AudioDevice, Store), Blocking]);
+        Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
+        Store.SetToolEnabled(Blocking.Name, true);
+        Executor = new ToolExecutor(registry, new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System);
+        Host = new McpServerHost(Executor, new TokenAuthenticator(Store, TimeProvider.System), Audit, TimeProvider.System, "test");
+    }
+
+    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null)
+    {
+        var fixture = new ServerFixture();
+        await fixture.Host.StartAsync(options ?? new ServerEndpointOptions { Port = 0 }, TestContext.Current.CancellationToken);
+        return fixture;
+    }
+
+    public Uri Endpoint => new($"http://127.0.0.1:{Host.BoundPort}/mcp");
+
+    public IssuedClient Issue(params string[] tools) => Store.IssueClient("agent-" + Guid.NewGuid().ToString("N")[..6], null, tools);
+
+    public HttpClient Http(string? token = null)
+    {
+        var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{Host.BoundPort}") };
+        if (token is not null)
+        {
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        return http;
+    }
+
+    public Task<McpClient> ClientAsync(string token, string? protocolVersion = null) =>
+        McpClient.CreateAsync(
+            new HttpClientTransport(new HttpClientTransportOptions
+            {
+                Endpoint = Endpoint,
+                TransportMode = HttpTransportMode.StreamableHttp,
+                AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer " + token },
+            }),
+            new McpClientOptions { ProtocolVersion = protocolVersion },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+    /// <summary>A minimal JSON-RPC POST as a non-SDK client would send it.</summary>
+    public static HttpRequestMessage JsonRpc(string body, string protocolVersion = "2025-06-18")
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        request.Headers.Add("MCP-Protocol-Version", protocolVersion);
+        return request;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var gate in Blocking.Gates.Values)
+        {
+            gate.Release(100);
+        }
+
+        await Host.DisposeAsync();
+        SqliteConnection.ClearAllPools();
+        try
+        {
+            Directory.Delete(_dir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+}
+
+public sealed class FakeAudio : IAudioEndpoints
+{
+    private readonly object _gate = new();
+    private float _volume = 0.4f;
+
+    public string? GetDefaultEndpointId(AudioDirection direction) => direction == AudioDirection.Output ? "spk" : null;
+
+    public AudioEndpointState GetEndpoint(string id)
+    {
+        lock (_gate)
+        {
+            return id == "spk"
+                ? new AudioEndpointState("spk", "Speakers", AudioDirection.Output, AudioDeviceState.Active, _volume, false)
+                : throw new ToolFailureException(ErrorCodes.TargetNotFound, "The specified audio device was not found.");
+        }
+    }
+
+    public void SetVolumeScalar(string id, float scalar)
+    {
+        lock (_gate)
+        {
+            _volume = scalar;
+        }
+    }
+}
+
+public sealed class BlockArgs
+{
+    [StringLength(16, MinimumLength = 1)]
+    public required string Resource { get; init; }
+}
+
+public sealed record BlockData(bool Done);
+
+/// <summary>Test-only state-changing tool that blocks until released. Exists only in this test assembly.</summary>
+public sealed class BlockingTool : SysactaTool<BlockArgs, BlockData>
+{
+    public ConcurrentDictionary<string, SemaphoreSlim> Gates { get; } = new();
+    private int _started;
+
+    public int Started => Volatile.Read(ref _started);
+
+    public override ToolDescriptor Descriptor { get; } = new("system_set_block", ToolCategories.System, "Block", "Test only", DefaultPolicy.Off, ReadOnly: false, AuditedArguments: ["resource"], TimeSpan.FromSeconds(20));
+
+    protected override ValueTask<ToolTarget> ResolveTargetAsync(BlockArgs args, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(new ToolTarget([$"test:{args.Resource}"], args.Resource));
+
+    protected override Task<ToolOutcome<BlockData>> ExecuteAsync(BlockArgs args, ToolTarget target, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _started);
+        Gates.GetOrAdd(args.Resource, _ => new SemaphoreSlim(0)).Wait(CancellationToken.None);
+        return Task.FromResult(new ToolOutcome<BlockData>(new BlockData(true), Verification.Verified));
+    }
+}
+
+internal static class Wait
+{
+    public static async Task Until(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "Condition not reached in time.");
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+    }
+
+    public static bool IsPortFree(int port)
+    {
+        try
+        {
+            var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, port);
+            listener.Start();
+            listener.Stop();
+            return true;
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return false;
+        }
+    }
+}

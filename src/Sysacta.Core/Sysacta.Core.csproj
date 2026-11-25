@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Contracts, tool pipeline, permissions, results and locking. Must not reference WPF, ASP.NET Core, Windows APIs or SQLite. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sysacta.Core.Tests" />
+  </ItemGroup>
+</Project>

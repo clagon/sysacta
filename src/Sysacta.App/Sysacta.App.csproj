@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- WPF management console, tray icon and composition root. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>Sysacta</AssemblyName>
+    <RootNamespace>Sysacta.App</RootNamespace>
+    <ApplicationIcon>Assets\sysacta.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sysacta.Core\Sysacta.Core.csproj" />
+    <ProjectReference Include="..\Sysacta.Mcp\Sysacta.Mcp.csproj" />
+    <ProjectReference Include="..\Sysacta.Windows\Sysacta.Windows.csproj" />
+    <ProjectReference Include="..\Sysacta.Infrastructure\Sysacta.Infrastructure.csproj" />
+    <PackageReference Include="WPF-UI" />
+    <PackageReference Include="H.NotifyIcon.Wpf" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\sysacta.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sysacta.App.Tests" />
+  </ItemGroup>
+</Project>
