@@ -24,7 +24,7 @@
 - `dotnet build Sysacta.sln -c Release`: 警告 0 / エラー 0(`TreatWarningsAsErrors`, `AnalysisLevel=latest-recommended`)。
 - `dotnet test Sysacta.sln -c Release`: **Core 71 / Infrastructure 37 / Mcp 38 成功**、Windows.Tests 3 スキップ(非Windows)、App.Tests は非Windowsでは対象外。
 
-### Windows CI (GitHub Actions windows-latest, PR #1, run 45622045931, 2026-11-25) — 最終コード
+### Windows CI (GitHub Actions windows-latest, PR #1, 最新 run 45623360148, 2026-11-25) — 最終コード
 
 - Restore / `dotnet build Sysacta.sln -c Release` / `dotnet test` すべて成功。
 - **Core 71 / Infrastructure 37 / Mcp 38 / App 2 成功**、Windows.Tests 3 スキップ(ランナーに既定の音声出力デバイスがない。実機では下記のとおり成功)。
