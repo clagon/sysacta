@@ -15,6 +15,7 @@ namespace Sysacta.App;
 public sealed class SysactaRuntime : IAsyncDisposable
 {
     private readonly TimeProvider _time = TimeProvider.System;
+    private readonly SemaphoreSlim _settingsGate = new(1, 1);
 
     public SysactaRuntime(string dataDirectory)
     {
@@ -89,7 +90,24 @@ public sealed class SysactaRuntime : IAsyncDisposable
     }
 
     /// <summary>Saves settings and, if the server is running, restarts it (restoring the previous settings on failure).</summary>
-    public async Task<string?> SaveSettingsAsync(AppSettings settings, bool restartIfRunning)
+    /// <param name="change">
+    /// Applied to the settings current at the time of saving. Saves are serialized, so concurrent saves from different
+    /// pages (e.g. theme and retention) never overwrite each other's fields.
+    /// </param>
+    public async Task<string?> SaveSettingsAsync(Func<AppSettings, AppSettings> change, bool restartIfRunning)
+    {
+        await _settingsGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return await SaveSettingsCoreAsync(change(Settings), restartIfRunning).ConfigureAwait(false);
+        }
+        finally
+        {
+            _settingsGate.Release();
+        }
+    }
+
+    private async Task<string?> SaveSettingsCoreAsync(AppSettings settings, bool restartIfRunning)
     {
         if (settings.Validate() is { } error)
         {

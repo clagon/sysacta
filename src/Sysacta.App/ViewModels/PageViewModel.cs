@@ -80,11 +80,11 @@ public abstract partial class PageViewModel : ObservableObject
 }
 
 /// <summary>
-/// Persists a toggle so that the stored value always ends up equal to the last value shown, even when the user
-/// toggles again while a save is still running: saves for one toggle never overlap, and a change made meanwhile is
-/// saved afterwards. On failure the view is reloaded from the store.
+/// Persists a control's value (toggle, combo box) so that the stored value always ends up equal to the last value
+/// shown, even when the user changes it again while a save is still running: saves for one control never overlap, and
+/// a change made meanwhile is saved afterwards. On failure the view is reloaded from the store.
 /// </summary>
-internal sealed class ToggleSaver(Func<bool> current, Func<bool, Task<bool>> save, Func<Task> reload)
+internal sealed class LatestValueSaver<T>(Func<T> current, Func<T, Task<bool>> save, Func<Task> reload)
 {
     private bool _saving;
 
@@ -108,7 +108,7 @@ internal sealed class ToggleSaver(Func<bool> current, Func<bool, Task<bool>> sav
                     return;
                 }
 
-                if (current() == value)
+                if (EqualityComparer<T>.Default.Equals(current(), value))
                 {
                     return;
                 }

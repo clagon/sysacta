@@ -95,17 +95,23 @@ public sealed partial class ConnectionViewModel(SysactaRuntime runtime) : PageVi
             BindAny => "0.0.0.0",
             _ => CustomAddress.Trim(),
         };
-        var settings = runtime.Settings with
-        {
-            BindAddress = address,
-            Port = Port is { } p && p == Math.Floor(p) && p is >= 1 and <= 65535 ? (int)p : -1,
-            AllowedHosts = Lines(AllowedHosts),
-            AllowedOrigins = Lines(AllowedOrigins),
-            ExternalUrl = string.IsNullOrWhiteSpace(ExternalUrl) ? null : ExternalUrl.Trim(),
-            StartServerOnLaunch = StartOnLaunch,
-        };
+        var port = Port is { } p && p == Math.Floor(p) && p is >= 1 and <= 65535 ? (int)p : -1;
+        var hosts = Lines(AllowedHosts);
+        var origins = Lines(AllowedOrigins);
+        var externalUrl = string.IsNullOrWhiteSpace(ExternalUrl) ? null : ExternalUrl.Trim();
+        var startOnLaunch = StartOnLaunch;
 
-        if (await runtime.SaveSettingsAsync(settings, restartIfRunning: true) is { } error)
+        if (await runtime.SaveSettingsAsync(
+                s => s with
+                {
+                    BindAddress = address,
+                    Port = port,
+                    AllowedHosts = hosts,
+                    AllowedOrigins = origins,
+                    ExternalUrl = externalUrl,
+                    StartServerOnLaunch = startOnLaunch,
+                },
+                restartIfRunning: true) is { } error)
         {
             Notify(InfoBarSeverity.Error, "設定を適用できませんでした", error);
         }

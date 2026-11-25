@@ -2,7 +2,7 @@ using Sysacta.App.ViewModels;
 
 namespace Sysacta.App.Tests;
 
-public class ToggleSaverTests
+public class LatestValueSaverTests
 {
     [Fact]
     public async Task A_toggle_made_during_a_save_is_saved_after_it_so_the_last_value_wins()
@@ -10,7 +10,7 @@ public class ToggleSaverTests
         var shown = true;
         var saved = new List<bool>();
         var firstSave = new TaskCompletionSource<bool>();
-        var saver = new ToggleSaver(() => shown, value =>
+        var saver = new LatestValueSaver<bool>(() => shown, value =>
         {
             saved.Add(value);
             return saved.Count == 1 ? firstSave.Task : Task.FromResult(true);
@@ -29,7 +29,7 @@ public class ToggleSaverTests
     public async Task A_failed_save_reloads_the_view()
     {
         var reloaded = false;
-        var saver = new ToggleSaver(() => true, _ => Task.FromResult(false), () => { reloaded = true; return Task.CompletedTask; });
+        var saver = new LatestValueSaver<bool>(() => true, _ => Task.FromResult(false), () => { reloaded = true; return Task.CompletedTask; });
 
         await saver.ChangedAsync();
 

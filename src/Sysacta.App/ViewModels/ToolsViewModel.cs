@@ -63,7 +63,7 @@ public sealed partial class ToolCategoryGroup(string name, IReadOnlyList<ToolIte
 
     public IReadOnlyList<ToolItem> Items { get; } = items;
 
-    // Setting IsEnabled saves through each item's ToggleSaver.
+    // Setting IsEnabled saves through each item's LatestValueSaver.
     [RelayCommand]
     private void EnableAll()
     {
@@ -86,13 +86,13 @@ public sealed partial class ToolCategoryGroup(string name, IReadOnlyList<ToolIte
 public sealed partial class ToolItem : ObservableObject
 {
     private readonly ToolsViewModel _owner;
-    private readonly ToggleSaver _saver;
+    private readonly LatestValueSaver<bool> _saver;
 
     public ToolItem(ToolsViewModel owner, SysactaTool tool, bool enabled)
     {
         _owner = owner;
         _isEnabled = enabled;
-        _saver = new ToggleSaver(() => IsEnabled, value => owner.SetEnabledAsync(this, value), owner.RefreshAsync);
+        _saver = new LatestValueSaver<bool>(() => IsEnabled, value => owner.SetEnabledAsync(this, value), owner.RefreshAsync);
         Name = tool.Name;
         Title = tool.Descriptor.Title;
         Description = tool.Descriptor.Description;

@@ -10,6 +10,7 @@ namespace Sysacta.App.ViewModels;
 public sealed partial class GeneralViewModel(SysactaRuntime runtime, Func<System.Windows.Window> window) : PageViewModel
 {
     private bool _loading;
+    private LatestValueSaver<int>? _themeSaver;
 
     public static IReadOnlyList<string> ThemeOptions { get; } = ["Windows の設定に従う", "ライト", "ダーク"];
 
@@ -73,10 +74,18 @@ public sealed partial class GeneralViewModel(SysactaRuntime runtime, Func<System
             return;
         }
 
-        var theme = (ThemePreference)value;
-        ThemeController.Apply(theme, window());
-        _ = RunAsync(() => runtime.SaveSettingsAsync(runtime.Settings with { Theme = theme }, restartIfRunning: false));
+        ThemeController.Apply((ThemePreference)value, window());
+        _themeSaver ??= new LatestValueSaver<int>(() => ThemeIndex, SaveThemeAsync, RefreshAsync);
+        _ = _themeSaver.ChangedAsync();
     }
+
+    private Task<bool> SaveThemeAsync(int index) => RunAsync(async () =>
+    {
+        if (await runtime.SaveSettingsAsync(s => s with { Theme = (ThemePreference)index }, restartIfRunning: false) is { } error)
+        {
+            throw new InvalidOperationException(error);
+        }
+    }, "テーマを保存できませんでした");
 
     [RelayCommand]
     private void OpenDataDirectory() =>

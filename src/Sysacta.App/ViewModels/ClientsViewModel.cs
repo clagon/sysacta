@@ -247,11 +247,11 @@ public sealed partial class PermissionItem : ObservableObject
     [ObservableProperty]
     private bool _isAllowed;
 
-    private ToggleSaver? _saver;
+    private LatestValueSaver<bool>? _saver;
 
     partial void OnIsAllowedChanged(bool value)
     {
-        _saver ??= new ToggleSaver(() => IsAllowed, v => _owner.SetGrantAsync(_clientId, ToolName, v), () => _owner.LoadPermissionsAsync(_owner.Selected));
+        _saver ??= new LatestValueSaver<bool>(() => IsAllowed, v => _owner.SetGrantAsync(_clientId, ToolName, v), () => _owner.LoadPermissionsAsync(_owner.Selected));
         _ = _saver.ChangedAsync();
     }
 }

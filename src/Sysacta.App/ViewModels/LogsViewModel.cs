@@ -143,7 +143,7 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
     private Task SaveRetentionAsync() => RunAsync(async () =>
     {
         var days = RetentionDays is { } d && d == Math.Floor(d) ? (int)d : -1;
-        if (await runtime.SaveSettingsAsync(runtime.Settings with { AuditRetentionDays = days }, restartIfRunning: false) is { } error)
+        if (await runtime.SaveSettingsAsync(s => s with { AuditRetentionDays = days }, restartIfRunning: false) is { } error)
         {
             Notify(InfoBarSeverity.Error, "保持期間を保存できませんでした", error);
             return;
