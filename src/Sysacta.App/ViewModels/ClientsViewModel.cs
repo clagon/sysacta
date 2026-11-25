@@ -61,7 +61,9 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
         Selected = Clients.FirstOrDefault(c => c.Id == selectedId);
     }
 
-    async partial void OnSelectedChanged(ClientItem? value)
+    async partial void OnSelectedChanged(ClientItem? value) => await LoadPermissionsAsync(value);
+
+    internal async Task LoadPermissionsAsync(ClientItem? value)
     {
         Permissions.Clear();
         if (value is null)
@@ -82,7 +84,7 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
         }
     }
 
-    internal Task SetGrantAsync(string clientId, string toolName, bool allowed) => RunAsync(async () =>
+    internal Task<bool> SetGrantAsync(string clientId, string toolName, bool allowed) => RunAsync(async () =>
     {
         await Task.Run(() => runtime.Access.SetClientGrant(clientId, toolName, allowed));
         Notify(InfoBarSeverity.Success, allowed ? $"{toolName} を許可しました" : $"{toolName} の許可を取り消しました", "次のリクエストから即時に反映されます。");
@@ -245,5 +247,11 @@ public sealed partial class PermissionItem : ObservableObject
     [ObservableProperty]
     private bool _isAllowed;
 
-    partial void OnIsAllowedChanged(bool value) => _ = _owner.SetGrantAsync(_clientId, ToolName, value);
+    private ToggleSaver? _saver;
+
+    partial void OnIsAllowedChanged(bool value)
+    {
+        _saver ??= new ToggleSaver(() => IsAllowed, v => _owner.SetGrantAsync(_clientId, ToolName, v), () => _owner.LoadPermissionsAsync(_owner.Selected));
+        _ = _saver.ChangedAsync();
+    }
 }

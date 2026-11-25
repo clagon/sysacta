@@ -117,7 +117,7 @@ public class AccessPolicyTests
         _store.Clients["c2"] = _store.Clients["c2"] with { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1) };
         Assert.Equal(AccessDecision.ClientInactive, _policy.Evaluate(caller2, _tool));
 
-        Assert.Equal(AccessDecision.ClientInactive, _policy.Evaluate(Caller.Client("ghost", "ghost", null), _tool));
+        Assert.Equal(AccessDecision.ClientInactive, _policy.Evaluate(Caller.Client("ghost", "ghost", null, new string('0', 64)), _tool));
     }
 
     [Fact]

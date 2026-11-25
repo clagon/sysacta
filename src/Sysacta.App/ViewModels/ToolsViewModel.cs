@@ -21,18 +21,15 @@ public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewMod
         foreach (var group in runtime.Registry.All.GroupBy(t => t.Descriptor.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
             var items = group.OrderBy(t => t.Name, StringComparer.Ordinal).Select(t => new ToolItem(this, t, states[t.Name]));
-            Categories.Add(new ToolCategoryGroup(this, CategoryLabel(group.Key), [.. items]));
+            Categories.Add(new ToolCategoryGroup(CategoryLabel(group.Key), [.. items]));
         }
     }
 
-    internal async Task SetEnabledAsync(ToolItem item, bool enabled)
+    internal Task<bool> SetEnabledAsync(ToolItem item, bool enabled) => RunAsync(async () =>
     {
-        await RunAsync(async () =>
-        {
-            await Task.Run(() => runtime.Access.SetToolEnabled(item.Name, enabled));
-            Notify(InfoBarSeverity.Success, enabled ? $"{item.Name} を有効にしました" : $"{item.Name} を無効にしました", "すべてのクライアントに即時に反映されます。");
-        });
-    }
+        await Task.Run(() => runtime.Access.SetToolEnabled(item.Name, enabled));
+        Notify(InfoBarSeverity.Success, enabled ? $"{item.Name} を有効にしました" : $"{item.Name} を無効にしました", "すべてのクライアントに即時に反映されます。");
+    });
 
     /// <summary>Runs a read-only tool through the same executor as MCP (validated, globally authorized and audited).</summary>
     internal async Task TestAsync(ToolItem item)
@@ -60,29 +57,28 @@ public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewMod
     };
 }
 
-public sealed partial class ToolCategoryGroup(ToolsViewModel owner, string name, IReadOnlyList<ToolItem> items) : ObservableObject
+public sealed partial class ToolCategoryGroup(string name, IReadOnlyList<ToolItem> items) : ObservableObject
 {
     public string Name { get; } = name;
 
     public IReadOnlyList<ToolItem> Items { get; } = items;
 
+    // Setting IsEnabled saves through each item's ToggleSaver.
     [RelayCommand]
-    private async Task EnableAllAsync()
+    private void EnableAll()
     {
-        foreach (var item in Items.Where(i => i.IsAvailable && !i.IsEnabled && !i.IsExperimental))
+        foreach (var item in Items.Where(i => i.IsAvailable && !i.IsExperimental))
         {
-            item.SetWithoutSaving(true);
-            await owner.SetEnabledAsync(item, true);
+            item.IsEnabled = true;
         }
     }
 
     [RelayCommand]
-    private async Task DisableAllAsync()
+    private void DisableAll()
     {
-        foreach (var item in Items.Where(i => i.IsEnabled))
+        foreach (var item in Items)
         {
-            item.SetWithoutSaving(false);
-            await owner.SetEnabledAsync(item, false);
+            item.IsEnabled = false;
         }
     }
 }
@@ -90,12 +86,13 @@ public sealed partial class ToolCategoryGroup(ToolsViewModel owner, string name,
 public sealed partial class ToolItem : ObservableObject
 {
     private readonly ToolsViewModel _owner;
-    private bool _suppressSave;
+    private readonly ToggleSaver _saver;
 
     public ToolItem(ToolsViewModel owner, SysactaTool tool, bool enabled)
     {
         _owner = owner;
         _isEnabled = enabled;
+        _saver = new ToggleSaver(() => IsEnabled, value => owner.SetEnabledAsync(this, value), owner.RefreshAsync);
         Name = tool.Name;
         Title = tool.Descriptor.Title;
         Description = tool.Descriptor.Description;
@@ -130,20 +127,7 @@ public sealed partial class ToolItem : ObservableObject
     [ObservableProperty]
     private bool _hasTestResult;
 
-    internal void SetWithoutSaving(bool value)
-    {
-        _suppressSave = true;
-        IsEnabled = value;
-        _suppressSave = false;
-    }
-
-    partial void OnIsEnabledChanged(bool value)
-    {
-        if (!_suppressSave)
-        {
-            _ = _owner.SetEnabledAsync(this, value);
-        }
-    }
+    partial void OnIsEnabledChanged(bool value) => _ = _saver.ChangedAsync();
 
     [RelayCommand]
     private Task TestAsync() => _owner.TestAsync(this);

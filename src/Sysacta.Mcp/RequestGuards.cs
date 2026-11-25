@@ -15,6 +15,7 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
 {
     public const string ClientIdClaim = "sysacta:client_id";
     public const string RemoteAddressClaim = "sysacta:remote";
+    public const string CredentialClaim = "sysacta:credential";
     public const string AuthenticationType = "SysactaBearer";
 
     private readonly HashSet<string> _allowedHosts = BuildAllowedHosts(options);
@@ -78,7 +79,7 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
 
         var client = result.Client!;
         context.User = new ClaimsPrincipal(new ClaimsIdentity(
-            [new Claim(ClientIdClaim, client.Id), new Claim(ClaimTypes.Name, client.Name), new Claim(RemoteAddressClaim, remote ?? "")],
+            [new Claim(ClientIdClaim, client.Id), new Claim(ClaimTypes.Name, client.Name), new Claim(RemoteAddressClaim, remote ?? ""), new Claim(CredentialClaim, result.TokenHash!)],
             AuthenticationType));
 
         await next(context);
@@ -94,7 +95,8 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
         }
 
         var remote = user.FindFirst(RemoteAddressClaim)?.Value;
-        return Caller.Client(id, user.FindFirst(ClaimTypes.Name)?.Value ?? id, string.IsNullOrEmpty(remote) ? null : remote);
+        var credential = user.FindFirst(CredentialClaim)?.Value ?? throw new UnauthorizedAccessException("The request is not authenticated.");
+        return Caller.Client(id, user.FindFirst(ClaimTypes.Name)?.Value ?? id, string.IsNullOrEmpty(remote) ? null : remote, credential);
     }
 
     internal bool IsHostAllowed(HostString host)

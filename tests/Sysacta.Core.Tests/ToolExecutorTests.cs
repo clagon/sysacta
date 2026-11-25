@@ -337,7 +337,7 @@ public class ToolExecutorTests
         var audit = new RecordingAuditLog();
         var executor = new ToolExecutor(new ToolRegistry([tool]), new AccessPolicy(broken, TimeProvider.System), audit, TimeProvider.System);
 
-        var result = await executor.ExecuteAsync(Caller.Client("c1", "c1", null), tool.Name, TestJson.Args(new { value = 1 }), Ct);
+        var result = await executor.ExecuteAsync(Caller.Client("c1", "c1", null, new string('0', 64)), tool.Name, TestJson.Args(new { value = 1 }), Ct);
 
         Assert.Equal(ErrorCodes.InternalError, result.Error!.Code);
         Assert.DoesNotContain("sysacta.db", result.Error.Message, StringComparison.Ordinal);
@@ -377,5 +377,59 @@ public class ToolExecutorTests
 
         protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolTarget target, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task Reissue_while_queued_refuses_the_call_made_with_the_old_token()
+    {
+        var tool = new GateTool();
+        var h = new Harness(null, tool);
+        var (holder, _) = h.Store.AddClient("holder", tool.Name);
+        var (victim, _) = h.Store.AddClient("victim", tool.Name);
+
+        var first = h.Executor.ExecuteAsync(holder, tool.Name, TestJson.Args(new { resource = "a" }), Ct);
+        await WaitUntil(() => tool.Started == 1);
+        var queued = h.Executor.ExecuteAsync(victim, tool.Name, TestJson.Args(new { resource = "a" }), Ct);
+        await WaitUntil(() => h.Executor.InFlight == 2);
+
+        h.Store.Reissue("victim"); // client stays active, but the credential that authenticated the call is gone
+        tool.Gate("a").Release();
+
+        Assert.True((await first).IsSuccess);
+        Assert.Equal(ErrorCodes.PermissionDenied, (await queued).Error!.Code);
+        Assert.Equal(1, tool.Started);
+    }
+
+    [Fact]
+    public async Task Hung_target_resolution_stays_counted_until_it_finishes()
+    {
+        var tool = new HangingResolveTool();
+        var h = new Harness(null, tool);
+        var (caller, _) = h.Store.AddClient("c1", tool.Name);
+
+        var result = await h.Executor.ExecuteAsync(caller, tool.Name, TestJson.Args(new { value = 1 }), Ct);
+
+        Assert.Equal(ErrorCodes.Timeout, result.Error!.Code);
+        Assert.True(result.Error.Retryable);
+        Assert.Equal(1, h.Executor.InFlight); // the blocked worker still counts against the admission limit
+
+        tool.Release.Set();
+        await WaitUntil(() => h.Executor.InFlight == 0);
+    }
+
+    private sealed class HangingResolveTool : SysactaTool<EchoArgs, EchoData>
+    {
+        public ManualResetEventSlim Release { get; } = new();
+
+        public override ToolDescriptor Descriptor { get; } = new("power_set_hang", ToolCategories.Power, "x", "x", DefaultPolicy.Off, false, [], TimeSpan.FromMilliseconds(200));
+
+        protected override ValueTask<ToolTarget> ResolveTargetAsync(EchoArgs args, CancellationToken cancellationToken)
+        {
+            Release.Wait(CancellationToken.None); // a native call that ignores cancellation
+            return ValueTask.FromResult(ToolTarget.None);
+        }
+
+        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolTarget target, CancellationToken cancellationToken) =>
+            Task.FromResult(new ToolOutcome<EchoData>(new EchoData(1), Verification.Verified));
     }
 }

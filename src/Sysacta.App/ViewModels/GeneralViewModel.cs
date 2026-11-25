@@ -62,7 +62,7 @@ public sealed partial class GeneralViewModel(SysactaRuntime runtime, Func<System
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or System.IO.IOException)
         {
-            Notify(InfoBarSeverity.Error, "自動起動の設定を変更できませんでした", ex.Message);
+            Notify(InfoBarSeverity.Error, "自動起動の設定を変更できませんでした", SafeMessage(ex));
         }
     }
 

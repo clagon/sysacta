@@ -44,7 +44,10 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Sysacta を起動できませんでした。\n\n{ex.Message}", "Sysacta", MessageBoxButton.OK, MessageBoxImage.Error);
+            // InvalidOperationException carries Sysacta's own text (e.g. "database schema is newer"); other messages may
+            // contain paths and are replaced.
+            var detail = ex is InvalidOperationException ? ex.Message : ViewModels.PageViewModel.SafeMessage(ex);
+            System.Windows.MessageBox.Show($"Sysacta を起動できませんでした。\n\n{detail}", "Sysacta", MessageBoxButton.OK, MessageBoxImage.Error);
             _instance.Dispose();
             Shutdown(1);
             return;

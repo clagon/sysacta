@@ -11,12 +11,16 @@ public enum CallerKind
 }
 
 /// <summary>Who is calling. Built only by the authentication layer (MCP) or the console.</summary>
-public sealed record Caller(CallerKind Kind, string? ClientId, string DisplayName, string? RemoteAddress)
+/// <param name="CredentialHash">
+/// SHA-256 of the token that authenticated this request (MCP clients only). Re-checked at execution time so that a
+/// call authenticated with a token that has since been re-issued is refused. Never logged or returned.
+/// </param>
+public sealed record Caller(CallerKind Kind, string? ClientId, string DisplayName, string? RemoteAddress, string? CredentialHash = null)
 {
     public static Caller LocalConsole { get; } = new(CallerKind.LocalConsole, null, "Local console", null);
 
-    public static Caller Client(string clientId, string name, string? remoteAddress) =>
-        new(CallerKind.McpClient, clientId, name, remoteAddress);
+    public static Caller Client(string clientId, string name, string? remoteAddress, string credentialHash) =>
+        new(CallerKind.McpClient, clientId, name, remoteAddress, credentialHash);
 
     public string Source => Kind == CallerKind.McpClient ? "mcp" : "local_console";
 }
@@ -86,10 +90,17 @@ public sealed class AccessPolicy(IAccessStore store, TimeProvider time)
             return AccessDecision.Allowed;
         }
 
-        if (caller.ClientId is null || store.GetClient(caller.ClientId) is not { } client || !client.IsActive(time.GetUtcNow()))
+        // The credential that authenticated the request must still belong to the client: revocation, expiry and
+        // re-issue (which replaces the token hash) all take effect for calls that are already queued.
+        if (caller.ClientId is null || caller.CredentialHash is null
+            || store.FindClientByTokenHash(caller.CredentialHash) is not { } found
+            || found.Client.Id != caller.ClientId
+            || !found.Client.IsActive(time.GetUtcNow()))
         {
             return AccessDecision.ClientInactive;
         }
+
+        var client = found.Client;
 
         return store.IsClientToolAllowed(client.Id, tool.Name) ? AccessDecision.Allowed : AccessDecision.NotPermitted;
     }

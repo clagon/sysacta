@@ -38,21 +38,85 @@ public abstract partial class PageViewModel : ObservableObject
 
     protected void ClearMessage() => HasMessage = false;
 
-    /// <summary>Runs <paramref name="work"/> with the busy flag set and converts failures into an error message.</summary>
-    protected async Task RunAsync(Func<Task> work, string failureTitle = "操作に失敗しました")
+    /// <summary>
+    /// Runs <paramref name="work"/> with the busy flag set and converts failures into an error message.
+    /// Returns false when it failed.
+    /// </summary>
+    protected async Task<bool> RunAsync(Func<Task> work, string failureTitle = "操作に失敗しました")
     {
         IsBusy = true;
         try
         {
             await work();
+            return true;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.IO.IOException or Microsoft.Data.Sqlite.SqliteException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
         {
+            // Thrown by Sysacta's own stores and validation with user-facing text (no paths or internals).
             Notify(InfoBarSeverity.Error, failureTitle, ex.Message);
+            return false;
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or Microsoft.Data.Sqlite.SqliteException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            Notify(InfoBarSeverity.Error, failureTitle, SafeMessage(ex));
+            return false;
         }
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Fixed user-facing text for OS / file / database failures. Their own messages can contain local paths or SQL,
+    /// which must not be shown (AGENTS.md rule 5); the type name helps a bug report.
+    /// </summary>
+    public static string SafeMessage(Exception ex) => (ex switch
+    {
+        UnauthorizedAccessException or System.Security.SecurityException => "アクセスが拒否されました。ファイルや設定の権限を確認してください。",
+        Microsoft.Data.Sqlite.SqliteException => "データベースの操作に失敗しました。しばらくしてからやり直してください。",
+        _ => "ファイルまたはデータベースにアクセスできませんでした。",
+    }) + $" ({ex.GetType().Name})";
+}
+
+/// <summary>
+/// Persists a toggle so that the stored value always ends up equal to the last value shown, even when the user
+/// toggles again while a save is still running: saves for one toggle never overlap, and a change made meanwhile is
+/// saved afterwards. On failure the view is reloaded from the store.
+/// </summary>
+internal sealed class ToggleSaver(Func<bool> current, Func<bool, Task<bool>> save, Func<Task> reload)
+{
+    private bool _saving;
+
+    /// <summary>Call from the property-changed hook on the UI thread.</summary>
+    public async Task ChangedAsync()
+    {
+        if (_saving)
+        {
+            return; // the running loop picks up the new value
+        }
+
+        _saving = true;
+        try
+        {
+            while (true)
+            {
+                var value = current();
+                if (!await save(value))
+                {
+                    await reload();
+                    return;
+                }
+
+                if (current() == value)
+                {
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            _saving = false;
         }
     }
 }

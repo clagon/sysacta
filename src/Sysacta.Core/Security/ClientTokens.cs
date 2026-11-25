@@ -37,7 +37,8 @@ public enum AuthFailure
     Expired,
 }
 
-public sealed record AuthResult(ClientRecord? Client, AuthFailure? Failure)
+/// <param name="TokenHash">Hash of the presented token on success (identifies the credential generation).</param>
+public sealed record AuthResult(ClientRecord? Client, AuthFailure? Failure, string? TokenHash = null)
 {
     public bool Succeeded => Client is not null;
 }
@@ -83,6 +84,6 @@ public sealed class TokenAuthenticator(IAccessStore store, TimeProvider time)
         }
 
         store.RecordClientUse(found.Client.Id, now);
-        return new(found.Client, null);
+        return new(found.Client, null, found.TokenHash);
     }
 }

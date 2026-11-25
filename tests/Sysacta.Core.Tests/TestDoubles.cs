@@ -50,10 +50,13 @@ internal sealed class FakeAccessStore : IAccessStore, IDeviceAliases
             Grants[(id, t)] = true;
         }
 
-        return (Caller.Client(id, id, "127.0.0.1"), token);
+        return (Caller.Client(id, id, "127.0.0.1", hash), token);
     }
 
     public void Revoke(string id) => Clients[id] = Clients[id] with { RevokedAt = DateTimeOffset.UnixEpoch };
+
+    /// <summary>Replaces the token (old token hash no longer matches), like AccessStore.ReissueClient.</summary>
+    public void Reissue(string id) => Hashes[id] = ClientTokens.Generate().Hash;
 }
 
 internal sealed class RecordingAuditLog : IAuditLog

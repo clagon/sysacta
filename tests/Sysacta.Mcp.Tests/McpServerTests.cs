@@ -228,8 +228,10 @@ public class AuthorizationTests
         Assert.Equal("mcp", e.Source);
     }
 
-    [Fact]
-    public async Task Revocation_while_queued_is_enforced_before_the_side_effect()
+    [Theory]
+    [InlineData("revoke")]
+    [InlineData("reissue")]
+    public async Task Revocation_or_reissue_while_queued_is_enforced_before_the_side_effect(string change)
     {
         await using var f = await ServerFixture.StartAsync();
         var holder = f.Issue(f.Blocking.Name);
@@ -243,7 +245,15 @@ public class AuthorizationTests
         var queued = c2.CallToolAsync(f.Blocking.Name, args, cancellationToken: Ct).AsTask();
         await Wait.Until(() => f.Executor.InFlight == 2);
 
-        f.Store.RevokeClient(victim.Client.Id);
+        if (change == "revoke")
+        {
+            f.Store.RevokeClient(victim.Client.Id);
+        }
+        else
+        {
+            f.Store.ReissueClient(victim.Client.Id);
+        }
+
         f.Blocking.Gates["r"].Release();
 
         Assert.False((await first).IsError);

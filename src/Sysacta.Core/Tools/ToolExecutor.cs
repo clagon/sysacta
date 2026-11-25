@@ -111,10 +111,11 @@ public sealed class ToolExecutor
         try
         {
             ToolTarget target;
+            // Resolution may call synchronous OS APIs; run it off the caller's thread and bound it by the timeout.
+            var resolution = Task.Run(() => tool.ResolveAsync(args, token).AsTask(), CancellationToken.None);
             try
             {
-                // Resolution may call synchronous OS APIs; run it off the caller's thread and bound it by the timeout.
-                target = await Task.Run(() => tool.ResolveAsync(args, token).AsTask(), CancellationToken.None).WaitAsync(token).ConfigureAwait(false);
+                target = await resolution.WaitAsync(token).ConfigureAwait(false);
                 if (!tool.Descriptor.ReadOnly)
                 {
                     var keys = target.LockKeys.Count > 0 ? target.LockKeys : [$"tool:{tool.Name}"];
@@ -130,6 +131,14 @@ public sealed class ToolExecutor
             }
             catch (OperationCanceledException)
             {
+                if (!resolution.IsCompleted)
+                {
+                    // A hung OS call during resolution keeps a worker busy: keep it counted against the admission
+                    // limit until it really ends, like an isolated execution (no locks are held yet).
+                    handedOff = true;
+                    _ = resolution.ContinueWith(static (_, state) => ((HeldResources)state!).Release(), resources, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                }
+
                 // Nothing has been executed yet, so retrying is safe.
                 return call.Finish(AuditOutcome.Error, cancellationToken.IsCancellationRequested
                     ? ToolResult.Fail(ErrorCodes.Cancelled, "The request was cancelled before execution.", retryable: true)

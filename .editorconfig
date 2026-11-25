@@ -28,3 +28,4 @@ dotnet_diagnostic.CA2007.severity = none   # ConfigureAwait in app/test code
 
 [src/Sysacta.App/**.cs]
 dotnet_diagnostic.CA1822.severity = none   # view-model properties are bound by instance
+dotnet_diagnostic.CA1859.severity = none   # RelayCommand methods return Task by design
