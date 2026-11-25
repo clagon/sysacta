@@ -32,9 +32,10 @@ public partial class App : Application
 
         DispatcherUnhandledException += (_, args) =>
         {
-            // Keep the tray app alive; never show stack traces.
+            // Keep the tray app alive; never show stack traces or messages (they may contain paths). The type name
+            // alone helps a bug report.
             args.Handled = true;
-            System.Windows.MessageBox.Show("予期しないエラーが発生しました。操作をやり直してください。", "Sysacta", MessageBoxButton.OK, MessageBoxImage.Warning);
+            System.Windows.MessageBox.Show($"予期しないエラーが発生しました。操作をやり直してください。\n({args.Exception.GetType().Name})", "Sysacta", MessageBoxButton.OK, MessageBoxImage.Warning);
         };
 
         try
@@ -49,9 +50,17 @@ public partial class App : Application
             return;
         }
 
-        _window = new MainWindow(_runtime);
-        ThemeController.Apply(_runtime.Settings.Theme, _window);
+        // Tray first: it is the only way to reach a hidden app, so later (cosmetic) failures must not prevent it.
         _tray = new TrayIcon(_runtime, ShowMainWindow, () => _ = ExitAsync());
+        _window = new MainWindow(_runtime);
+        try
+        {
+            ThemeController.Apply(_runtime.Settings.Theme, _window);
+        }
+        catch (InvalidOperationException)
+        {
+            // Theme is cosmetic; keep starting with the default theme.
+        }
 
         if (!e.Args.Contains(AutoStart.MinimizedArgument, StringComparer.OrdinalIgnoreCase))
         {

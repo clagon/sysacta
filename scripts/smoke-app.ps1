@@ -70,6 +70,15 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "TypeScript MCP client check failed." }
     } finally { Pop-Location }
     Write-Host "Independent MCP client (TypeScript SDK) connected with a Bearer token."
+
+    # Regression: a saved Light/Dark theme used to abort startup before the tray and the server were created.
+    $app.Kill(); $app.WaitForExit(10000) | Out-Null
+    Wait-Until { (Get-Status) -eq $null } "port released after the first instance ended" 15
+    python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('insert into settings (key,value,updated_at) values (?,?,?) on conflict(key) do update set value=excluded.value',('theme','Dark','x')); c.commit()" (Join-Path $data "sysacta.db")
+    if ($LASTEXITCODE -ne 0) { throw "Could not save the theme setting." }
+    $app = Start-Process -FilePath $Exe -ArgumentList "--minimized" -PassThru
+    Wait-Until { if ($app.HasExited) { throw "Sysacta exited early ($($app.ExitCode))." }; (Get-Status) -eq 401 } "server after restart with a saved Dark theme"
+    Write-Host "Restart with a saved Dark theme completes startup (server running)."
 }
 finally {
     if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit(10000) | Out-Null }

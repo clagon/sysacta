@@ -9,22 +9,28 @@ namespace Sysacta.App;
 /// <summary>Light / Dark / follow Windows.</summary>
 internal static class ThemeController
 {
+    private static Window? _watched;
+
     public static void Apply(ThemePreference preference, Window? window)
     {
         if (preference == ThemePreference.System)
         {
             ApplicationThemeManager.Apply(SystemPrefersLight() ? ApplicationTheme.Light : ApplicationTheme.Dark, WindowBackdropType.Mica, true);
-            if (window is not null)
+            if (window is not null && _watched != window)
             {
                 SystemThemeWatcher.Watch(window, WindowBackdropType.Mica, true);
+                _watched = window;
             }
 
             return;
         }
 
-        if (window is not null)
+        // SystemThemeWatcher.UnWatch throws for a window that is not loaded yet (e.g. at startup with a saved
+        // Light/Dark preference), and there is nothing to unwatch if we never watched it.
+        if (window is not null && _watched == window && window.IsLoaded)
         {
             SystemThemeWatcher.UnWatch(window);
+            _watched = null;
         }
 
         ApplicationThemeManager.Apply(preference == ThemePreference.Dark ? ApplicationTheme.Dark : ApplicationTheme.Light, WindowBackdropType.Mica, true);

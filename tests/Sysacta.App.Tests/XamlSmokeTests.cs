@@ -49,6 +49,25 @@ public class XamlSmokeTests
     }
 }
 
+/// <summary>Regression: a saved Light/Dark theme crashed startup before the tray was created.</summary>
+public class ThemeControllerTests
+{
+    [Fact]
+    public void Themes_can_be_applied_to_a_window_that_is_not_loaded_yet()
+    {
+        UiThread.Run(() =>
+        {
+            var window = new Window();
+            foreach (var theme in new[] { Sysacta.Infrastructure.ThemePreference.Dark, Sysacta.Infrastructure.ThemePreference.System, Sysacta.Infrastructure.ThemePreference.Light, Sysacta.Infrastructure.ThemePreference.System })
+            {
+                ThemeController.Apply(theme, window);
+            }
+
+            window.Close();
+        });
+    }
+}
+
 /// <summary>Creates the real notification-area icon and follows server state changes (Windows only).</summary>
 public class TrayIconTests
 {
