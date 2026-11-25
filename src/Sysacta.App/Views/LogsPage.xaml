@@ -30,9 +30,12 @@
       </ui:TextBox>
       <ComboBox Width="150" Margin="0,0,8,8" ItemsSource="{x:Static vm:LogsViewModel.OutcomeOptions}" SelectedIndex="{Binding OutcomeIndex}" AutomationProperties.Name="結果" />
       <ComboBox Width="190" Margin="0,0,8,8" ItemsSource="{Binding ToolOptions}" SelectedIndex="{Binding ToolIndex}" AutomationProperties.Name="ツール" />
-      <DatePicker Width="140" Margin="0,0,4,8" SelectedDate="{Binding FromDate}" AutomationProperties.Name="開始日" />
-      <TextBlock Margin="0,0,4,8" VerticalAlignment="Center" Style="{StaticResource Caption}" Text="〜" />
-      <DatePicker Width="140" Margin="0,0,8,8" SelectedDate="{Binding ToDate}" AutomationProperties.Name="終了日" />
+      <!-- The date range wraps as one unit. -->
+      <StackPanel Margin="0,0,8,8" Orientation="Horizontal">
+        <DatePicker Width="140" SelectedDate="{Binding FromDate}" AutomationProperties.Name="開始日" />
+        <TextBlock Margin="6,0" VerticalAlignment="Center" Style="{StaticResource Caption}" Text="〜" />
+        <DatePicker Width="140" SelectedDate="{Binding ToDate}" AutomationProperties.Name="終了日" />
+      </StackPanel>
       <ui:Button Margin="0,0,8,8" Appearance="Primary" Command="{Binding SearchCommand}" Content="検索" Icon="{ui:SymbolIcon Search24}" />
       <ui:Button Margin="0,0,8,8" Appearance="Transparent" Command="{Binding ClearFiltersCommand}" Content="条件をクリア" />
     </WrapPanel>
@@ -87,10 +90,10 @@
       </StackPanel>
       <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
         <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Style="{StaticResource Caption}" Text="保持期間 (日)" />
-        <ui:NumberBox Width="110" Minimum="1" Maximum="3650" MaxDecimalPlaces="0" Value="{Binding RetentionDays, Mode=TwoWay}" AutomationProperties.Name="保持期間 (日)" />
+        <ui:NumberBox Width="150" Minimum="1" Maximum="3650" MaxDecimalPlaces="0" Value="{Binding RetentionDays, Mode=TwoWay}" AutomationProperties.Name="保持期間 (日)" />
         <ui:Button Margin="8,0,24,0" Command="{Binding SaveRetentionCommand}" Content="保存" />
-        <ui:Button Command="{Binding ExportCsvCommand}" Content="CSV" Icon="{ui:SymbolIcon ArrowExport24}" ToolTip="現在の条件でCSVに書き出し" />
-        <ui:Button Margin="8,0,0,0" Command="{Binding ExportJsonCommand}" Content="JSON" Icon="{ui:SymbolIcon ArrowExport24}" ToolTip="現在の条件でJSONに書き出し" />
+        <ui:Button Command="{Binding ExportCsvCommand}" Content="CSV" Icon="{ui:SymbolIcon ArrowDownload24}" ToolTip="現在の条件でCSVに書き出し" />
+        <ui:Button Margin="8,0,0,0" Command="{Binding ExportJsonCommand}" Content="JSON" Icon="{ui:SymbolIcon ArrowDownload24}" ToolTip="現在の条件でJSONに書き出し" />
       </StackPanel>
     </Grid>
   </Grid>

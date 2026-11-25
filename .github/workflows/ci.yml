@@ -24,6 +24,9 @@ jobs:
       # Tests needing an audio device skip themselves on runners without one.
       - name: Test
         run: dotnet test Sysacta.sln -c Release --no-build --logger "trx" --results-directory TestResults
+        env:
+          # App.Tests renders every page to PNG for layout review (uploaded with the test results).
+          SYSACTA_SCREENSHOT_DIR: ${{ github.workspace }}/TestResults/screenshots
       # Launches the real exe: server start, 401, close-to-tray, single instance, and a TypeScript SDK MCP client.
       - name: Smoke test the application
         shell: pwsh
