@@ -91,9 +91,23 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
         Permissions.Clear();
         foreach (var tool in runtime.Registry.All.OrderBy(t => t.Name, StringComparer.Ordinal))
         {
-            Permissions.Add(new PermissionItem(this, value.Id, tool.Name, tool.Descriptor.Title, enabled[tool.Name], grants.Contains(tool.Name)));
+            // Items are kept per client and tool: a save still running for this switch keeps its value and its single
+            // saver, instead of being replaced by a switch built from a (possibly stale) read.
+            if (_permissionItems.TryGetValue((value.Id, tool.Name), out var item))
+            {
+                item.ApplyStoredValue(grants.Contains(tool.Name), enabled[tool.Name]);
+            }
+            else
+            {
+                item = new PermissionItem(this, value.Id, tool.Name, tool.Descriptor.Title, enabled[tool.Name], grants.Contains(tool.Name));
+                _permissionItems[(value.Id, tool.Name)] = item;
+            }
+
+            Permissions.Add(item);
         }
     }
+
+    private readonly Dictionary<(string ClientId, string ToolName), PermissionItem> _permissionItems = [];
 
     internal Task<bool> SetGrantAsync(string clientId, string toolName, bool allowed) => RunAsync(async () =>
     {
@@ -168,6 +182,11 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
         }
 
         await Task.Run(() => runtime.Access.DeleteClient(client.Id));
+        foreach (var key in _permissionItems.Keys.Where(k => k.ClientId == client.Id).ToList())
+        {
+            _permissionItems.Remove(key);
+        }
+
         Selected = null;
         Notify(InfoBarSeverity.Success, $"「{client.Name}」を削除しました");
         await RefreshAsync();
@@ -238,31 +257,47 @@ public sealed record ClientItem(ClientRecord Record)
 
 public sealed partial class PermissionItem : ObservableObject
 {
-    private readonly ClientsViewModel _owner;
-    private readonly string _clientId;
+    private const string DisabledNote = "サーバー全体で無効のため、許可しても利用できません";
+    private readonly LatestValueSaver<bool> _saver;
+    private bool _applyingStoredValue;
 
     public PermissionItem(ClientsViewModel owner, string clientId, string toolName, string title, bool globallyEnabled, bool allowed)
     {
-        _owner = owner;
-        _clientId = clientId;
         ToolName = toolName;
         Title = title;
-        Note = globallyEnabled ? "" : "サーバー全体で無効のため、許可しても利用できません";
+        _note = globallyEnabled ? "" : DisabledNote;
         _isAllowed = allowed;
+        _saver = new LatestValueSaver<bool>(() => IsAllowed, v => owner.SetGrantAsync(clientId, toolName, v), () => owner.LoadPermissionsAsync(owner.Selected));
     }
 
     public string ToolName { get; }
     public string Title { get; }
-    public string Note { get; }
+
+    [ObservableProperty]
+    private string _note;
 
     [ObservableProperty]
     private bool _isAllowed;
 
-    private LatestValueSaver<bool>? _saver;
+    /// <summary>Shows the stored grant without saving it again; ignored while this switch's own save is running.</summary>
+    internal void ApplyStoredValue(bool allowed, bool globallyEnabled)
+    {
+        Note = globallyEnabled ? "" : DisabledNote;
+        if (_saver.IsSaving)
+        {
+            return;
+        }
+
+        _applyingStoredValue = true;
+        IsAllowed = allowed;
+        _applyingStoredValue = false;
+    }
 
     partial void OnIsAllowedChanged(bool value)
     {
-        _saver ??= new LatestValueSaver<bool>(() => IsAllowed, v => _owner.SetGrantAsync(_clientId, ToolName, v), () => _owner.LoadPermissionsAsync(_owner.Selected));
-        _ = _saver.ChangedAsync();
+        if (!_applyingStoredValue)
+        {
+            _ = _saver.ChangedAsync();
+        }
     }
 }
