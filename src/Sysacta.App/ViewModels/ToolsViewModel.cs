@@ -36,7 +36,8 @@ public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewMod
     {
         await RunAsync(async () =>
         {
-            var result = await runtime.Executor.ExecuteAsync(Caller.LocalConsole, item.Name, null, CancellationToken.None);
+            // The executor starts with synchronous SQLite reads (authorization) and audit writes: keep them off the UI thread.
+            var result = await Task.Run(() => runtime.Executor.ExecuteAsync(Caller.LocalConsole, item.Name, null, CancellationToken.None));
             item.TestResult = JsonSerializer.Serialize(result, IndentedJson);
             item.HasTestResult = true;
         });

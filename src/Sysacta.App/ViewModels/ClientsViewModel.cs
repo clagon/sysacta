@@ -17,6 +17,8 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
 
     public ObservableCollection<PermissionItem> Permissions { get; } = [];
 
+    private int _permissionLoadGeneration;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSelection))]
     [NotifyCanExecuteChangedFor(nameof(ReissueCommand), nameof(RevokeCommand), nameof(DeleteCommand))]
@@ -63,21 +65,28 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
 
     async partial void OnSelectedChanged(ClientItem? value) => await LoadPermissionsAsync(value);
 
+    /// <summary>
+    /// Only the most recent load may fill <see cref="Permissions"/>: selecting A, B, A quickly starts two loads for A,
+    /// and letting both append would show duplicate switches with conflicting states.
+    /// </summary>
     internal async Task LoadPermissionsAsync(ClientItem? value)
     {
-        Permissions.Clear();
+        var generation = ++_permissionLoadGeneration;
         if (value is null)
         {
+            Permissions.Clear();
             return;
         }
 
-        var grants = await Task.Run(() => runtime.Access.GetClientGrants(value.Id));
-        var enabled = await Task.Run(() => runtime.Registry.All.ToDictionary(t => t.Name, t => runtime.Access.IsToolEnabled(t.Name)));
-        if (Selected?.Id != value.Id)
+        var (grants, enabled) = await Task.Run(() => (
+            runtime.Access.GetClientGrants(value.Id),
+            runtime.Registry.All.ToDictionary(t => t.Name, t => runtime.Access.IsToolEnabled(t.Name))));
+        if (generation != _permissionLoadGeneration)
         {
-            return;
+            return; // superseded by a newer selection or reload
         }
 
+        Permissions.Clear();
         foreach (var tool in runtime.Registry.All.OrderBy(t => t.Name, StringComparer.Ordinal))
         {
             Permissions.Add(new PermissionItem(this, value.Id, tool.Name, tool.Descriptor.Title, enabled[tool.Name], grants.Contains(tool.Name)));
