@@ -50,4 +50,31 @@ public class LatestValueSaverTests
         await running;
         Assert.False(saver.IsSaving);
     }
+
+    [Fact]
+    public async Task A_save_started_during_a_failure_reload_keeps_its_saving_state()
+    {
+        var shown = true;
+        var reloadGate = new TaskCompletionSource();
+        var secondSave = new TaskCompletionSource<bool>();
+        var saves = 0;
+        var saver = new LatestValueSaver<bool>(
+            () => shown,
+            _ => ++saves == 1 ? Task.FromResult(false) : secondSave.Task, // first save fails, second stays pending
+            () => reloadGate.Task);
+
+        var first = saver.ChangedAsync();     // fails, then waits in reload
+        Assert.False(saver.IsSaving);
+        shown = false;
+        var second = saver.ChangedAsync();    // new save starts while the reload is pending
+        Assert.True(saver.IsSaving);
+
+        reloadGate.SetResult();
+        await first;                          // the older invocation finishing must not clear the newer save's flag
+        Assert.True(saver.IsSaving);
+
+        secondSave.SetResult(true);
+        await second;
+        Assert.False(saver.IsSaving);
+    }
 }

@@ -100,6 +100,7 @@ internal sealed class LatestValueSaver<T>(Func<T> current, Func<T, Task<bool>> s
         }
 
         _saving = true;
+        var failed = false;
         try
         {
             while (true)
@@ -107,21 +108,26 @@ internal sealed class LatestValueSaver<T>(Func<T> current, Func<T, Task<bool>> s
                 var value = current();
                 if (!await save(value))
                 {
-                    // Not saving any more: the reload must be allowed to show the stored value.
-                    _saving = false;
-                    await reload();
-                    return;
+                    failed = true;
+                    break;
                 }
 
                 if (EqualityComparer<T>.Default.Equals(current(), value))
                 {
-                    return;
+                    break;
                 }
             }
         }
         finally
         {
+            // Released exactly once, by the invocation that set it, before any reload: a save started while the reload
+            // runs owns the flag from then on and must not have it cleared by this (older) invocation.
             _saving = false;
+        }
+
+        if (failed)
+        {
+            await reload();
         }
     }
 }
