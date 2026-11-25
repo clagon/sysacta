@@ -90,7 +90,10 @@ public class PageScreenshots
     private static void Save(Page page, string path)
     {
         const int width = 1100, height = 760;
-        var host = new Border { Child = page, Width = width, Height = height };
+        // A Page can only be parented by a Window or Frame; render its content with the same DataContext instead.
+        var content = (UIElement)page.Content;
+        page.Content = null;
+        var host = new Border { Child = content, DataContext = page.DataContext, Width = width, Height = height };
         host.SetResourceReference(Border.BackgroundProperty, "ApplicationBackgroundBrush");
         host.Measure(new Size(width, height));
         host.Arrange(new Rect(0, 0, width, height));
@@ -103,5 +106,6 @@ public class PageScreenshots
         using var file = File.Create(path);
         encoder.Save(file);
         host.Child = null;
+        page.Content = content;
     }
 }
