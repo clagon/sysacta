@@ -72,7 +72,7 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
         Outcome: OutcomeIndex > 0 ? Enum.GetValues<AuditOutcome>()[OutcomeIndex - 1] : null,
         ToolName: ToolIndex > 0 && ToolIndex < ToolOptions.Count ? ToolOptions[ToolIndex] : null,
         From: FromDate is { } f ? new DateTimeOffset(f.Date, TimeZoneInfo.Local.GetUtcOffset(f.Date)) : null,
-        To: ToDate is { } t ? new DateTimeOffset(t.Date.AddDays(1), TimeZoneInfo.Local.GetUtcOffset(t.Date)) : null,
+        To: ToDate is { } t ? new DateTimeOffset(t.Date.AddDays(1), TimeZoneInfo.Local.GetUtcOffset(t.Date.AddDays(1))) : null, // offset at the exclusive boundary (DST-safe)
         Limit: limit);
 
     [RelayCommand]
