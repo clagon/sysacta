@@ -54,4 +54,6 @@ $env:SYSACTA_HARDWARE_TESTS = "1"; dotnet test tests/Sysacta.Windows.Tests -c Re
 
 - Windows 側に .NET SDK と ASP.NET Core ランタイムがない(.NET 10.0.14 ランタイムと WindowsDesktop ランタイムのみ)。SDK のインストールは権限上行わなかった。
 - Device Guard / Smart App Control が、未署名の apphost (`*.exe`) と、新しくコピーした未署名の `SQLitePCLRaw.batteries_v2.dll`、さらに後半では新しくビルドした Sysacta 自身のテスト DLL もブロックした(`0x800711C7`)。ポリシーの回避は行っていない。
-- そのため Windows 上で実行できたのは: Core.Tests (69)、Infrastructure.Tests (37, ブロックされる前の初回のみ)、Windows.Tests (3, 実デバイス)、App.Tests (2, XAML 読み込みと通知領域アイコン)。Mcp.Tests (38) は Linux でのみ実行。
+- そのため開発機の Windows 上で実行できたのは: Core.Tests (69)、Infrastructure.Tests (37, ブロックされる前の初回のみ)、Windows.Tests (3, 実デバイス)、App.Tests (2, XAML 読み込みと通知領域アイコン)。
+- 最終コードの全自動テストは GitHub Actions (windows-latest) で成功: Core 71 / Infrastructure 37 / Mcp 38 / App 2、Windows.Tests 3 はランナーに音声デバイスがないためスキップ (PR #1, 2026-11-25)。
+- M1〜M4 と M9 はリポジトリ所有者が手動で確認する(2026-11-25 時点で未実施)。

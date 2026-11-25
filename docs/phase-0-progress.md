@@ -2,7 +2,7 @@
 
 作業の再開用メモ。コンテキスト圧縮後や次のフェーズの開始時は、まずこのファイルと [AGENTS.md](../AGENTS.md) を読むこと。
 
-## 状態: Phase 0 実装完了(実機での一部確認は未実施 — 下記)
+## 状態: Phase 0 実装完了・Windows CI 全件成功。exe の対話確認 (M1〜M4) と実 MCP クライアント接続 (M9) はユーザーによる手動確認待ち
 
 | 項目 | 状態 | 主なファイル |
 |---|---|---|
@@ -24,6 +24,12 @@
 - `dotnet build Sysacta.sln -c Release`: 警告 0 / エラー 0(`TreatWarningsAsErrors`, `AnalysisLevel=latest-recommended`)。
 - `dotnet test Sysacta.sln -c Release`: **Core 71 / Infrastructure 37 / Mcp 38 成功**、Windows.Tests 3 スキップ(非Windows)、App.Tests は非Windowsでは対象外。
 
+### Windows CI (GitHub Actions windows-latest, PR #1, run 45622045931, 2026-11-25) — 最終コード
+
+- Restore / `dotnet build Sysacta.sln -c Release` / `dotnet test` すべて成功。
+- **Core 71 / Infrastructure 37 / Mcp 38 / App 2 成功**、Windows.Tests 3 スキップ(ランナーに既定の音声出力デバイスがない。実機では下記のとおり成功)。
+- これにより「Windows 向けビルド」「Windows での自動テスト(MCP 統合テストと最後のコード変更を含む)」を確認済み。
+
 ### Windows 11 実機(このPC。.NET ランタイム 10.0.14 のみ、`dotnet.exe <tests>.dll` で実行)
 
 | テスト | 結果 | 備考 |
@@ -35,15 +41,15 @@
 | Mcp.Tests | 未実行 | ASP.NET Core ランタイムがなく、さらに Smart App Control が `SQLitePCLRaw.batteries_v2.dll` をブロック (0x800711C7) |
 | アプリ本体 (Sysacta.exe) の対話起動 | 未実施 | 未署名 apphost が Device Guard でブロック。SQLite も同上 |
 
-最後のコード変更(`ToolExecutor` の想定外例外の捕捉、tools/list の例外秘匿、認証失敗監査の例外処理)の後は、Smart App Control が新しくビルドした未署名 DLL 自体をブロックするようになったため Windows で再実行できていない。これらの変更は UI/トレイ/アダプターのコードには触れていない。ポリシーの回避はしていない。**Windows での全テストは CI (windows-latest) で確認すること。CI はまだ一度も実行されていない(未プッシュ)。**
+最後のコード変更の後は、Smart App Control が新しくビルドした未署名 DLL 自体をブロックするようになったため、このPCでは再実行していない(ポリシーの回避はしていない)。最終コードの Windows 上の検証は上記 CI で行った。
 
 ## 完了条件の対応
 
 | 完了条件 (docs/phase-0.md) | 根拠 |
 |---|---|
-| Windows 向けに正常にビルドできる | Linux 上で `net10.0-windows` を含む全プロジェクトがビルド成功。Windows ホスト上の SDK ビルドは未実施(CI で確認) |
-| 実装した自動テストが成功する | 上記。Linux で全件、Windows で実行可能なものは全件成功 |
-| 管理コンソールとタスクトレイの基盤が動作する | App.Tests を Windows 実機で実行(XAML・トレイ)。exe の対話操作は未実施 → manual-tests.md M1〜M8 |
+| Windows 向けに正常にビルドできる | 確認済み: Windows CI でビルド成功(Linux でも成功) |
+| 実装した自動テストが成功する | 確認済み: Windows CI で全件成功(音声デバイスが必要な3件は実機で成功)、Linux で全件成功 |
+| 管理コンソールとタスクトレイの基盤が動作する | App.Tests が Windows CI と実機で成功(全画面の XAML、通知領域アイコンの生成と状態追従)。exe の対話操作 (M1〜M4) はユーザーの手動確認待ち |
 | Bearer トークンの発行と MCP 接続が可能 | Mcp.Tests(SDK クライアントで 2025-06-18 / 2025-11-25 / 最新の各プロトコルで接続)。実クライアント (Claude/Codex) は未実施 → M9 |
 | クライアントごとの認証・認可が機能する | Mcp.Tests / Core.Tests(主体別 tools/list、直接呼び出し拒否、失効・期限・再発行、待機中の失効) |
 | リファレンスツールが共通実行基盤を経由する | ツールは `SysactaTool<,>` のみ、SDK には2つのハンドラーだけを登録、`ToolCatalog` 経由。Mcp.Tests で監査記録まで確認 |
@@ -84,7 +90,7 @@
 
 ## 後続フェーズへの引き継ぎ
 
-1. **最初に CI を実行して Windows 上の全テストを確認する**(未実行)。失敗があれば修正してから Phase 1 に入る。
+1. PR #1 (https://github.com/clagon/sysacta/pull/1, draft) の CI は成功済み。マージはユーザーの判断。
 2. 実機チェックリスト `docs/manual-tests.md` の M1〜M15 と A4〜A8 を実施して結果を記録する。
 3. Phase 1 のツールは `docs/tools.md` の手順で追加する。WinRT (GSMTC, 通知) を使う場合は `Sysacta.Windows` の TFM を `net10.0-windows10.0.xxxxx` に上げる必要がある。
 4. デバイス別名の UI(デバイス画面)は、最初に別名を必要とするカテゴリと一緒に追加する。
