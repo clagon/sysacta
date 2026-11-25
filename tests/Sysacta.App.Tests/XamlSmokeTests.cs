@@ -124,7 +124,21 @@ internal static class UiThread
         using var ready = new ManualResetEventSlim();
         var thread = new Thread(() =>
         {
-            new App().InitializeComponent();
+            // Never instantiate App: WPF would run App.OnStartup when the dispatcher starts, opening the real
+            // %LOCALAPPDATA% database and starting a server. Load the same resources into a plain Application instead.
+            _ = new Application
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown,
+                Resources = new ResourceDictionary
+                {
+                    MergedDictionaries =
+                    {
+                        new Wpf.Ui.Markup.ThemesDictionary { Theme = Wpf.Ui.Appearance.ApplicationTheme.Light },
+                        new Wpf.Ui.Markup.ControlsDictionary(),
+                        new ResourceDictionary { Source = new Uri("pack://application:,,,/Sysacta;component/Styles.xaml") },
+                    },
+                },
+            };
             dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
             ready.Set();
             System.Windows.Threading.Dispatcher.Run();

@@ -29,6 +29,7 @@
 - Restore / `dotnet build Sysacta.sln -c Release` / `dotnet test` すべて成功。
 - **Core 71 / Infrastructure 37 / Mcp 38 / App 2 成功**、Windows.Tests 3 スキップ(ランナーに既定の音声出力デバイスがない。実機では下記のとおり成功)。
 - これにより「Windows 向けビルド」「Windows での自動テスト(MCP 統合テストと最後のコード変更を含む)」を確認済み。
+- CI に実アプリのスモークテスト (`scripts/smoke-app.ps1`) を追加: 実際の `Sysacta.exe --minimized` を起動し、DB 作成、MCP サーバーの待受 (127.0.0.1:8765)、トークンなしで 401、2つ目の起動が終了し1つ目が残ること(単一インスタンス)を確認。
 
 ### Windows 11 実機(このPC。.NET ランタイム 10.0.14 のみ、`dotnet.exe <tests>.dll` で実行)
 
@@ -72,9 +73,10 @@
 11. **認証失敗の監査は接続元ごとに 30 件/分まで**(超過は 429 で監査しない)。監査 DB の肥大化 DoS 対策。spec にない暫定値。
 12. **トレイ**: WPF-UI.Tray はウィンドウのビジュアルツリーに依存するため、ウィンドウなしで動く H.NotifyIcon.Wpf (MIT) を採用。`TrayIcon` は `McpServerHost` とデリゲートだけに依存し、DB なしで実機テスト可能。
 13. **UI テストプロジェクト追加**: spec の一覧に `Sysacta.App.Tests` を追加(XAML のエラーは実行時にしか出ないため)。非Windowsでは `IsTestProject=false`。
-14. **pack URI** はアセンブリ名を明示 (`/Sysacta;component/...`)。
-15. **UI 文言は日本語**、ツールの description / エラーメッセージ(エージェント向け)は英語。
-16. **NAudio.Wasapi 3.3.0**(22.0.0 は非掲載の誤版のため不使用)。Core Audio は既定デバイスの役割に `Multimedia` を使う。
+14. **UI テストは `App` をインスタンス化しない**: WPF はディスパッチャー開始時に `App.OnStartup` を実行するため、実プロファイルの DB 作成・サーバー起動が走っていた(CI ランナーで `%LOCALAPPDATA%\Sysacta\sysacta.db` を検出して判明)。共有スタイルを `Styles.xaml` に分離し、テストは素の `Application` に同じ辞書を読み込む。`scripts/smoke-app.ps1` は実プロファイルが既に存在すると失敗し、回帰を検出する。
+15. **pack URI** はアセンブリ名を明示 (`/Sysacta;component/...`)。
+16. **UI 文言は日本語**、ツールの description / エラーメッセージ(エージェント向け)は英語。
+17. **NAudio.Wasapi 3.3.0**(22.0.0 は非掲載の誤版のため不使用)。Core Audio は既定デバイスの役割に `Multimedia` を使う。
 
 ## 仕様書との差分・未決事項
 

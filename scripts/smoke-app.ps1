@@ -4,11 +4,10 @@ param([string]$Exe = "src/Sysacta.App/bin/Release/net10.0-windows/Sysacta.exe")
 $ErrorActionPreference = "Stop"
 
 $data = Join-Path $env:LOCALAPPDATA "Sysacta"
+# Must not exist: locally it would mean reusing real settings; in CI it would mean a test touched the real profile.
 if (Test-Path $data) {
-    if ($env:GITHUB_ACTIONS -ne "true") { throw "Refusing to run: $data already exists (would reuse real settings)." }
-    # Ephemeral CI runner: show what was there (for diagnosis) and start from a clean profile.
     Get-ChildItem -Recurse $data | ForEach-Object { Write-Host "pre-existing: $($_.FullName)" }
-    Remove-Item -Recurse -Force $data
+    throw "Refusing to run: $data already exists (real settings, or a test wrote to the real profile)."
 }
 
 $app = Start-Process -FilePath $Exe -ArgumentList "--minimized" -PassThru
@@ -39,4 +38,7 @@ try {
 }
 finally {
     if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit(10000) | Out-Null }
+    # The profile did not exist before this script, so everything in it was created here.
+    Start-Sleep -Milliseconds 500
+    Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
 }
