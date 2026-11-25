@@ -26,13 +26,28 @@ public class LatestValueSaverTests
     }
 
     [Fact]
-    public async Task A_failed_save_reloads_the_view()
+    public async Task A_failed_save_reloads_the_view_and_no_longer_counts_as_saving()
     {
-        var reloaded = false;
-        var saver = new LatestValueSaver<bool>(() => true, _ => Task.FromResult(false), () => { reloaded = true; return Task.CompletedTask; });
+        bool? savingDuringReload = null;
+        LatestValueSaver<bool>? saver = null;
+        saver = new LatestValueSaver<bool>(() => true, _ => Task.FromResult(false), () => { savingDuringReload = saver!.IsSaving; return Task.CompletedTask; });
 
         await saver.ChangedAsync();
 
-        Assert.True(reloaded);
+        Assert.False(savingDuringReload); // otherwise a reload would skip the switch and keep showing the unsaved value
+        Assert.False(saver.IsSaving);
+    }
+
+    [Fact]
+    public async Task IsSaving_is_true_only_while_a_save_runs()
+    {
+        var pending = new TaskCompletionSource<bool>();
+        var saver = new LatestValueSaver<bool>(() => true, _ => pending.Task, () => Task.CompletedTask);
+
+        var running = saver.ChangedAsync();
+        Assert.True(saver.IsSaving);
+        pending.SetResult(true);
+        await running;
+        Assert.False(saver.IsSaving);
     }
 }

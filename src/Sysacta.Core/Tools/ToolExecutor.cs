@@ -164,6 +164,10 @@ public sealed class ToolExecutor
                 var (data, verification) = await work.WaitAsync(token).ConfigureAwait(false);
                 return call.Finish(AuditOutcome.Success, new ToolResult { Status = ToolStatus.Success, Verification = verification, Data = data });
             }
+            catch (ToolOutcomeUnknownException ex)
+            {
+                return call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(ex.Code, ex.Message));
+            }
             catch (ToolFailureException ex)
             {
                 return call.Finish(AuditOutcome.Error, ToolResult.Fail(ex.Code, ex.Message, ex.Retryable));

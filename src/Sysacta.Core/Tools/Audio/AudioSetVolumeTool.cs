@@ -59,8 +59,23 @@ public sealed class AudioSetVolumeTool(IAudioEndpoints endpoints, IDeviceAliases
         cancellationToken.ThrowIfCancellationRequested();
         endpoints.SetVolumeScalar(id, args.Level / 100f);
 
-        var after = endpoints.GetEndpoint(id);
-        var current = after.VolumeScalar is { } s ? AudioTarget.ToLevel(s) : -1;
+        AudioEndpointState after;
+        try
+        {
+            after = endpoints.GetEndpoint(id);
+        }
+        catch (ToolFailureException ex)
+        {
+            // The change may already be applied (e.g. the device was removed right after the call).
+            throw new ToolOutcomeUnknownException(ex.Code, "The volume was set but could not be read back to verify it.");
+        }
+
+        if (after.VolumeScalar is not { } s)
+        {
+            throw new ToolOutcomeUnknownException(ErrorCodes.DeviceDisconnected, "The volume was set but the device became inactive before it could be verified.");
+        }
+
+        var current = AudioTarget.ToLevel(s);
         if (current != args.Level)
         {
             throw new ToolFailureException(ErrorCodes.VerificationFailed, $"Volume was set but reads back as {current} instead of {args.Level}.");

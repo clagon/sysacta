@@ -72,9 +72,11 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
     internal async Task LoadPermissionsAsync(ClientItem? value)
     {
         var generation = ++_permissionLoadGeneration;
+
+        // Clear right away: switches of the previous client must never stay editable while another client is selected.
+        Permissions.Clear();
         if (value is null)
         {
-            Permissions.Clear();
             return;
         }
 

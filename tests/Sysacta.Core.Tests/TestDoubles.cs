@@ -179,12 +179,20 @@ internal sealed class FakeAudioEndpoints : IAudioEndpoints
     public Func<float, float> ApplyTransform { get; set; } = v => v;
     public Exception? SetFailure { get; set; }
 
+    /// <summary>When set, reads fail after the first successful SetVolumeScalar (device removed during read-back).</summary>
+    public bool FailReadAfterSet { get; set; }
+
     public string? GetDefaultEndpointId(AudioDirection direction) => direction == AudioDirection.Output ? DefaultOutput : DefaultInput;
 
     public AudioEndpointState GetEndpoint(string id)
     {
         lock (Devices)
         {
+            if (FailReadAfterSet && SetCalls.Count > 0)
+            {
+                throw new ToolFailureException(ErrorCodes.DeviceDisconnected, "The audio device was removed or disabled.");
+            }
+
             return Devices.TryGetValue(id, out var d) ? d : throw new ToolFailureException(ErrorCodes.TargetNotFound, "The specified audio device was not found.");
         }
     }

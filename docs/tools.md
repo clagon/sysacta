@@ -95,6 +95,7 @@ public sealed class DisplaySetBrightnessTool(IDisplays displays, IDeviceAliases 
     {
         // 1. 変更前の値を読む  2. 既に目標値なら no-op (Changed=false, Verified)
         // 3. ct.ThrowIfCancellationRequested() → 変更  4. 読み戻して一致すれば Verified、違えば VERIFICATION_FAILED
+        // 変更後の処理(読み戻しなど)が失敗したら ToolOutcomeUnknownException を投げる(status=unknown になる)
     }
 }
 ```
@@ -148,6 +149,7 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 | BUSY | 待機キューが満杯(再試行可) | executor |
 | TIMEOUT / CANCELLED | 実行前なら retryable、実行中なら status=unknown | executor |
 | VERIFICATION_FAILED | 変更後の読み戻しが一致しない | ツール |
+| (任意のコード) + status=unknown | 変更を実行した後に失敗し、反映されたか分からない(読み戻し中の切断など) | ツールが `ToolOutcomeUnknownException` を投げる |
 | OS_API_ERROR | OS API の失敗 | アダプター |
 | AUDIT_UNAVAILABLE | 監査ログに書けないため状態変更を拒否 | executor |
 | INTERNAL_ERROR | 想定外の例外(詳細は返さない) | executor |

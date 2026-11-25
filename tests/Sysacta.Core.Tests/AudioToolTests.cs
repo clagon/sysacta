@@ -112,6 +112,20 @@ public class AudioToolTests
     }
 
     [Fact]
+    public async Task Read_back_failure_after_the_change_is_reported_as_unknown()
+    {
+        _audio.FailReadAfterSet = true;
+        var r = await Call("audio_set_volume", new { level = 10 });
+
+        Assert.Equal(ToolStatus.Unknown, r.Status);
+        Assert.Equal(Verification.Unknown, r.Verification);
+        Assert.Equal(ErrorCodes.DeviceDisconnected, r.Error!.Code);
+        Assert.False(r.Error.Retryable);
+        Assert.Single(_audio.SetCalls);
+        Assert.Equal(Core.Auditing.AuditOutcome.Unknown, _h.Audit.Final(r.RequestId).Outcome);
+    }
+
+    [Fact]
     public async Task Os_failure_is_reported_as_structured_error()
     {
         _audio.SetFailure = new ToolFailureException(ErrorCodes.OsApiError, "The Windows audio API returned an error.");

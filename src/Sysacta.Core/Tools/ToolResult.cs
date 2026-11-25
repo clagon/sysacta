@@ -86,6 +86,16 @@ public sealed record ToolResult
 public sealed record ToolOutcome<TData>(TData Data, Verification Verification);
 
 /// <summary>
+/// Throw from a state-changing tool when a failure happens after the change may already have been applied (for
+/// example the read-back for verification fails). The executor returns <see cref="ToolStatus.Unknown"/> so clients do
+/// not treat the change as not applied. The message must not contain secrets, paths or raw exception text.
+/// </summary>
+public sealed class ToolOutcomeUnknownException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
+/// <summary>
 /// Throw from a tool to report an expected failure with a common error code.
 /// The message is returned to the client, so it must not contain secrets, paths or raw exception text.
 /// </summary>

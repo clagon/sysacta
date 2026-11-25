@@ -88,6 +88,9 @@ internal sealed class LatestValueSaver<T>(Func<T> current, Func<T, Task<bool>> s
 {
     private bool _saving;
 
+    /// <summary>A save is running; the shown value must not be replaced by a (possibly stale) read.</summary>
+    public bool IsSaving => _saving;
+
     /// <summary>Call from the property-changed hook on the UI thread.</summary>
     public async Task ChangedAsync()
     {
@@ -104,6 +107,8 @@ internal sealed class LatestValueSaver<T>(Func<T> current, Func<T, Task<bool>> s
                 var value = current();
                 if (!await save(value))
                 {
+                    // Not saving any more: the reload must be allowed to show the stored value.
+                    _saving = false;
                     await reload();
                     return;
                 }

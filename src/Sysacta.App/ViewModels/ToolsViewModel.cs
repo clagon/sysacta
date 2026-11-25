@@ -14,10 +14,23 @@ public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewMod
 
     public ObservableCollection<ToolCategoryGroup> Categories { get; } = [];
 
+    /// <summary>
+    /// Builds the list once and afterwards only updates switches in place, so a save that is still running is neither
+    /// overwritten by a stale read nor detached from the switch shown (each switch keeps a single saver).
+    /// </summary>
     public override async Task RefreshAsync()
     {
         var states = await Task.Run(() => runtime.Registry.All.ToDictionary(t => t.Name, t => runtime.Access.IsToolEnabled(t.Name)));
-        Categories.Clear();
+        if (Categories.Count > 0)
+        {
+            foreach (var item in Categories.SelectMany(c => c.Items))
+            {
+                item.ApplyStoredValue(states[item.Name]);
+            }
+
+            return;
+        }
+
         foreach (var group in runtime.Registry.All.GroupBy(t => t.Descriptor.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
             var items = group.OrderBy(t => t.Name, StringComparer.Ordinal).Select(t => new ToolItem(this, t, states[t.Name]));
@@ -128,7 +141,28 @@ public sealed partial class ToolItem : ObservableObject
     [ObservableProperty]
     private bool _hasTestResult;
 
-    partial void OnIsEnabledChanged(bool value) => _ = _saver.ChangedAsync();
+    private bool _applyingStoredValue;
+
+    /// <summary>Shows the stored value without saving it again; ignored while this switch's own save is running.</summary>
+    internal void ApplyStoredValue(bool enabled)
+    {
+        if (_saver.IsSaving)
+        {
+            return;
+        }
+
+        _applyingStoredValue = true;
+        IsEnabled = enabled;
+        _applyingStoredValue = false;
+    }
+
+    partial void OnIsEnabledChanged(bool value)
+    {
+        if (!_applyingStoredValue)
+        {
+            _ = _saver.ChangedAsync();
+        }
+    }
 
     [RelayCommand]
     private Task TestAsync() => _owner.TestAsync(this);
