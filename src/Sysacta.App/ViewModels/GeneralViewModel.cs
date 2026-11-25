@@ -34,7 +34,15 @@ public sealed partial class GeneralViewModel(SysactaRuntime runtime, Func<System
         try
         {
             AutoStart = Platform.AutoStart.IsEnabled;
-            ThemeIndex = (int)runtime.Settings.Theme;
+
+            // While a theme save is running, the selection shown is newer than the stored one: keep it, otherwise the
+            // pending save would see this reset as a new choice and save the old theme again.
+            var stored = (int)runtime.Settings.Theme;
+            if (_themeSaver?.IsSaving != true && ThemeIndex != stored)
+            {
+                ThemeIndex = stored;
+                ThemeController.Apply(runtime.Settings.Theme, window()); // keep the window in line with the selection
+            }
         }
         finally
         {
