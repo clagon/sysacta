@@ -138,11 +138,14 @@ public sealed record AuditRow(AuditEvent Event)
     public string Time => Event.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture);
     public string Tool => Event.ToolName ?? "—";
     public string Client => Event.ClientName ?? (Event.Source == "http" ? "(未認証)" : "—");
-    public string Outcome => OutcomeLabel(Event.Outcome);
+    /// <summary>Aggregated records show how many rejections they stand for, so they never read as one attempt.</summary>
+    public string Outcome => Event.AggregateCount is { } n ? $"{OutcomeLabel(Event.Outcome)} ×{n}" : OutcomeLabel(Event.Outcome);
     public string ErrorCode => Event.ErrorCode ?? "";
     public string Duration => Event.DurationMs is { } d ? $"{d} ms" : "";
     public string Source => Event.Source switch { "mcp" => "MCP", "local_console" => "管理コンソール", "http" => "HTTP", var s => s };
-    public string Arguments => Event.Arguments ?? "(記録対象外)";
+    public string Arguments => Event.AggregateCount is { } n
+        ? $"集約記録: この時刻から1分間に、個別には記録しなかった同じ理由の拒否が {n} 件ありました(接続元・内容は記録しません)。"
+        : Event.Arguments ?? "(記録対象外)";
     public string Remote => Event.RemoteAddress ?? "—";
 
     public static string OutcomeLabel(AuditOutcome outcome) => outcome switch

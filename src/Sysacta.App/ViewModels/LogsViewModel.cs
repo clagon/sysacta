@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -18,6 +19,8 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
     public static IReadOnlyList<string> OutcomeOptions { get; } =
         ["すべての結果", .. Enum.GetValues<AuditOutcome>().Select(AuditRow.OutcomeLabel)];
 
+    public static IReadOnlyList<string> KindOptions { get; } = ["すべての記録", "個別の記録", "集約された記録"];
+
     public ObservableCollection<AuditRow> Events { get; } = [];
 
     public ObservableCollection<string> ToolOptions { get; } = [];
@@ -30,6 +33,13 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
 
     [ObservableProperty]
     private int _toolIndex;
+
+    [ObservableProperty]
+    private int _kindIndex;
+
+    /// <summary>Storage use, limits and whether records were evicted or could not be written (SEC-06).</summary>
+    [ObservableProperty]
+    private string _storageSummary = "";
 
     [ObservableProperty]
     private DateTime? _fromDate;
@@ -73,7 +83,8 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
         ToolName: ToolIndex > 0 && ToolIndex < ToolOptions.Count ? ToolOptions[ToolIndex] : null,
         From: DayStart(FromDate, 0, TimeZoneInfo.Local),
         To: DayStart(ToDate, 1, TimeZoneInfo.Local),
-        Limit: limit);
+        Limit: limit,
+        Aggregated: KindIndex switch { 1 => false, 2 => true, _ => null });
 
     /// <summary>
     /// Local midnight of <paramref name="date"/> + <paramref name="days"/>, using the UTC offset of that midnight itself
@@ -86,7 +97,8 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
     private Task SearchAsync() => RunAsync(async () =>
     {
         var query = BuildQuery(DisplayLimit);
-        var events = await Task.Run(() => runtime.Audit.Query(query));
+        var (events, status) = await Task.Run(() => (runtime.Audit.Query(query), runtime.Audit.GetStatus()));
+        StorageSummary = FormatStorage(status);
         Events.Clear();
         foreach (var e in events)
         {
@@ -97,12 +109,31 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
         ResultSummary = events.Count >= DisplayLimit ? $"新しい順に {DisplayLimit} 件を表示(条件で絞り込めます)" : $"{events.Count} 件";
     }, "ログを読み込めませんでした");
 
+    internal static string FormatStorage(AuditStatus s)
+    {
+        static string MiB(long bytes) => (bytes / 1024d / 1024d).ToString("0.0", CultureInfo.CurrentCulture);
+        var text = new StringBuilder();
+        text.Append(CultureInfo.CurrentCulture,
+            $"保存量 {s.Rows:N0} / {s.Limits.MaxRows:N0} 件、{MiB(s.Bytes)} / {MiB(s.Limits.MaxBytes)} MiB (うち状態変更用に {s.Limits.ReservedRows:N0} 件を予約)。");
+        text.Append(s.EvictedCount > 0
+            ? string.Create(CultureInfo.CurrentCulture, $"上限を超えたため古い記録 {s.EvictedCount:N0} 件を削除しました(最終 {s.LastEvictedAt!.Value.ToLocalTime():yyyy-MM-dd HH:mm})。")
+            : "上限による削除はありません。");
+        if (s.FailedWrites > 0)
+        {
+            text.Append(CultureInfo.CurrentCulture, $"起動後に {s.FailedWrites:N0} 件を記録できませんでした。");
+        }
+
+        text.Append("拒否が多いときは、1分ごとの件数に集約して記録します。");
+        return text.ToString();
+    }
+
     [RelayCommand]
     private void ClearFilters()
     {
         SearchText = "";
         OutcomeIndex = 0;
         ToolIndex = 0;
+        KindIndex = 0;
         FromDate = null;
         ToDate = null;
         SearchCommand.Execute(null);

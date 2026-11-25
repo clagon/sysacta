@@ -1,11 +1,9 @@
 using System.Text.Json;
-using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -38,10 +36,10 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private WebApplication? _app;
-    private HostLimiters? _limiters;
+    private RequestGuards? _guards;
 
-    /// <summary>For tests: the limiters of the most recently built host.</summary>
-    internal HostLimiters? LastBuiltLimiters { get; private set; }
+    /// <summary>For tests: the request guards (and their budgets) of the most recently built host.</summary>
+    internal RequestGuards? LastBuiltGuards { get; private set; }
     private int _activeRequests;
 
     public event EventHandler? StateChanged;
@@ -143,7 +141,7 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
         }
 
         SetState(ServerState.Starting, null);
-        var (app, limiters) = Build(options);
+        var (app, guards) = Build(options);
         try
         {
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -151,7 +149,6 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
         catch (Exception ex)
         {
             await app.DisposeAsync().ConfigureAwait(false);
-            limiters.Dispose();
             SetState(ServerState.Faulted, ex is IOException
                 ? $"Could not listen on {options.BindAddress}:{options.Port}. The port may be in use or the address is not available."
                 : "The server failed to start.");
@@ -163,7 +160,7 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
         Options = options with { Port = BoundPort.Value }; // so a restore after a failed apply reuses the same port
 
         _app = app;
-        _limiters = limiters;
+        _guards = guards;
         SetState(ServerState.Running, null);
     }
 
@@ -175,9 +172,9 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
         }
 
         SetState(ServerState.Stopping, null);
-        var limiters = _limiters;
+        var guards = _guards;
         _app = null;
-        _limiters = null;
+        _guards = null;
         BoundPort = null;
         try
         {
@@ -187,7 +184,9 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
         finally
         {
             await app.DisposeAsync().ConfigureAwait(false);
-            limiters?.Dispose(); // rate limiters own timers; they belong to this run of the host (SEC-11)
+            // Budgets and counters belong to this run of the host and own no timers (SEC-11); only the counted
+            // rejections need writing before they are discarded.
+            guards?.FlushAggregates(force: true);
         }
     }
 
@@ -198,7 +197,7 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private (WebApplication App, HostLimiters Limiters) Build(ServerEndpointOptions options)
+    private (WebApplication App, RequestGuards Guards) Build(ServerEndpointOptions options)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
@@ -219,16 +218,6 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
             kestrel.Limits.MaxRequestBodySize = options.MaxRequestBodyBytes;
             kestrel.Limits.MaxConcurrentConnections = options.MaxConcurrentConnections;
             kestrel.Listen(options.BindAddress, options.Port);
-        });
-
-        var clientLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-            RateLimitPartition.GetFixedWindowLimiter(
-                context.User.FindFirst(RequestGuards.ClientIdClaim)?.Value ?? "anonymous",
-                _ => new FixedWindowRateLimiterOptions { PermitLimit = options.RequestsPerMinutePerClient, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
-        builder.Services.AddRateLimiter(limiter =>
-        {
-            limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            limiter.GlobalLimiter = clientLimiter;
         });
 
         builder.Services
@@ -275,8 +264,7 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
             });
 
         var guards = new RequestGuards(options, authenticator, audit, time);
-        var limiters = new HostLimiters(guards, clientLimiter);
-        LastBuiltLimiters = limiters;
+        LastBuiltGuards = guards;
         var app = builder.Build();
         app.Use(async (context, next) =>
         {
@@ -291,27 +279,8 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
             }
         });
         app.Use(guards.InvokeAsync);
-        app.UseRateLimiter();
         app.MapMcp(EndpointPath);
-        return (app, limiters);
-    }
-
-    /// <summary>Rate limiters created for one run of the host; disposed when that run ends or fails to start.</summary>
-    internal sealed class HostLimiters(RequestGuards guards, PartitionedRateLimiter<HttpContext> clientLimiter) : IDisposable
-    {
-        public bool IsDisposed { get; private set; }
-
-        public void Dispose()
-        {
-            if (IsDisposed)
-            {
-                return;
-            }
-
-            IsDisposed = true;
-            guards.Dispose();
-            clientLimiter.Dispose();
-        }
+        return (app, guards);
     }
 
     private static Tool ToProtocolTool(SysactaTool tool) => new()

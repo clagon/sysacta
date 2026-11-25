@@ -94,8 +94,8 @@ PR #1 の Codex レビュー(SEC-01〜11、OPS-01〜02)のうち、次は Phase 
 
 | 指摘 | 内容 | 期限 |
 |---|---|---|
-| SEC-05 | 未認証リクエストのトークン照会と最終利用日時の更新が、回数制限より前に DB を使う | Phase 1 かリモート運用の開始の早い方 |
-| SEC-06 | 監査ログに行数・容量の上限がない | 同上 |
+| SEC-05 | 未認証リクエストのトークン照会と最終利用日時の更新が、回数制限より前に DB を使う | Phase 1A で解消([phase-1a-progress.md](phase-1a-progress.md)) |
+| SEC-06 | 監査ログに行数・容量の上限がない | Phase 1A で解消([phase-1a-progress.md](phase-1a-progress.md)) |
 | OPS-01(一部) | NuGet / npm のロックファイルによる復元の固定(Actions の SHA 固定と checkout の資格情報の非保持は対応済み) | Phase 3(配布と再現可能ビルド) |
 
 ## 仕様書との差分・未決事項

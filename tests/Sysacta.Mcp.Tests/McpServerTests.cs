@@ -592,20 +592,28 @@ public class RejectionAuditTests
 public class HostLimiterTests
 {
     [Fact]
-    public async Task Limiters_are_disposed_when_the_host_stops_or_fails_to_start()
+    public async Task Budgets_belong_to_one_run_of_the_host()
     {
         await using var f = await ServerFixture.StartAsync();
-        var running = f.Host.LastBuiltLimiters!;
-        Assert.False(running.IsDisposed);
+        using (var http = f.Http("sya_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
+        {
+            (await http.SendAsync(ServerFixture.JsonRpc("{}"), TestContext.Current.CancellationToken)).Dispose();
+        }
+
+        var running = f.Host.LastBuiltGuards!;
+        Assert.Equal(1, running.RequestBudget.TrackedKeys);
 
         await f.Host.StopAsync();
-        Assert.True(running.IsDisposed);
+        await f.Host.StartAsync(new ServerEndpointOptions { Port = 0 }, TestContext.Current.CancellationToken);
+        Assert.NotSame(running, f.Host.LastBuiltGuards);
+        Assert.Equal(0, f.Host.LastBuiltGuards!.RequestBudget.TrackedKeys);
 
         using var blocker = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
         blocker.Start();
+        await f.Host.StopAsync();
+        var beforeFailure = f.Host.LastBuiltGuards;
         await Assert.ThrowsAnyAsync<Exception>(() => f.Host.StartAsync(new ServerEndpointOptions { Port = ((IPEndPoint)blocker.LocalEndpoint).Port }, TestContext.Current.CancellationToken));
-        Assert.True(f.Host.LastBuiltLimiters!.IsDisposed);
-        Assert.NotSame(running, f.Host.LastBuiltLimiters);
+        Assert.NotSame(beforeFailure, f.Host.LastBuiltGuards);
+        Assert.Equal(ServerState.Faulted, f.Host.State);
     }
 }
-

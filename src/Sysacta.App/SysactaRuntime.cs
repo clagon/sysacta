@@ -32,6 +32,8 @@ public sealed class SysactaRuntime : IAsyncDisposable
         var gate = new AuthorizationGate();
         Access = new AccessStore(Database, _time, gate);
         Audit = new AuditLog(Database);
+        // Intents left by a previous process that ended mid-operation become "unknown" (SEC-06). Nothing can run yet.
+        Audit.RecoverInterrupted();
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 

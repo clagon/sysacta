@@ -63,6 +63,42 @@ public sealed class SysactaDatabase
             remote_address TEXT);
         CREATE INDEX ix_audit_events_timestamp ON audit_events (timestamp_utc);
         """,
+
+        // v2: audit storage limits (SEC-06). size_bytes is the logical size of a record (AuditLog.SizeOf: 128 + the
+        // UTF-8 bytes of its text columns); audit_usage keeps the totals in step through triggers, so checking a limit
+        // never scans the table. aggregate_count marks records that count rejections not recorded individually.
+        """
+        ALTER TABLE audit_events ADD COLUMN aggregate_count INTEGER;
+        ALTER TABLE audit_events ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0;
+        UPDATE audit_events SET size_bytes = 128
+            + length(CAST(request_id AS BLOB)) + length(CAST(timestamp_utc AS BLOB)) + length(CAST(source AS BLOB)) + length(CAST(result AS BLOB))
+            + COALESCE(length(CAST(client_id AS BLOB)), 0) + COALESCE(length(CAST(client_name AS BLOB)), 0)
+            + COALESCE(length(CAST(tool_name AS BLOB)), 0) + COALESCE(length(CAST(sanitized_args AS BLOB)), 0)
+            + COALESCE(length(CAST(error_code AS BLOB)), 0) + COALESCE(length(CAST(remote_address AS BLOB)), 0);
+        CREATE INDEX ix_audit_events_source_timestamp ON audit_events (source, timestamp_utc);
+        CREATE TABLE audit_usage (
+            scope TEXT PRIMARY KEY,
+            row_count INTEGER NOT NULL,
+            byte_count INTEGER NOT NULL,
+            evicted_count INTEGER NOT NULL DEFAULT 0,
+            last_evicted_at TEXT);
+        INSERT INTO audit_usage (scope, row_count, byte_count) SELECT 'all', COUNT(*), COALESCE(SUM(size_bytes), 0) FROM audit_events;
+        INSERT INTO audit_usage (scope, row_count, byte_count) SELECT 'http', COUNT(*), COALESCE(SUM(size_bytes), 0) FROM audit_events WHERE source = 'http';
+        CREATE TRIGGER audit_events_usage_insert AFTER INSERT ON audit_events BEGIN
+            UPDATE audit_usage SET row_count = row_count + 1, byte_count = byte_count + NEW.size_bytes
+            WHERE scope = 'all' OR (scope = 'http' AND NEW.source = 'http');
+        END;
+        CREATE TRIGGER audit_events_usage_delete AFTER DELETE ON audit_events BEGIN
+            UPDATE audit_usage SET row_count = row_count - 1, byte_count = byte_count - OLD.size_bytes
+            WHERE scope = 'all' OR (scope = 'http' AND OLD.source = 'http');
+        END;
+        CREATE TRIGGER audit_events_usage_update AFTER UPDATE OF size_bytes, source ON audit_events BEGIN
+            UPDATE audit_usage SET row_count = row_count - 1, byte_count = byte_count - OLD.size_bytes
+            WHERE scope = 'all' OR (scope = 'http' AND OLD.source = 'http');
+            UPDATE audit_usage SET row_count = row_count + 1, byte_count = byte_count + NEW.size_bytes
+            WHERE scope = 'all' OR (scope = 'http' AND NEW.source = 'http');
+        END;
+        """,
     ];
 
     private readonly string _connectionString;
@@ -86,10 +122,18 @@ public sealed class SysactaDatabase
     public static string DefaultDirectory =>
         System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sysacta");
 
+    /// <summary>
+    /// The WAL file is cut back to this size whenever a checkpoint resets it (SEC-06). Without it the file keeps its
+    /// largest size, e.g. after growing while a long read transaction prevented checkpoints. Not persistent in SQLite,
+    /// so it is set on every connection.
+    /// </summary>
+    public const long WalSizeLimitBytes = 4L * 1024 * 1024;
+
     public SqliteConnection Open()
     {
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
+        Execute(connection, $"PRAGMA journal_size_limit = {WalSizeLimitBytes};");
         return connection;
     }
 

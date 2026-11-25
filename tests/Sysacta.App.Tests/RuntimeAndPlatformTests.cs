@@ -83,4 +83,45 @@ public class RuntimeAndPlatformTests
         var start = LogsViewModel.DayStart(new DateTime(2026, 11, 1), 0, eastern)!.Value;
         Assert.Equal(new DateTime(2026, 11, 1, 4, 0, 0, DateTimeKind.Utc), start.UtcDateTime);
     }
+
+    /// <summary>SEC-06: an intent left by a crashed process is closed as "unknown" when the next process starts.</summary>
+    [Fact]
+    public async Task Startup_closes_intents_left_by_a_previous_process()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows.");
+        var directory = Directory.CreateTempSubdirectory("sysacta-runtime-").FullName;
+        var first = new SysactaRuntime(directory);
+        first.Audit.Write(new Core.Auditing.AuditEvent
+        {
+            RequestId = "left", Timestamp = DateTimeOffset.UtcNow, Source = "mcp", ToolName = "audio_set_volume", Outcome = Core.Auditing.AuditOutcome.Pending,
+        });
+        await first.DisposeAsync();
+
+        var second = new SysactaRuntime(directory);
+        try
+        {
+            var e = Assert.Single(second.Audit.Query(new Infrastructure.AuditQuery()));
+            Assert.Equal(Core.Auditing.AuditOutcome.Unknown, e.Outcome);
+            Assert.Equal(Infrastructure.AuditLog.InterruptedCode, e.ErrorCode);
+        }
+        finally
+        {
+            await second.DisposeAsync();
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Storage_summary_shows_limits_evictions_and_losses()
+    {
+        var limits = new Infrastructure.AuditLimits();
+        var quiet = LogsViewModel.FormatStorage(new Infrastructure.AuditStatus(10, 2048, 0, null, 0, 0, 0, 0, limits));
+        Assert.Contains("上限による削除はありません", quiet, StringComparison.Ordinal);
+        Assert.Contains("集約", quiet, StringComparison.Ordinal);
+
+        var busy = LogsViewModel.FormatStorage(new Infrastructure.AuditStatus(10, 2048, 5, DateTimeOffset.UtcNow, 2, 0, 0, 0, limits));
+        Assert.Contains("古い記録", busy, StringComparison.Ordinal);
+        Assert.Contains("記録できませんでした", busy, StringComparison.Ordinal);
+    }
 }

@@ -18,6 +18,7 @@
     <StackPanel Grid.Row="0">
       <TextBlock Style="{StaticResource PageTitle}" Text="監査ログ" />
       <TextBlock Style="{StaticResource PageSubtitle}" Text="ツールの実行・拒否・認証失敗の記録。トークン、認証ヘッダー、リクエスト本文は記録されません。" />
+      <TextBlock Margin="0,0,0,12" Style="{StaticResource Caption}" Text="{Binding StorageSummary}" TextWrapping="Wrap" />
     </StackPanel>
 
     <ui:InfoBar Grid.Row="1" Margin="0,0,0,12" IsOpen="{Binding HasMessage, Mode=TwoWay}" Severity="{Binding MessageSeverity}" Title="{Binding MessageTitle}" Message="{Binding Message}" />
@@ -30,6 +31,7 @@
       </ui:TextBox>
       <ComboBox Width="150" Margin="0,0,8,8" ItemsSource="{x:Static vm:LogsViewModel.OutcomeOptions}" SelectedIndex="{Binding OutcomeIndex}" AutomationProperties.Name="結果" />
       <ComboBox Width="190" Margin="0,0,8,8" ItemsSource="{Binding ToolOptions}" SelectedIndex="{Binding ToolIndex}" AutomationProperties.Name="ツール" />
+      <ComboBox Width="150" Margin="0,0,8,8" ItemsSource="{x:Static vm:LogsViewModel.KindOptions}" SelectedIndex="{Binding KindIndex}" AutomationProperties.Name="記録の種類" />
       <!-- The date range wraps as one unit. -->
       <StackPanel Margin="0,0,8,8" Orientation="Horizontal">
         <DatePicker Width="140" SelectedDate="{Binding FromDate}" AutomationProperties.Name="開始日" />
@@ -62,7 +64,7 @@
           <DataGridTextColumn Width="150" Binding="{Binding Time}" Header="日時" />
           <DataGridTextColumn Width="*" Binding="{Binding Tool}" Header="ツール" />
           <DataGridTextColumn Width="140" Binding="{Binding Client}" Header="クライアント" />
-          <DataGridTextColumn Width="90" Binding="{Binding Outcome}" Header="結果" />
+          <DataGridTextColumn Width="110" Binding="{Binding Outcome}" Header="結果" />
           <DataGridTextColumn Width="170" Binding="{Binding ErrorCode}" Header="コード" />
         </ui:DataGrid.Columns>
       </ui:DataGrid>

@@ -44,8 +44,14 @@ public sealed record AuthResult(ClientRecord? Client, AuthFailure? Failure, stri
 }
 
 /// <summary>Validates an <c>Authorization</c> header value against stored token hashes.</summary>
+/// <remarks>
+/// <see cref="Authenticate"/> only reads. The last-used time is written separately by <see cref="RecordUse"/>, which the
+/// HTTP layer calls only after the request has passed the per-client budget (SEC-05).
+/// </remarks>
 public sealed class TokenAuthenticator(IAccessStore store, TimeProvider time)
 {
+    private static readonly TimeSpan LastUsedResolution = TimeSpan.FromMinutes(1);
+
     public AuthResult Authenticate(string? authorizationHeader)
     {
         if (string.IsNullOrEmpty(authorizationHeader))
@@ -83,7 +89,21 @@ public sealed class TokenAuthenticator(IAccessStore store, TimeProvider time)
             return new(null, AuthFailure.Expired);
         }
 
-        store.RecordClientUse(found.Client.Id, now);
         return new(found.Client, null, found.TokenHash);
+    }
+
+    /// <summary>
+    /// Records that <paramref name="client"/> (as returned by <see cref="Authenticate"/>) was used. Skips the write when the
+    /// stored time is less than a minute old, so a steady stream of requests does not write the database on every request.
+    /// </summary>
+    public void RecordUse(ClientRecord client)
+    {
+        var now = time.GetUtcNow();
+        if (client.LastUsedAt is { } last && now - last < LastUsedResolution)
+        {
+            return;
+        }
+
+        store.RecordClientUse(client.Id, now);
     }
 }
