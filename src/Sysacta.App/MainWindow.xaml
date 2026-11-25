@@ -1,0 +1,73 @@
+<ui:FluentWindow
+    x:Class="Sysacta.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:views="clr-namespace:Sysacta.App.Views"
+    Title="Sysacta"
+    Width="1120"
+    Height="760"
+    MinWidth="780"
+    MinHeight="540"
+    ExtendsContentIntoTitleBar="True"
+    WindowBackdropType="Mica"
+    WindowCornerPreference="Round"
+    WindowStartupLocation="CenterScreen">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+
+    <ui:TitleBar x:Name="TitleBar" Grid.Row="0" Title="Sysacta" CloseWindowByDoubleClickOnIcon="False">
+      <ui:TitleBar.Icon>
+        <ui:ImageIcon Source="pack://application:,,,/Sysacta;component/Assets/sysacta.ico" />
+      </ui:TitleBar.Icon>
+    </ui:TitleBar>
+
+    <!-- Always visible while elevated (spec §4). -->
+    <ui:InfoBar
+        x:Name="AdminBanner"
+        Grid.Row="1"
+        Margin="12,0,12,8"
+        IsClosable="False"
+        IsOpen="False"
+        Severity="Warning"
+        Title="管理者権限で実行中"
+        Message="MCP経由の操作も管理者権限で実行されます。必要な場合を除き、標準ユーザー権限で起動してください。" />
+
+    <ui:NavigationView
+        x:Name="Navigation"
+        Grid.Row="2"
+        PaneDisplayMode="Left"
+        OpenPaneLength="232"
+        IsBackButtonVisible="Collapsed"
+        IsPaneToggleVisible="True"
+        TitleBar="{Binding ElementName=TitleBar, Mode=OneWay}">
+      <ui:NavigationView.MenuItems>
+        <ui:NavigationViewItem Content="概要" TargetPageType="{x:Type views:OverviewPage}">
+          <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Home24" /></ui:NavigationViewItem.Icon>
+        </ui:NavigationViewItem>
+        <ui:NavigationViewItem Content="接続" TargetPageType="{x:Type views:ConnectionPage}">
+          <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="PlugConnected24" /></ui:NavigationViewItem.Icon>
+        </ui:NavigationViewItem>
+        <ui:NavigationViewItem Content="ツール" TargetPageType="{x:Type views:ToolsPage}">
+          <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Toolbox24" /></ui:NavigationViewItem.Icon>
+        </ui:NavigationViewItem>
+        <ui:NavigationViewItem Content="クライアント" TargetPageType="{x:Type views:ClientsPage}">
+          <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="KeyMultiple24" /></ui:NavigationViewItem.Icon>
+        </ui:NavigationViewItem>
+        <!-- Phase 1/2 pages (デバイス, アプリ) are added here when their features exist. No placeholder pages. -->
+        <ui:NavigationViewItem Content="監査ログ" TargetPageType="{x:Type views:LogsPage}">
+          <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="DocumentBulletList24" /></ui:NavigationViewItem.Icon>
+        </ui:NavigationViewItem>
+      </ui:NavigationView.MenuItems>
+      <ui:NavigationView.FooterMenuItems>
+        <ui:NavigationViewItem Content="一般" TargetPageType="{x:Type views:GeneralPage}">
+          <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Settings24" /></ui:NavigationViewItem.Icon>
+        </ui:NavigationViewItem>
+      </ui:NavigationView.FooterMenuItems>
+    </ui:NavigationView>
+  </Grid>
+</ui:FluentWindow>

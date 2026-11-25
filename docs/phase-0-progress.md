@@ -1,0 +1,123 @@
+# Phase 0 進捗ログ
+
+作業の再開用メモ。コンテキスト圧縮後や次のフェーズの開始時は、まずこのファイルと [AGENTS.md](../AGENTS.md) を読むこと。
+
+## 状態: Phase 0 完了。Windows CI で全自動テストと実アプリのスモークテストが成功。リポジトリ所有者が実機で概略の手動確認を実施し、大きな問題なし (2026-11-25、docs/manual-tests.md)
+
+| 項目 | 状態 | 主なファイル |
+|---|---|---|
+| ソリューション・中央パッケージ管理・CI | 完了 | `Sysacta.sln`, `Directory.*.props`, `global.json`, `.github/workflows/ci.yml` |
+| 共通実行基盤(登録・スキーマ・検証・能力判定・認可・対象解決・排他・キュー・タイムアウト・結果・監査) | 完了 | `src/Sysacta.Core/Tools/` |
+| 認証・認可(トークン、ハッシュ、固定時間比較、失効・再発行・期限、プリセット、即時反映、再認可) | 完了 | `src/Sysacta.Core/Security/`, `src/Sysacta.Infrastructure/AccessStore.cs` |
+| MCP サーバー(Kestrel, /mcp stateless, Host/Origin, Bearer, レート・サイズ・同時接続制限, 開始/停止/再起動) | 完了 | `src/Sysacta.Mcp/` |
+| 永続化(SQLite, マイグレーション, 設定, ツール, クライアント, 権限, 別名, 登録アプリ, 監査, 保持, 検索, CSV/JSON) | 完了 | `src/Sysacta.Infrastructure/` |
+| リファレンスツール `audio_get_state` / `audio_set_volume` | 完了 | `src/Sysacta.Core/Tools/Audio/`, `src/Sysacta.Windows/Audio/` |
+| WPF 管理コンソール 6画面・トレイ・単一インスタンス・自動起動・権限表示・テーマ | 完了 | `src/Sysacta.App/` |
+| 後続向けドキュメント | 完了 | `AGENTS.md`, `docs/tools.md`, `docs/security.md`, `docs/manual-tests.md`, `README.md` |
+
+デバイス画面・アプリ画面は該当機能(Phase 1/2)がないため作っていない(ダミーUI禁止)。`MainWindow.xaml` のナビゲーションに項目を追加するだけで拡張できる。`device_aliases` / `registered_apps` テーブルと別名解決 (`IDeviceAliases`) は実装済み。
+
+## 検証結果
+
+### Linux (WSL2, .NET SDK 10.0.404) — 最終コード
+
+- `dotnet build Sysacta.sln -c Release`: 警告 0 / エラー 0(`TreatWarningsAsErrors`, `AnalysisLevel=latest-recommended`)。
+- `dotnet test Sysacta.sln -c Release`: **Core 71 / Infrastructure 37 / Mcp 38 成功**、Windows.Tests 3 スキップ(非Windows)、App.Tests は非Windowsでは対象外。
+
+### Windows CI (GitHub Actions windows-latest, PR #1, 最新 run 45623874197, 2026-11-25) — 最終コード
+
+- Restore / `dotnet build Sysacta.sln -c Release` / `dotnet test` すべて成功。
+- **Core 71 / Infrastructure 37 / Mcp 38 / App 2 成功**、Windows.Tests 3 スキップ(ランナーに既定の音声出力デバイスがない。実機では下記のとおり成功)。
+- これにより「Windows 向けビルド」「Windows での自動テスト(MCP 統合テストと最後のコード変更を含む)」を確認済み。
+- 実アプリのスモークテスト (`scripts/smoke-app.ps1`) 成功: 実際の `Sysacta.exe` を起動し、DB 作成、MCP サーバーの待受 (127.0.0.1:8765)、トークンなしで 401、メインウィンドウ表示、ウィンドウを閉じてもプロセスとサーバーが残る(トレイ常駐)、2つ目の起動が終了して1つ目のウィンドウを再表示、独立実装の MCP クライアント(公式 TypeScript SDK 1.32.2)が Bearer トークンで接続し tools/list は許可ツールのみ・未許可ツールの直接呼び出しは PERMISSION_DENIED。管理者で動くランナーでタイトルに「(管理者)」。
+
+### Windows 11 実機(このPC。.NET ランタイム 10.0.14 のみ、`dotnet.exe <tests>.dll` で実行)
+
+| テスト | 結果 | 備考 |
+|---|---|---|
+| Core.Tests | 69 件成功 | 最終版より前のビルド(その後の追加2件は Linux のみ) |
+| Infrastructure.Tests | 37 件成功 | 1 回目のみ。その後 Smart App Control が SQLite ラッパーをブロック |
+| Windows.Tests | 3 件成功 | 実デバイスの既定出力の読み取り、未知ID、`SYSACTA_HARDWARE_TESTS=1` で音量を2%変更→読み戻し→復元 |
+| App.Tests | 2 件成功 | 全6ページ + MainWindow の XAML 読み込み/レイアウト、実際の通知領域アイコン生成と Kestrel ホストの起動/停止への追従 |
+| Mcp.Tests | 未実行 | ASP.NET Core ランタイムがなく、さらに Smart App Control が `SQLitePCLRaw.batteries_v2.dll` をブロック (0x800711C7) |
+| アプリ本体 (Sysacta.exe) の対話起動 | 未実施 | 未署名 apphost が Device Guard でブロック。SQLite も同上 |
+
+最後のコード変更の後は、Smart App Control が新しくビルドした未署名 DLL 自体をブロックするようになったため、このPCでは再実行していない(ポリシーの回避はしていない)。最終コードの Windows 上の検証は上記 CI で行った。
+
+## 完了条件の対応
+
+| 完了条件 (docs/phase-0.md) | 根拠 |
+|---|---|
+| Windows 向けに正常にビルドできる | 確認済み: Windows CI でビルド成功(Linux でも成功) |
+| 実装した自動テストが成功する | 確認済み: Windows CI で全件成功(音声デバイスが必要な3件は実機で成功)、Linux で全件成功 |
+| 管理コンソールとタスクトレイの基盤が動作する | 確認済み: 実 exe のウィンドウ表示・閉じてもトレイ常駐・単一インスタンスでの再表示 (CI スモーク)、通知領域アイコンの生成と状態追従と全画面の XAML (App.Tests, CI と実機)。トレイメニューのクリック操作は手動確認待ち (M4) |
+| Bearer トークンの発行と MCP 接続が可能 | 確認済み: 発行処理 (Infrastructure/Mcp.Tests)、C# SDK クライアントで各プロトコル版 (Mcp.Tests)、実 exe に独立実装の TypeScript SDK クライアントで接続 (CI スモーク)。Claude Desktop / Codex での接続は手動確認待ち (M9) |
+| クライアントごとの認証・認可が機能する | Mcp.Tests / Core.Tests(主体別 tools/list、直接呼び出し拒否、失効・期限・再発行、待機中の失効) |
+| リファレンスツールが共通実行基盤を経由する | ツールは `SysactaTool<,>` のみ、SDK には2つのハンドラーだけを登録、`ToolCatalog` 経由。Mcp.Tests で監査記録まで確認 |
+| 操作履歴が適切に記録される | Core/Infrastructure/Mcp.Tests(成功・失敗・拒否・認証失敗・pending→最終、許可リスト外の引数とトークンが DB に存在しないこと) |
+| 新規ツール追加のパターンとドキュメント | `docs/tools.md`, `AGENTS.md`, 参考実装2つ |
+| 実行できなかった実機テストの明記 | `docs/manual-tests.md`、本ファイル |
+
+## 重要な技術判断
+
+1. **単一実行経路**: MCP SDK の属性ツール (`[McpServerTool]`) を使わず、`WithListToolsHandler` / `WithCallToolHandler` だけを登録し、全呼び出しを `ToolExecutor.ExecuteAsync` に通す。ツールは `SysactaTool<TArgs,TData>` 継承でしか作れない(非ジェネリック基底のパイプラインメンバーは internal)。
+2. **スキーマと検証の単一ソース**: 引数クラスの属性から `JsonSchemaExporter` で入力スキーマを生成し、同じクラスへ厳格な `JsonSerializerOptions`(未知プロパティ・型変換・重複・整数 enum を拒否)でデシリアライズ後、`Validator` で範囲検証。
+3. **再認可**: ロックと実行スロットの取得後、実行直前に `AccessPolicy.Evaluate` を再実行。
+4. **キャンセル不能処理の隔離**: タイムアウト/キャンセル時は実行中タスクが終わるまでロック・スロットを保持(継続で解放)。状態変更ツールは `status=unknown`。ホスト停止でも解放されない(executor はホストより長生き)。
+5. **監査の事前永続化**: 状態変更ツールは実行前に `pending` を書き、失敗したら実行しない。引数はツールごとの許可リストのみ。
+6. **MCP から設定変更不可を構造で保証**: MCP 層は読み取り専用の `IAccessStore` だけを受け取る。
+7. **ツールの配置**: ドメインロジックは Core (`Tools/<Category>/`)、OS 呼び出しは Windows (`<Category>/`) のアダプター。Core のテストは Linux でも動く。spec §3 の構成(Windows に機能フォルダー)と矛盾しない範囲での判断。
+8. **stateless**: `HttpServerSessionMode.Stateless`(SDK 2.4.0 の既定)。旧クライアントの initialize ハンドシェイクも同じエンドポイントで動作(テスト済み)。stateful 互換は未対応(必要になったら検証)。ツール一覧変更通知は stateless では配信できないため未実装。
+9. **新ツールの既定**: 新規 DB では `DefaultPolicy.On` のみ有効。既存 DB に後から追加されたツールは無効。クライアント権限は明示行のみで、将来ツールは自動付与されない。
+10. **Host 検証**: `localhost`、ループバックIP、バインドIP、設定済みホスト名を許可。`0.0.0.0` 待受時は IP リテラル Host を許可。Origin は存在時のみ検証、不一致は 403。
+11. **認証失敗の監査は接続元ごとに 30 件/分まで**(超過は 429 で監査しない)。監査 DB の肥大化 DoS 対策。spec にない暫定値。
+12. **トレイ**: WPF-UI.Tray はウィンドウのビジュアルツリーに依存するため、ウィンドウなしで動く H.NotifyIcon.Wpf (MIT) を採用。`TrayIcon` は `McpServerHost` とデリゲートだけに依存し、DB なしで実機テスト可能。
+13. **UI テストプロジェクト追加**: spec の一覧に `Sysacta.App.Tests` を追加(XAML のエラーは実行時にしか出ないため)。非Windowsでは `IsTestProject=false`。
+14. **UI テストは `App` をインスタンス化しない**: WPF はディスパッチャー開始時に `App.OnStartup` を実行するため、実プロファイルの DB 作成・サーバー起動が走っていた(CI ランナーで `%LOCALAPPDATA%\Sysacta\sysacta.db` を検出して判明)。共有スタイルを `Styles.xaml` に分離し、テストは素の `Application` に同じ辞書を読み込む。`scripts/smoke-app.ps1` は実プロファイルが既に存在すると失敗し、回帰を検出する。
+15. **起動処理の堅牢化**: 手動確認で、テーマを Light/Dark に保存すると次回起動時に `SystemThemeWatcher.UnWatch`(未ロードのウィンドウで例外)により起動処理が中断し、トレイとサーバーが作られない不具合が見つかった。監視中かつロード済みのときだけ UnWatch し、トレイを最初に作成、テーマ適用の失敗は無視する。App.Tests とスモークテスト(Dark を保存して再起動)で回帰を検査。
+16. **WPF UI のスクロール**: WPF UI 4.x は Page の `CanContentScroll` 既定値を true にし、true のときページを高さ無制限の DynamicScrollViewer で包む。全ページで `False` を指定して各ページが自分でスクロールする(App.Tests で検査)。
+17. **pack URI** はアセンブリ名を明示 (`/Sysacta;component/...`)。
+18. **UI 文言は日本語**、ツールの description / エラーメッセージ(エージェント向け)は英語。
+19. **NAudio.Wasapi 3.3.0**(22.0.0 は非掲載の誤版のため不使用)。Core Audio は既定デバイスの役割に `Multimedia` を使う。
+
+## SEC-01 / SEC-03 の追加対応(2026-11-26)
+
+- **SEC-01**: 状態変更の開始点を `ToolExecution.BeginSideEffect()` としてツールに宣言させ、`AuthorizationGate`(読み書きロック)で権限変更と順序付けた。開始点の評価は読み取り側、`AccessStore` の権限関連の書き込みは書き込み側。ゲートは評価の間だけ持ち、ネイティブ処理の間は持たない。開始前のタイムアウト/キャンセルでは呼び出しを放棄して書き込みを禁止し、「何も変更していない(再試行可)」を返す。開始後は従来どおり `unknown`。
+  - 検証: Core.Tests `SideEffectBoundaryTests`(開始前に完了した5種類の変更で書き込み0回、進行中の更新を待って反映、長いネイティブ処理中も権限変更が完了、開始前のタイムアウトで書き込み0回、開始後は unknown)。開始点の認可確認を外すと6件、ゲートのロックを外すと1件が失敗することを確認(ミューテーション確認)。
+  - 残存リスク: 開始点の後に完了した変更はその操作に適用されない(spec §6)。開始点の宣言はツールの責務(docs/tools.md・AGENTS.md で必須化)。
+- **SEC-03**: 監査には固定値・登録名・解決済み識別子だけを記録する。未登録のツール名は `(unknown tool)`、HTTP の拒否は理由コードとメソッド/パスの区分のみ(Host・Origin の値は記録しない)、デバイスは入力ではなく解決済みの `target`。`AuditedArguments` は数値・真偽値・列挙値に限定し、ツール登録時に検査する。
+  - 検証: Mcp.Tests `RejectionAuditTests`(合成の機密文字列を未登録ツール名・デバイス入力・パス・Host・Origin・Authorization に入れ、DB・WAL・その他の DB 関連ファイル・CSV・JSON に UTF-8/UTF-16 とも残らない)。未登録ツール名を記録していた以前の挙動に戻すと失敗することを確認。
+
+## レビュー指摘の延期項目(2026-11-26)
+
+PR #1 の Codex レビュー(SEC-01〜11、OPS-01〜02)のうち、次は Phase 0 では対応せず延期した。理由と期限は PR の各スレッドにも記載。
+
+| 指摘 | 内容 | 期限 |
+|---|---|---|
+| SEC-05 | 未認証リクエストのトークン照会と最終利用日時の更新が、回数制限より前に DB を使う | Phase 1 かリモート運用の開始の早い方 |
+| SEC-06 | 監査ログに行数・容量の上限がない | 同上 |
+| OPS-01(一部) | NuGet / npm のロックファイルによる復元の固定(Actions の SHA 固定と checkout の資格情報の非保持は対応済み) | Phase 3(配布と再現可能ビルド) |
+
+## 仕様書との差分・未決事項
+
+- テストプロジェクト `Sysacta.App.Tests` を追加(上記 13)。
+- `ErrorCodes` に `CANCELLED`, `AUDIT_UNAVAILABLE` を追加。未知ツールは `UNKNOWN_TOOL`(MCP ではプロトコルエラー)。
+- 暫定値: 同時実行 8 / 待機 32 / 本文 256 KiB / 60 リクエスト/分/クライアント / 同時接続 64 / 認証失敗 30 件/分/アドレス / 既定タイムアウト 5 秒 / 監査保持 30 日。spec §10 の値を踏襲し、実測での調整は未実施。
+- クライアントの有効期限は発行時のみ選択可能(発行後の変更 UI はない。`AccessStore.SetClientExpiry` はある)。
+- `installer/`、配布、コード署名は Phase 3。
+
+## 残存するセキュリティリスク
+
+[docs/security.md](security.md) の「既知の残存リスク」を参照(同一ユーザーによる DB 改変、管理者起動時の権限、HTTP 非ループバック公開時の平文、未署名バイナリのブロック、MCP 経由の重複キー)。
+
+## 後続フェーズへの引き継ぎ
+
+1. PR #1 (https://github.com/clagon/sysacta/pull/1, draft) の CI は成功済み。マージはユーザーの判断。
+2. 実機チェックリスト `docs/manual-tests.md` の M1〜M15 と A4〜A8 を実施して結果を記録する。
+3. Phase 1 のツールは `docs/tools.md` の手順で追加する。WinRT (GSMTC, 通知) を使う場合は `Sysacta.Windows` の TFM を `net10.0-windows10.0.xxxxx` に上げる必要がある。
+4. デバイス別名の UI(デバイス画面)は、最初に別名を必要とするカテゴリと一緒に追加する。
+5. このPC固有の Windows 実行手順(SDK なし・Smart App Control あり): ASP.NET Core ランタイムパック (NuGet `microsoft.aspnetcore.app.runtime.win-x64`) の DLL を出力に同梱し、`*.deps.json` を削除、`runtimeconfig.json` のフレームワークを `Microsoft.NETCore.App` / `Microsoft.WindowsDesktop.App` だけにして `dotnet.exe` で実行。ただし Smart App Control が未署名 DLL を順次ブロックするため、恒久的な手段ではない。
+
+## パッケージ(固定版)
+
+ModelContextProtocol(.AspNetCore) 2.4.0 / Microsoft.Data.Sqlite 10.0.15 / NAudio.Wasapi 3.3.0 / WPF-UI 4.3.0 / H.NotifyIcon.Wpf 2.4.1 / CommunityToolkit.Mvvm 8.4.2 / xunit.v3 3.2.2 / xunit.runner.visualstudio 3.1.5 / Microsoft.NET.Test.Sdk 18.12.0
