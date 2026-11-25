@@ -47,6 +47,7 @@ public class PreAuthenticationBudgetTests
         // The next window: the refused requests appear as one aggregated record, and requests are processed again.
         f.Time.Advance(TimeSpan.FromSeconds(61));
         Assert.Equal([HttpStatusCode.Unauthorized], await SendAsync(http, 1));
+        await Wait.Until(() => f.Audit.Query(new AuditQuery(Aggregated: true)).Count > 0); // written in the background
         var aggregated = Assert.Single(f.Audit.Query(new AuditQuery(Aggregated: true)));
         Assert.Equal(RequestGuards.RequestBudgetExceeded, aggregated.ErrorCode);
         Assert.Equal(7, aggregated.AggregateCount);

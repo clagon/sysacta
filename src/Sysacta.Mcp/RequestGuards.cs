@@ -54,7 +54,6 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
         var remote = NormalizeAddress(context.Connection.RemoteIpAddress);
-        FlushAggregates(force: false);
 
         if (!RequestBudget.TryAcquire(remote ?? "unknown", out var retryAfter))
         {
@@ -63,6 +62,11 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
             return;
         }
 
+        FlushAggregatesInBackground();
+
+        // The slot covers only the checks and the token lookup (one read). Database writes (rejection records, the
+        // last-used time) happen after it is returned, so a database busy with maintenance cannot fill every slot
+        // with waiting writes and lock out valid clients.
         if (!_authenticationSlots.Wait(0))
         {
             CountRejection(AuthenticationBusy, AuditOutcome.Denied);
@@ -70,53 +74,16 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
             return;
         }
 
-        AuthResult result;
+        string? rejection;
+        AuthResult? result = null;
         try
         {
-            if (!IsHostAllowed(context.Request.Host))
+            rejection = !IsHostAllowed(context.Request.Host) ? "HostNotAllowed"
+                : context.Request.Headers.Origin is { Count: > 0 } origin && !_allowedOrigins.Contains(origin.ToString().TrimEnd('/')) ? "OriginNotAllowed"
+                : null;
+            if (rejection is null)
             {
-                Audit(context, remote, AuditOutcome.Denied, "HostNotAllowed");
-                await RejectAsync(context, StatusCodes.Status403Forbidden,
-                    "Host not allowed. Add this host name to the allowed host names in the Sysacta console (Connection).");
-                return;
-            }
-
-            if (context.Request.Headers.Origin is { Count: > 0 } origin && !_allowedOrigins.Contains(origin.ToString().TrimEnd('/')))
-            {
-                Audit(context, remote, AuditOutcome.Denied, "OriginNotAllowed");
-                await RejectAsync(context, StatusCodes.Status403Forbidden,
-                    "Origin not allowed. Add this origin to the allowed origins in the Sysacta console (Connection).");
-                return;
-            }
-
-            result = authenticator.Authenticate(context.Request.Headers.Authorization.Count == 1 ? context.Request.Headers.Authorization.ToString() : null);
-            if (!result.Succeeded)
-            {
-                if (!Audit(context, remote, AuditOutcome.AuthFailed, result.Failure.ToString()!))
-                {
-                    TooManyRequests(context, retryAfter: null);
-                    return;
-                }
-
-                context.Response.Headers.WWWAuthenticate = "Bearer";
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                return;
-            }
-
-            if (!ClientBudget.TryAcquire(result.Client!.Id, out retryAfter))
-            {
-                CountRejection(ClientRateLimited, AuditOutcome.Denied);
-                TooManyRequests(context, retryAfter);
-                return;
-            }
-
-            try
-            {
-                authenticator.RecordUse(result.Client);
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                // The last-used time is informational; a busy database must not fail an authenticated request.
+                result = authenticator.Authenticate(context.Request.Headers.Authorization.Count == 1 ? context.Request.Headers.Authorization.ToString() : null);
             }
         }
         finally
@@ -124,7 +91,45 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
             _authenticationSlots.Release();
         }
 
-        var client = result.Client;
+        if (rejection is not null)
+        {
+            Audit(context, remote, AuditOutcome.Denied, rejection);
+            await RejectAsync(context, StatusCodes.Status403Forbidden, rejection == "HostNotAllowed"
+                ? "Host not allowed. Add this host name to the allowed host names in the Sysacta console (Connection)."
+                : "Origin not allowed. Add this origin to the allowed origins in the Sysacta console (Connection).");
+            return;
+        }
+
+        if (!result!.Succeeded)
+        {
+            if (!Audit(context, remote, AuditOutcome.AuthFailed, result.Failure.ToString()!))
+            {
+                TooManyRequests(context, retryAfter: null);
+                return;
+            }
+
+            context.Response.Headers.WWWAuthenticate = "Bearer";
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        var client = result.Client!;
+        if (!ClientBudget.TryAcquire(client.Id, out retryAfter))
+        {
+            CountRejection(ClientRateLimited, AuditOutcome.Denied);
+            TooManyRequests(context, retryAfter);
+            return;
+        }
+
+        try
+        {
+            authenticator.RecordUse(client);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // The last-used time is informational; a busy database must not fail an authenticated request.
+        }
+
         context.User = new ClaimsPrincipal(new ClaimsIdentity(
             [new Claim(ClientIdClaim, client.Id), new Claim(ClaimTypes.Name, client.Name), new Claim(RemoteAddressClaim, remote ?? ""), new Claim(CredentialClaim, result.TokenHash!)],
             AuthenticationType));
@@ -201,23 +206,42 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
     /// Writes the counted rejections as one record per reason once their minute is over (or when the host stops,
     /// <paramref name="force"/>). Each record covers the minute starting at its timestamp.
     /// </summary>
+    /// <summary>Starts writing the counted rejections when their minute is over, without delaying the request.</summary>
+    private void FlushAggregatesInBackground()
+    {
+        if (TakeDueAggregates(force: false) is { } due)
+        {
+            _ = Task.Run(() => WriteAggregates(due));
+        }
+    }
+
     internal void FlushAggregates(bool force)
     {
-        DateTimeOffset start;
-        List<KeyValuePair<string, (AuditOutcome Outcome, long Count)>> batch;
+        if (TakeDueAggregates(force) is { } due)
+        {
+            WriteAggregates(due);
+        }
+    }
+
+    private (DateTimeOffset Start, List<KeyValuePair<string, (AuditOutcome Outcome, long Count)>> Batch)? TakeDueAggregates(bool force)
+    {
         lock (_aggregateLock)
         {
-            if (_aggregateStart is not { } s || (!force && time.GetUtcNow() - s < RequestBudget.Window))
+            if (_aggregateStart is not { } start || (!force && time.GetUtcNow() - start < RequestBudget.Window))
             {
-                return;
+                return null;
             }
 
-            start = s;
-            batch = [.. _aggregates];
+            List<KeyValuePair<string, (AuditOutcome Outcome, long Count)>> batch = [.. _aggregates];
             _aggregates.Clear();
             _aggregateStart = null;
+            return (start, batch);
         }
+    }
 
+    private void WriteAggregates((DateTimeOffset Start, List<KeyValuePair<string, (AuditOutcome Outcome, long Count)>> Batch) due)
+    {
+        var (start, batch) = due;
         foreach (var (code, (outcome, count)) in batch)
         {
             TryWrite(new AuditEvent

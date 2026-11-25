@@ -124,6 +124,8 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
         }
 
         text.Append("拒否が多いときは、1分ごとの件数に集約して記録します。");
+        text.Append(CultureInfo.CurrentCulture,
+            $"DB ファイル {MiB(s.FileBytes)} MiB (未使用 {MiB(s.FreeBytes)} MiB、設定・権限を含む)、WAL {MiB(s.WalBytes)} MiB。ファイルは定期保守で必要なときだけ縮めます。");
         return text.ToString();
     }
 

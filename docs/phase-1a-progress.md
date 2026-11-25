@@ -58,7 +58,7 @@ Linux (WSL2, .NET SDK 10.0.404) で `dotnet build Sysacta.sln -c Release`(警告
 | プロジェクト | 結果 |
 |---|---|
 | Core.Tests | 100 成功 |
-| Infrastructure.Tests | 45 成功(Phase 0: 37) |
+| Infrastructure.Tests | 46 成功(Phase 0: 37) |
 | Mcp.Tests | 60 成功(Phase 0: 43) |
 | Windows.Tests | 3 スキップ(Linux) |
 | App.Tests | Linux では対象外。追加 2 件(起動時の pending 回復、ログ画面の保存量表示)は Windows CI |
@@ -93,6 +93,20 @@ Linux (WSL2, .NET SDK 10.0.404) で `dotnet build Sysacta.sln -c Release`(警告
 
 - DB ファイルは削除ページの再利用で増えない。WAL は長い読み取り中に上限なく伸びる(1,500 件で 43 MB)。`journal_size_limit` がないと読み取り終了後も 43 MB のままだったため、各接続で 4 MiB を設定した。
 - 1 件の書き込みで約 7 ページ(28 KiB)が WAL に追記される。
+
+### 独立レビュー(サブエージェント、2026-11-26)
+
+重大な指摘なし。軽微な指摘への対応:
+
+| 指摘 | 対応 |
+|---|---|
+| 認証段階の枠を持ったまま DB に書く(拒否記録・最終利用日時)ため、保守中の DB 待ちで 8 枠が埋まり正規クライアントも 429 になり得る | 枠はトークン照会までにし、書き込みは枠を返してから行うよう修正 |
+| 集約の書き出しが予算判定より前に同期で行われる | 予算通過後に、バックグラウンドで書くよう修正 |
+| 拒否記録が全体の上限でツールの記録を押し出せる | 拒否記録は拒否記録だけを削除するよう修正し、テストを追加 |
+| 最終結果の UPDATE が pending かを確認しない | `AND result = 'pending'` を追加 |
+| ログ画面に物理サイズがない | DB・未使用・WAL のサイズを表示 |
+| 過大な既存 DB は保守が終わるまで状態変更を拒否し得る | fail-closed として許容し、security.md に記載 |
+| 削除時刻だけ `TimeProvider` でなくシステム時計 | 表示用のため変更せず |
 
 ## 仕様・指示書との差分
 

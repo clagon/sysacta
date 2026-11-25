@@ -103,6 +103,7 @@ public class AuditCapacityTests
 
         var events = log.Query(new AuditQuery(Limit: 1000));
         Assert.Equal(20, events.Count(e => e.Source == "mcp")); // a rejection flood does not evict tool records
+        Assert.Equal(0, log.GetStatus().FailedWrites);
         Assert.Equal(5, events.Count(e => e.Source == "http"));
         Assert.Contains(events, e => e.RequestId == "http199");
 
@@ -115,6 +116,22 @@ public class AuditCapacityTests
         Assert.Contains(log.Query(new AuditQuery(Limit: 1000)), e => e.RequestId == "tool099");
         Assert.DoesNotContain(log.Query(new AuditQuery(Limit: 1000)), e => e.RequestId == "tool000");
         AssertUsageMatches(t.Database, log);
+    }
+
+    [Fact]
+    public void Rejection_record_is_dropped_rather_than_evict_tool_records_from_a_full_log()
+    {
+        using var t = new TempDatabase();
+        t.Database.Migrate();
+        var log = new AuditLog(t.Database, new AuditLimits(MaxRows: 5, ReservedRows: 1, LowPriorityRows: 3));
+        var now = DateTimeOffset.UtcNow;
+        for (var i = 0; i < 4; i++)
+        {
+            log.Write(Event($"tool{i}", now.AddSeconds(i)));
+        }
+
+        Assert.Throws<AuditCapacityException>(() => log.Write(Event("http0", now.AddSeconds(10), AuditOutcome.AuthFailed, "http")));
+        Assert.Equal(4, log.Query(new AuditQuery()).Count(e => e.Source == "mcp"));
     }
 
     [Fact]

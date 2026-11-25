@@ -102,16 +102,18 @@ public sealed class AuditLog(SysactaDatabase database, AuditLimits? limits = nul
         using var tx = c.BeginTransaction(); // BEGIN IMMEDIATE: check and write are one step for concurrent writers
 
         // The final outcome of a recorded intent replaces it in place; it never needs new room.
-        if (ExecuteTx(c, tx, "UPDATE audit_events SET result = $res, error_code = $err, duration_ms = $dur, size_bytes = $size WHERE request_id = $id",
+        if (ExecuteTx(c, tx, "UPDATE audit_events SET result = $res, error_code = $err, duration_ms = $dur, size_bytes = $size WHERE request_id = $id AND result = 'pending'",
                 ("$id", e.RequestId), ("$res", OutcomeToDb(e.Outcome)), ("$err", e.ErrorCode), ("$dur", e.DurationMs), ("$size", size)) == 0)
         {
-            if (e.Source == "http")
+            // A rejection record makes room only among rejection records, never by evicting tool records.
+            var lowPriority = e.Source == "http";
+            if (lowPriority)
             {
-                MakeRoom(c, tx, "http", Limits.LowPriorityRows, Limits.LowPriorityBytes, size);
+                MakeRoom(c, tx, "http", "http", Limits.LowPriorityRows, Limits.LowPriorityBytes, size);
             }
 
             var reserved = e.Outcome == AuditOutcome.Pending;
-            MakeRoom(c, tx, "all",
+            MakeRoom(c, tx, "all", lowPriority ? "http" : "all",
                 reserved ? Limits.MaxRows : Limits.MaxRows - Limits.ReservedRows,
                 reserved ? Limits.MaxBytes : Limits.MaxBytes - Limits.ReservedBytes,
                 size);
@@ -130,10 +132,10 @@ public sealed class AuditLog(SysactaDatabase database, AuditLimits? limits = nul
 
     /// <summary>
     /// Ensures one more record of <paramref name="size"/> bytes fits within the limits of <paramref name="scope"/>,
-    /// evicting the oldest non-pending records of that scope in at most a few bounded batches. Evicts a little more than
+    /// evicting the oldest non-pending records of <paramref name="evictScope"/> in at most a few bounded batches. Evicts a little more than
     /// needed (1 % of the limit) so that a full log does not evict on every write.
     /// </summary>
-    private static void MakeRoom(SqliteConnection c, SqliteTransaction tx, string scope, long maxRows, long maxBytes, long size)
+    private static void MakeRoom(SqliteConnection c, SqliteTransaction tx, string scope, string evictScope, long maxRows, long maxBytes, long size)
     {
         for (var batch = 0; ; batch++)
         {
@@ -152,7 +154,7 @@ public sealed class AuditLog(SysactaDatabase database, AuditLimits? limits = nul
             var averageSize = rows > 0 ? Math.Max(1, bytes / rows) : 1;
             var excessBytes = bytes + size - (maxBytes - maxBytes / 100);
             var count = Math.Clamp(Math.Max(excessRows, (excessBytes + averageSize - 1) / averageSize), 1, EvictionBatch);
-            if (Evict(c, tx, scope, count) == 0)
+            if (Evict(c, tx, evictScope, count) == 0)
             {
                 throw new AuditCapacityException(); // everything left is in progress
             }
