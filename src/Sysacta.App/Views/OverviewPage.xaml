@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-    ScrollViewer.CanContentScroll="True"
+    ScrollViewer.CanContentScroll="False"
     Title="概要">
   <ScrollViewer Style="{StaticResource PageScroll}">
     <StackPanel MaxWidth="1000" HorizontalAlignment="Stretch">

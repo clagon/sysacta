@@ -54,8 +54,8 @@
     <Setter Property="CornerRadius" Value="6" />
     <Setter Property="Padding" Value="16,12" />
   </Style>
-  <!-- Pages set ScrollViewer.CanContentScroll="True" so WPF UI's NavigationView does not wrap them in an
-       infinite-height scroll viewer; each page scrolls itself (PageScroll) or fills the window (Grid). -->
+  <!-- Pages set ScrollViewer.CanContentScroll="False": WPF UI 4.x defaults it to true for Page and then wraps the
+       page in an infinite-height DynamicScrollViewer. Each page scrolls itself (PageScroll) or fills the window (Grid). -->
   <Style x:Key="PageScroll" TargetType="ScrollViewer">
     <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
     <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />

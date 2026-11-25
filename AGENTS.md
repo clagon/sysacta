@@ -49,7 +49,7 @@ Sysacta.App ──▶ Sysacta.Mcp ─────────▶ Sysacta.Core
 7. **見かけだけの成功を返さない。** 実機で確認できない API を「実装済み」と報告しない。読み戻しで確認できたときだけ `Verification.Verified`。API受理のみなら `Accepted`。
 8. **任意のシェル実行・ファイルアクセス・GUI操作・任意パス/引数/URLを受け付けるツールを作らない**(spec §1)。
 9. **DB スキーマは `SysactaDatabase.Migrations` に追記するだけ。** 出荷済みのマイグレーションを書き換えない。
-10. **ページは `ScrollViewer.CanContentScroll="True"` を付け、自分でスクロールする**(`PageScroll` スタイル、または高さいっぱいの Grid + 内側の ScrollViewer)。付けないと WPF UI の NavigationView が高さ無制限で包み、内側のリストがスクロールできなくなる(App.Tests が検査)。リストは `ui:ListView` / `ui:DataGrid` を使い、素の WPF コントロールを使わない。破壊的操作のボタンは色で強調せず、確認ダイアログで止める。
+10. **ページは `ScrollViewer.CanContentScroll="False"` を付け、自分でスクロールする**(`PageScroll` スタイル、または高さいっぱいの Grid + 内側の ScrollViewer)。付けないと WPF UI 4.x の NavigationView(Page の既定値を true に変更している)が高さ無制限の DynamicScrollViewer で包み、内側のリストがスクロールできなくなる(App.Tests が検査)。リストは `ui:ListView` / `ui:DataGrid` を使い、素の WPF コントロールを使わない。破壊的操作のボタンは色で強調せず、確認ダイアログで止める。
 11. **UI スレッドをブロックしない。** SQLite・OS API・サーバー起動は `Task.Run` / async で実行する(`PageViewModel.RunAsync` を使う)。
 
 ## コーディング規約
