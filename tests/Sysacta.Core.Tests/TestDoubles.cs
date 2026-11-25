@@ -65,6 +65,9 @@ internal sealed class RecordingAuditLog : IAuditLog
 
     public bool Fail { get; set; }
 
+    /// <summary>Runs inside Write (e.g. to change permissions while the pending record is being written).</summary>
+    public Action<AuditEvent>? OnWrite { get; set; }
+
     public IReadOnlyList<AuditEvent> Events
     {
         get
@@ -82,6 +85,8 @@ internal sealed class RecordingAuditLog : IAuditLog
         {
             throw new IOException("disk full");
         }
+
+        OnWrite?.Invoke(auditEvent);
 
         lock (_events)
         {
@@ -166,7 +171,8 @@ internal sealed class GateTool(TimeSpan? timeout = null) : SysactaTool<GateArgs,
 
 internal sealed class FakeAudioEndpoints : IAudioEndpoints
 {
-    public Dictionary<string, AudioEndpointState> Devices { get; } = new()
+    // Case-insensitive like a lookup that accepts several spellings of one endpoint; GetEndpoint returns the canonical id.
+    public Dictionary<string, AudioEndpointState> Devices { get; } = new(StringComparer.OrdinalIgnoreCase)
     {
         ["spk"] = new("spk", "Speakers", AudioDirection.Output, AudioDeviceState.Active, 0.5f, false),
         ["hp"] = new("hp", "Headphones", AudioDirection.Output, AudioDeviceState.Unplugged, null, null),

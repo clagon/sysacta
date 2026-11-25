@@ -12,7 +12,7 @@ namespace Sysacta.Mcp;
 /// HTTP-level security applied to every request before the MCP SDK sees it:
 /// Host/Origin validation (DNS rebinding), Bearer authentication and authentication-failure auditing.
 /// </summary>
-internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenticator authenticator, IAuditLog audit, TimeProvider time)
+internal sealed partial class RequestGuards(ServerEndpointOptions options, TokenAuthenticator authenticator, IAuditLog audit, TimeProvider time) : IDisposable
 {
     public const string ClientIdClaim = "sysacta:client_id";
     public const string RemoteAddressClaim = "sysacta:remote";
@@ -36,7 +36,7 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
 
         if (!IsHostAllowed(context.Request.Host))
         {
-            Audit(context, remote, AuditOutcome.Denied, "HostNotAllowed", ("host", context.Request.Host.Value));
+            Audit(context, remote, AuditOutcome.Denied, "HostNotAllowed", ("host", ShapeOrInvalid(context.Request.Host.Value, HostShape())));
             await RejectAsync(context, StatusCodes.Status403Forbidden,
                 "Host not allowed. Add this host name to the allowed host names in the Sysacta console (Connection).");
             return;
@@ -44,7 +44,7 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
 
         if (context.Request.Headers.Origin is { Count: > 0 } origin && !_allowedOrigins.Contains(origin.ToString().TrimEnd('/')))
         {
-            Audit(context, remote, AuditOutcome.Denied, "OriginNotAllowed", ("origin", origin.ToString()));
+            Audit(context, remote, AuditOutcome.Denied, "OriginNotAllowed", ("origin", ShapeOrInvalid(origin.ToString(), OriginShape())));
             await RejectAsync(context, StatusCodes.Status403Forbidden,
                 "Origin not allowed. Add this origin to the allowed origins in the Sysacta console (Connection).");
             return;
@@ -86,14 +86,16 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
             return false;
         }
 
+        // Only fixed categories and validated shapes are recorded (SEC-03): the raw path or an arbitrary header could
+        // carry a token or other text the client never meant to store.
         var request = new Dictionary<string, string?>
         {
-            ["method"] = context.Request.Method,
-            ["path"] = Truncate(context.Request.Path.Value, 200),
+            ["method"] = KnownMethods.Contains(context.Request.Method) ? context.Request.Method : "other",
+            ["path"] = string.Equals(context.Request.Path.Value, McpServerHost.EndpointPath, StringComparison.OrdinalIgnoreCase) ? McpServerHost.EndpointPath : "other",
         };
         if (detail.Name is not null)
         {
-            request[detail.Name] = Truncate(detail.Value, 200);
+            request[detail.Name] = detail.Value;
         }
 
         try
@@ -126,7 +128,19 @@ internal sealed class RequestGuards(ServerEndpointOptions options, TokenAuthenti
         return context.Response.WriteAsync(reason);
     }
 
-    private static string? Truncate(string? value, int max) => value is { Length: > 0 } v && v.Length > max ? v[..max] : value;
+    private static readonly HashSet<string> KnownMethods = new(StringComparer.Ordinal) { "GET", "POST", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS" };
+
+    private static string ShapeOrInvalid(string? value, System.Text.RegularExpressions.Regex shape) =>
+        value is not null && shape.IsMatch(value) ? value : "(invalid)";
+
+    /// <summary>host[:port] or [ipv6][:port]; tokens never match (their "sya_" prefix contains '_').</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(\[[0-9A-Fa-f:.]{2,45}\]|[A-Za-z0-9.-]{1,253})(:[0-9]{1,5})?$")]
+    private static partial System.Text.RegularExpressions.Regex HostShape();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^https?://(\[[0-9A-Fa-f:.]{2,45}\]|[A-Za-z0-9.-]{1,253})(:[0-9]{1,5})?$")]
+    private static partial System.Text.RegularExpressions.Regex OriginShape();
+
+    public void Dispose() => _rejectionLimiter.Dispose();
 
     /// <summary>Recreates the caller from the authenticated principal. Throws if the request was not authenticated.</summary>
     public static Caller CallerFrom(ClaimsPrincipal? user)

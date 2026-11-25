@@ -432,4 +432,55 @@ public class ToolExecutorTests
         protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolTarget target, CancellationToken cancellationToken) =>
             Task.FromResult(new ToolOutcome<EchoData>(new EchoData(1), Verification.Verified));
     }
+
+    [Theory]
+    [InlineData("revoke")]
+    [InlineData("reissue")]
+    [InlineData("grant")]
+    [InlineData("global")]
+    [InlineData("expire")]
+    public async Task Changes_committed_while_the_pending_record_is_written_prevent_the_side_effect(string change)
+    {
+        var tool = new GateTool();
+        var h = new Harness(null, tool);
+        var (caller, _) = h.Store.AddClient("c1", tool.Name);
+        h.Audit.OnWrite = e =>
+        {
+            if (e.Outcome != AuditOutcome.Pending)
+            {
+                return;
+            }
+
+            switch (change)
+            {
+                case "revoke": h.Store.Revoke("c1"); break;
+                case "reissue": h.Store.Reissue("c1"); break;
+                case "grant": h.Store.Grants[("c1", tool.Name)] = false; break;
+                case "global": h.Store.EnabledTools[tool.Name] = false; break;
+                case "expire": h.Store.Clients["c1"] = h.Store.Clients["c1"] with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) }; break;
+            }
+        };
+
+        var result = await h.Executor.ExecuteAsync(caller, tool.Name, TestJson.Args(new { resource = "a" }), Ct);
+
+        Assert.Equal(ToolStatus.Error, result.Status);
+        Assert.Contains(result.Error!.Code, new[] { ErrorCodes.PermissionDenied, ErrorCodes.ToolDisabled });
+        Assert.Equal(0, tool.Started);
+        Assert.Equal(AuditOutcome.Denied, h.Audit.Final(result.RequestId).Outcome); // the pending record was replaced
+        Assert.Equal(0, h.Executor.InFlight);
+    }
+
+    [Theory]
+    [InlineData("audio_secret_tool", "audio_secret_tool")]
+    [InlineData("Bearer sya_MARKERmarker0123456789", "(invalid name)")]
+    [InlineData("C:\\Users\\someone\\file.txt", "(invalid name)")]
+    public async Task Unknown_tool_names_are_audited_only_when_they_look_like_tool_names(string name, string recorded)
+    {
+        var h = new Harness(null, new EchoTool());
+        var (caller, _) = h.Store.AddClient("c1");
+
+        var result = await h.Executor.ExecuteAsync(caller, name, null, Ct);
+
+        Assert.Equal(recorded, h.Audit.Final(result.RequestId).ToolName);
+    }
 }

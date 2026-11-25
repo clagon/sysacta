@@ -65,6 +65,18 @@ public class AudioToolTests
     }
 
     [Fact]
+    public void Different_spellings_of_one_device_share_the_lock_and_target()
+    {
+        var a = AudioTarget.Resolve(_audio, _h.Store, "spk", AudioDirection.Output);
+        var b = AudioTarget.Resolve(_audio, _h.Store, "SPK", AudioDirection.Output);
+        var byDefault = AudioTarget.Resolve(_audio, _h.Store, null, AudioDirection.Output);
+
+        Assert.Equal("spk", b.TargetId);
+        Assert.Equal(a.LockKeys, b.LockKeys);
+        Assert.Contains(a.LockKeys[0], byDefault.LockKeys); // explicit and default calls on the same device serialize
+    }
+
+    [Fact]
     public async Task No_default_device_is_target_not_found()
     {
         _audio.DefaultOutput = null;

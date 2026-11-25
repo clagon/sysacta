@@ -192,7 +192,15 @@ public class AuthorizationTests
         await using var f = await ServerFixture.StartAsync();
         await using var c = await f.ClientAsync(f.Issue("audio_set_volume").Token);
 
-        foreach (var args in new Dictionary<string, object?>[] { new() { ["level"] = 101 }, new() { ["level"] = "50" }, new() { ["level"] = 5, ["force"] = true }, new() })
+        foreach (var args in new Dictionary<string, object?>[]
+        {
+            new() { ["level"] = 101 },
+            new() { ["level"] = "50" },
+            new() { ["level"] = 5, ["force"] = true },
+            new(),
+            new() { ["level"] = 5, ["direction"] = "Output" },  // only the published enum spelling
+            new() { ["level"] = 5, ["device"] = null },          // explicit null is not "omitted"
+        })
         {
             var result = await c.CallToolAsync("audio_set_volume", args, cancellationToken: Ct);
             Assert.True(result.IsError);
@@ -486,3 +494,65 @@ public class LifecycleTests
         await c.DisposeAsync();
     }
 }
+
+public class RejectionAuditTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task Rejected_requests_record_only_categories_and_validated_values()
+    {
+        await using var f = await ServerFixture.StartAsync(new ServerEndpointOptions { Port = 0, AllowedOrigins = ["https://app.example"] });
+        const string marker = "sya_MARKERmarkerMARKER0123456789abcdefghijklmn";
+
+        // A token pasted into the URL path, with no Authorization header.
+        using (var http = f.Http())
+        using (var request = ServerFixture.JsonRpc("""{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""))
+        {
+            request.RequestUri = new Uri("/mcp/" + marker, UriKind.Relative);
+            using var response = await http.SendAsync(request, Ct);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        // An Origin that is not a plain origin.
+        using (var http = f.Http())
+        using (var request = ServerFixture.JsonRpc("""{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""))
+        {
+            request.Headers.TryAddWithoutValidation("Origin", "https://evil.example/" + marker);
+            using var response = await http.SendAsync(request, Ct);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+
+        var events = f.Audit.Query(new AuditQuery());
+        Assert.Contains(events, e => e.Arguments == """{"method":"POST","path":"other"}""");
+        Assert.Contains(events, e => e.ErrorCode == "OriginNotAllowed" && e.Arguments!.Contains("\"origin\":\"(invalid)\"", StringComparison.Ordinal));
+
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        var bytes = System.Text.Encoding.UTF8.GetBytes("MARKERmarker");
+        foreach (var file in Directory.GetFiles(Path.GetDirectoryName(f.Database.Path)!))
+        {
+            Assert.Equal(-1, File.ReadAllBytes(file).AsSpan().IndexOf(bytes));
+        }
+    }
+}
+
+public class HostLimiterTests
+{
+    [Fact]
+    public async Task Limiters_are_disposed_when_the_host_stops_or_fails_to_start()
+    {
+        await using var f = await ServerFixture.StartAsync();
+        var running = f.Host.LastBuiltLimiters!;
+        Assert.False(running.IsDisposed);
+
+        await f.Host.StopAsync();
+        Assert.True(running.IsDisposed);
+
+        using var blocker = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        blocker.Start();
+        await Assert.ThrowsAnyAsync<Exception>(() => f.Host.StartAsync(new ServerEndpointOptions { Port = ((IPEndPoint)blocker.LocalEndpoint).Port }, TestContext.Current.CancellationToken));
+        Assert.True(f.Host.LastBuiltLimiters!.IsDisposed);
+        Assert.NotSame(running, f.Host.LastBuiltLimiters);
+    }
+}
+

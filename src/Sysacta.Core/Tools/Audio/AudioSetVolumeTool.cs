@@ -12,6 +12,7 @@ public sealed class AudioSetVolumeArgs
 
     [Description("Device id or alias. Omit to use the default device for the direction.")]
     [StringLength(512, MinimumLength = 1)]
+    [NoControlCharacters]
     public string? Device { get; init; }
 
     [Description("Endpoint direction.")]

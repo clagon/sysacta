@@ -71,9 +71,16 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
         Text: string.IsNullOrWhiteSpace(SearchText) ? null : SearchText,
         Outcome: OutcomeIndex > 0 ? Enum.GetValues<AuditOutcome>()[OutcomeIndex - 1] : null,
         ToolName: ToolIndex > 0 && ToolIndex < ToolOptions.Count ? ToolOptions[ToolIndex] : null,
-        From: FromDate is { } f ? new DateTimeOffset(f.Date, TimeZoneInfo.Local.GetUtcOffset(f.Date)) : null,
-        To: ToDate is { } t ? new DateTimeOffset(t.Date.AddDays(1), TimeZoneInfo.Local.GetUtcOffset(t.Date.AddDays(1))) : null, // offset at the exclusive boundary (DST-safe)
+        From: DayStart(FromDate, 0, TimeZoneInfo.Local),
+        To: DayStart(ToDate, 1, TimeZoneInfo.Local),
         Limit: limit);
+
+    /// <summary>
+    /// Local midnight of <paramref name="date"/> + <paramref name="days"/>, using the UTC offset of that midnight itself
+    /// (not of the selected day): on a daylight-saving change the two differ by an hour.
+    /// </summary>
+    internal static DateTimeOffset? DayStart(DateTime? date, int days, TimeZoneInfo zone) =>
+        date is { } d ? new DateTimeOffset(d.Date.AddDays(days), zone.GetUtcOffset(d.Date.AddDays(days))) : null;
 
     [RelayCommand]
     private Task SearchAsync() => RunAsync(async () =>

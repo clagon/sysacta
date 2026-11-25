@@ -15,7 +15,11 @@ namespace Sysacta.App;
 public sealed class SysactaRuntime : IAsyncDisposable
 {
     private readonly TimeProvider _time = TimeProvider.System;
-    private readonly SemaphoreSlim _settingsGate = new(1, 1);
+    /// <summary>
+    /// Serializes server start/stop and settings saves (SEC-04): a start reads the settings inside the gate, so a save
+    /// can never complete while a start with the old settings is half-way and then be skipped.
+    /// </summary>
+    private readonly SemaphoreSlim _serverGate = new(1, 1);
 
     public SysactaRuntime(string dataDirectory)
     {
@@ -78,6 +82,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
     /// <summary>Starts the server with the saved settings. Returns a user-facing error or null.</summary>
     public async Task<string?> StartServerAsync()
     {
+        await _serverGate.WaitAsync().ConfigureAwait(false);
         try
         {
             await Host.StartAsync(EndpointOptions(Settings)).ConfigureAwait(false);
@@ -86,6 +91,23 @@ public sealed class SysactaRuntime : IAsyncDisposable
         catch (Exception)
         {
             return Host.LastError ?? "サーバーを起動できませんでした。";
+        }
+        finally
+        {
+            _serverGate.Release();
+        }
+    }
+
+    public async Task StopServerAsync()
+    {
+        await _serverGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await Host.StopAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _serverGate.Release();
         }
     }
 
@@ -96,14 +118,14 @@ public sealed class SysactaRuntime : IAsyncDisposable
     /// </param>
     public async Task<string?> SaveSettingsAsync(Func<AppSettings, AppSettings> change, bool restartIfRunning)
     {
-        await _settingsGate.WaitAsync().ConfigureAwait(false);
+        await _serverGate.WaitAsync().ConfigureAwait(false);
         try
         {
             return await SaveSettingsCoreAsync(change(Settings), restartIfRunning).ConfigureAwait(false);
         }
         finally
         {
-            _settingsGate.Release();
+            _serverGate.Release();
         }
     }
 

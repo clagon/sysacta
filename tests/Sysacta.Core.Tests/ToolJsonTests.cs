@@ -86,6 +86,11 @@ public class ToolJsonTests
     [InlineData("""{"level":null}""")]                  // null for required int
     [InlineData("""{"level":50,"device":""}""")]        // too short
     [InlineData("""[50]""")]                            // not an object
+    [InlineData("""{"level":50,"direction":"Output"}""")]       // enum: only the published spelling
+    [InlineData("""{"level":50,"direction":"OUTPUT"}""")]
+    [InlineData("""{"level":50,"direction":"output, input"}""")] // comma-separated names
+    [InlineData("""{"level":50,"device":null}""")]              // explicit null (omit instead)
+    [InlineData("""{"level":50,"device":"spk\u0007"}""")]       // control character
     public void Invalid_arguments_are_rejected(string json)
     {
         var ex = Assert.Throws<ToolFailureException>(() => ToolJson.ParseArguments<AudioSetVolumeArgs>(TestJson.Raw(json)));
@@ -97,6 +102,19 @@ public class ToolJsonTests
     {
         var ex = Assert.Throws<ToolFailureException>(() => ToolJson.ParseArguments<AudioSetVolumeArgs>(TestJson.Raw("""{"level":50,"device":123}""")));
         Assert.DoesNotContain("123", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Error_messages_name_only_known_arguments()
+    {
+        var unknown = Assert.Throws<ToolFailureException>(() => ToolJson.ParseArguments<AudioSetVolumeArgs>(TestJson.Raw("""{"level":5,"sya_MARKER_secret":1}""")));
+        Assert.DoesNotContain("MARKER", unknown.Message, StringComparison.Ordinal);
+
+        var unknownNull = Assert.Throws<ToolFailureException>(() => ToolJson.ParseArguments<AudioSetVolumeArgs>(TestJson.Raw("""{"level":5,"MARKER2":null}""")));
+        Assert.DoesNotContain("MARKER2", unknownNull.Message, StringComparison.Ordinal);
+
+        var known = Assert.Throws<ToolFailureException>(() => ToolJson.ParseArguments<AudioSetVolumeArgs>(TestJson.Raw("""{"level":"5"}""")));
+        Assert.Contains("'level'", known.Message, StringComparison.Ordinal);
     }
 
     [Fact]

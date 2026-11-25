@@ -21,7 +21,7 @@ public sealed record ExecutorLimits(int MaxConcurrent = 8, int MaxQueued = 32);
 /// <item>the final audit record.</item>
 /// </list>
 /// </summary>
-public sealed class ToolExecutor
+public sealed partial class ToolExecutor
 {
     public const string UnknownToolCode = "UNKNOWN_TOOL";
 
@@ -145,17 +145,19 @@ public sealed class ToolExecutor
                     : ToolResult.Fail(ErrorCodes.Timeout, "Timed out waiting for the target resource.", retryable: true));
             }
 
-            // Re-authorize immediately before the side effect: revocation or permission changes made while this call
-            // was queued must apply (spec §6).
+            if (!tool.Descriptor.ReadOnly && !call.TryWritePending())
+            {
+                return call.Finish(AuditOutcome.Denied, ToolResult.Fail(ErrorCodes.AuditUnavailable, "The audit log is unavailable; state changes are refused.", retryable: true));
+            }
+
+            // Re-authorize as the very last step before the work starts (spec §6): revocation, re-issue, expiry or a
+            // permission change made while the call was queued, or while the pending record was written (a SQLite write
+            // can wait for the busy timeout), must apply. A denial replaces the pending record. Changes committed after
+            // this point race with the OS call itself and cannot be undone (accepted, see docs/security.md).
             decision = _policy.Evaluate(caller, tool);
             if (decision != AccessDecision.Allowed)
             {
                 return call.Finish(AuditOutcome.Denied, AccessPolicy.ToResult(decision, tool));
-            }
-
-            if (!tool.Descriptor.ReadOnly && !call.TryWritePending())
-            {
-                return call.Finish(AuditOutcome.Denied, ToolResult.Fail(ErrorCodes.AuditUnavailable, "The audit log is unavailable; state changes are refused.", retryable: true));
             }
 
             var work = Task.Run(() => tool.RunAsync(args, target, token), CancellationToken.None);
@@ -206,6 +208,16 @@ public sealed class ToolExecutor
     }
 
     private static string NewRequestId() => Guid.CreateVersion7().ToString("N");
+
+    /// <summary>
+    /// Unknown names come from the client and are recorded only if they look like a tool name, so arbitrary text
+    /// (possibly a token pasted into the wrong field) never reaches the audit log.
+    /// </summary>
+    private static string AuditToolName(ToolRegistry registry, string toolName) =>
+        registry.Find(toolName) is not null || ToolNameShape().IsMatch(toolName) ? toolName : "(invalid name)";
+
+    [System.Text.RegularExpressions.GeneratedRegex("^[a-z][a-z0-9_]{0,63}$")]
+    private static partial System.Text.RegularExpressions.Regex ToolNameShape();
 
     private sealed class HeldResources(ToolExecutor owner, CancellationTokenSource cancellation)
     {
@@ -265,7 +277,7 @@ public sealed class ToolExecutor
             Timestamp = owner._time.GetUtcNow(),
             ClientId = caller.ClientId,
             ClientName = caller.DisplayName,
-            ToolName = toolName.Length <= 64 ? toolName : toolName[..64],
+            ToolName = AuditToolName(owner._registry, toolName),
             Source = caller.Source,
             Arguments = AuditArguments,
             Outcome = outcome,

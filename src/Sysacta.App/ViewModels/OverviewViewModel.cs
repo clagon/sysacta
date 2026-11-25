@@ -90,7 +90,7 @@ public sealed partial class OverviewViewModel(SysactaRuntime runtime) : PageView
     private Task StopServerAsync() => RunAsync(async () =>
     {
         ClearMessage();
-        await runtime.Host.StopAsync();
+        await runtime.StopServerAsync();
         await RefreshAsync();
     });
 

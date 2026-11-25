@@ -1,8 +1,11 @@
 # Launches the real Sysacta.exe on a clean profile and checks: MCP server start, authentication, window close keeps
 # the app running in the tray, single instance re-activates the window, and an independent MCP client (TypeScript SDK)
-# can connect with a token. Used by CI. Refuses to run if a real profile exists.
+# can connect with a token.
+# CI only: it uses and finally deletes the real %LOCALAPPDATA%\Sysacta, which on a workstation could be created by a
+# normal Sysacta instance while the test runs. It refuses to run outside GitHub Actions or if that folder exists.
 param([string]$Exe = "src/Sysacta.App/bin/Release/net10.0-windows/Sysacta.exe")
 $ErrorActionPreference = "Stop"
+if ($env:GITHUB_ACTIONS -ne "true") { throw "smoke-app.ps1 runs only on disposable CI runners (it deletes %LOCALAPPDATA%\Sysacta)." }
 $url = "http://127.0.0.1:8765/mcp"
 
 $data = Join-Path $env:LOCALAPPDATA "Sysacta"

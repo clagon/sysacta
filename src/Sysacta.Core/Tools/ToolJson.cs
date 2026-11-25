@@ -211,6 +211,25 @@ public static class ToolJson
             throw new ToolFailureException(ErrorCodes.InvalidArgument, "Arguments must be a JSON object.");
         }
 
+        // Accept exactly what the published schema allows (SEC-09): no explicit null (optional arguments are omitted),
+        // and enum values only in their published spelling (the serializer alone also accepts other casings or
+        // comma-separated names).
+        var properties = ArgumentSchema<TArgs>.Properties;
+        foreach (var property in element.EnumerateObject())
+        {
+            var known = properties.TryGetPropertyValue(property.Name, out var propertySchema);
+            if (property.Value.ValueKind == JsonValueKind.Null)
+            {
+                throw InvalidArgument(known ? property.Name : null, "must not be null; omit it instead");
+            }
+
+            if (known && propertySchema?["enum"] is JsonArray allowed
+                && (property.Value.ValueKind != JsonValueKind.String || !allowed.Any(a => (string?)a == property.Value.GetString())))
+            {
+                throw InvalidArgument(property.Name, "is not one of the allowed values");
+            }
+        }
+
         TArgs? value;
         try
         {
@@ -218,9 +237,9 @@ public static class ToolJson
         }
         catch (JsonException ex)
         {
-            // JsonException.Path is the property path, safe to return; the message may contain values, so it is not used.
-            var where = string.IsNullOrEmpty(ex.Path) || ex.Path == "$" ? "" : $" at '{ex.Path}'";
-            throw new ToolFailureException(ErrorCodes.InvalidArgument, $"Invalid, unknown or missing argument{where}.");
+            // Name the argument only if it is one of ours (SEC-10): never echo client-chosen names or values.
+            var name = ArgumentName(ex.Path);
+            throw InvalidArgument(name is not null && properties.ContainsKey(name) ? name : null, "is invalid, unknown or missing");
         }
 
         if (value is null)
@@ -237,4 +256,46 @@ public static class ToolJson
 
         return value;
     }
+
+    private static ToolFailureException InvalidArgument(string? knownName, string problem) =>
+        new(ErrorCodes.InvalidArgument, knownName is null ? $"An argument {problem}." : $"Argument '{knownName}' {problem}.");
+
+    /// <summary>First property name of a JsonException path such as <c>$.level</c> or <c>$['level']</c>.</summary>
+    private static string? ArgumentName(string? path)
+    {
+        if (path is null || !path.StartsWith('$') || path.Length < 2)
+        {
+            return null;
+        }
+
+        var rest = path[1..];
+        if (rest.StartsWith('.'))
+        {
+            var end = rest.IndexOfAny(['.', '['], 1);
+            return end < 0 ? rest[1..] : rest[1..end];
+        }
+
+        if (rest.StartsWith("['", StringComparison.Ordinal))
+        {
+            var end = rest.IndexOf("']", StringComparison.Ordinal);
+            return end > 2 ? rest[2..end] : null;
+        }
+
+        return null;
+    }
+
+    private static class ArgumentSchema<TArgs>
+    {
+        public static readonly JsonObject Properties = SchemaFor(typeof(TArgs), forArguments: true)["properties"] as JsonObject ?? [];
+    }
+}
+
+/// <summary>
+/// Rejects strings containing control characters. Use on identifiers passed to OS APIs (device ids, aliases) so they
+/// are refused at validation, before reaching native code or the audit log.
+/// </summary>
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class NoControlCharactersAttribute : ValidationAttribute
+{
+    public override bool IsValid(object? value) => value is not string s || !s.Any(char.IsControl);
 }

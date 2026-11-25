@@ -34,7 +34,9 @@ public static class AudioTarget
             throw new ToolFailureException(ErrorCodes.TargetNotFound, $"The specified device is not an {Name(direction)} device.");
         }
 
-        return new ToolTarget([DeviceKey(id)], id);
+        // Lock and act on the id the OS returned, not the caller's spelling: Windows can resolve several
+        // representations (casing, StableId on newer builds) to the same endpoint, and each would otherwise get its own lock.
+        return new ToolTarget([DeviceKey(state.Id)], state.Id);
     }
 
     public static AudioDeviceInfo Describe(IAudioEndpoints endpoints, AudioEndpointState state) =>

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sysacta.App.Platform;
@@ -96,6 +97,17 @@ public sealed partial class GeneralViewModel(SysactaRuntime runtime, Func<System
     }, "テーマを保存できませんでした");
 
     [RelayCommand]
-    private void OpenDataDirectory() =>
-        Process.Start(new ProcessStartInfo { FileName = "explorer.exe", ArgumentList = { DataDirectory }, UseShellExecute = false });
+    private void OpenDataDirectory() => Process.Start(OpenFolderStartInfo(DataDirectory))?.Dispose();
+
+    /// <summary>
+    /// Explorer by absolute path from the Windows directory (SEC-07): a bare "explorer.exe" with UseShellExecute=false is
+    /// searched in the application and current directories first, which another user may be able to write to.
+    /// </summary>
+    internal static ProcessStartInfo OpenFolderStartInfo(string folder) => new()
+    {
+        FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"),
+        WorkingDirectory = Environment.SystemDirectory,
+        ArgumentList = { folder },
+        UseShellExecute = false,
+    };
 }

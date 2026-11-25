@@ -75,7 +75,7 @@ public class TrayIconTests
     public async Task Tray_icon_is_created_and_tracks_server_state()
     {
         var host = TestHost.Create();
-        var tray = UiThread.Run(() => new TrayIcon(host, () => "http://127.0.0.1:1/mcp", () => Task.FromResult<string?>(null), _ => { }, () => { }));
+        var tray = UiThread.Run(() => new TrayIcon(host, () => "http://127.0.0.1:1/mcp", () => Task.FromResult<string?>(null), () => Task.CompletedTask, _ => { }, () => { }));
         try
         {
             var created = UiThread.Run(() => tray.IsCreated);

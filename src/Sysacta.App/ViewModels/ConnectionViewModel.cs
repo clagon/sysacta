@@ -139,7 +139,7 @@ public sealed partial class ConnectionViewModel(SysactaRuntime runtime) : PageVi
     private Task StopAsync() => RunAsync(async () =>
     {
         ClearMessage();
-        await runtime.Host.StopAsync();
+        await runtime.StopServerAsync();
         UpdateRuntimeState();
     });
 

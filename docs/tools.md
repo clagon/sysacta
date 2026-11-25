@@ -103,6 +103,9 @@ public sealed class DisplaySetBrightnessTool(IDisplays displays, IDeviceAliases 
 ルール:
 
 - 引数クラスが入力スキーマと検証の唯一の定義。スキーマを手書きしない。使える属性: `Description` / `Range` / `StringLength` / `DefaultValue` / `required`。enum は snake_case 文字列になる。
+- 省略可能な引数は「省略」で表す。明示的な `null` と、公開した綴り以外の列挙値(`"Output"`、`"output, input"` など)は検証で拒否される。
+- OS に渡す識別子(デバイス ID・別名など)には `[NoControlCharacters]` を付ける(検証で拒否され、監査にも残らない)。
+- 状態変更ツールの排他キーと実行対象には、入力の文字列ではなく OS が返した正規の ID を使う(参考: `AudioTarget.Resolve`)。
 - null 許容(`string?` / `int?`)は配列形式の `type` にならないよう自動変換される: 引数では null を含めない単一の型(省略可能な引数は「省略」で表す)、結果では `anyOf: [{type}, {type: "null"}]`。一部の MCP クライアント(単一 `type` の方言)で拒否されないため。
 - 値は絶対値で受け取る(相対値・トグルを避ける)。`all` などの一括指定は spec §8 で許可されたものだけ。
 - 対象の解決は `ResolveTargetAsync` で行い、別名が解決できない・機器が見つからない場合に別の機器へフォールバックしない(`TARGET_NOT_FOUND`)。

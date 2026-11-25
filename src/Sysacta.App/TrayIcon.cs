@@ -16,20 +16,22 @@ internal sealed class TrayIcon : IDisposable
     private readonly McpServerHost _host;
     private readonly Func<string> _endpointUrl;
     private readonly Func<Task<string?>> _startServer;
+    private readonly Func<Task> _stopServer;
     private readonly TaskbarIcon _icon;
     private readonly MenuItem _status;
     private readonly MenuItem _toggleServer;
 
     public TrayIcon(SysactaRuntime runtime, Action<Type?> show, Action exit)
-        : this(runtime.Host, () => runtime.LocalEndpointUrl, runtime.StartServerAsync, show, exit)
+        : this(runtime.Host, () => runtime.LocalEndpointUrl, runtime.StartServerAsync, runtime.StopServerAsync, show, exit)
     {
     }
 
-    internal TrayIcon(McpServerHost host, Func<string> endpointUrl, Func<Task<string?>> startServer, Action<Type?> show, Action exit)
+    internal TrayIcon(McpServerHost host, Func<string> endpointUrl, Func<Task<string?>> startServer, Func<Task> stopServer, Action<Type?> show, Action exit)
     {
         _host = host;
         _endpointUrl = endpointUrl;
         _startServer = startServer;
+        _stopServer = stopServer;
         _status = new MenuItem { IsEnabled = false };
         _toggleServer = new MenuItem();
         _toggleServer.Click += async (_, _) => await ToggleServerAsync();
@@ -88,7 +90,7 @@ internal sealed class TrayIcon : IDisposable
         {
             if (_host.State == ServerState.Running)
             {
-                await _host.StopAsync();
+                await _stopServer();
             }
             else if (await _startServer() is { } error)
             {
