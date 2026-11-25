@@ -2,7 +2,7 @@
 
 作業の再開用メモ。コンテキスト圧縮後や次のフェーズの開始時は、まずこのファイルと [AGENTS.md](../AGENTS.md) を読むこと。
 
-## 状態: Phase 0 実装完了・Windows CI 全件成功。exe の対話確認 (M1〜M4) と実 MCP クライアント接続 (M9) はユーザーによる手動確認待ち
+## 状態: Phase 0 完了。Windows CI で全自動テストと実アプリのスモークテストが成功。トレイメニュー操作・UI からの発行・Claude Desktop/Codex での接続は手動確認待ち(完了条件の検証には含めない補足確認)
 
 | 項目 | 状態 | 主なファイル |
 |---|---|---|
@@ -24,12 +24,12 @@
 - `dotnet build Sysacta.sln -c Release`: 警告 0 / エラー 0(`TreatWarningsAsErrors`, `AnalysisLevel=latest-recommended`)。
 - `dotnet test Sysacta.sln -c Release`: **Core 71 / Infrastructure 37 / Mcp 38 成功**、Windows.Tests 3 スキップ(非Windows)、App.Tests は非Windowsでは対象外。
 
-### Windows CI (GitHub Actions windows-latest, PR #1, 最新 run 45623360148, 2026-11-25) — 最終コード
+### Windows CI (GitHub Actions windows-latest, PR #1, 最新 run 45623874197, 2026-11-25) — 最終コード
 
 - Restore / `dotnet build Sysacta.sln -c Release` / `dotnet test` すべて成功。
 - **Core 71 / Infrastructure 37 / Mcp 38 / App 2 成功**、Windows.Tests 3 スキップ(ランナーに既定の音声出力デバイスがない。実機では下記のとおり成功)。
 - これにより「Windows 向けビルド」「Windows での自動テスト(MCP 統合テストと最後のコード変更を含む)」を確認済み。
-- CI に実アプリのスモークテスト (`scripts/smoke-app.ps1`) を追加: 実際の `Sysacta.exe --minimized` を起動し、DB 作成、MCP サーバーの待受 (127.0.0.1:8765)、トークンなしで 401、2つ目の起動が終了し1つ目が残ること(単一インスタンス)を確認。
+- 実アプリのスモークテスト (`scripts/smoke-app.ps1`) 成功: 実際の `Sysacta.exe` を起動し、DB 作成、MCP サーバーの待受 (127.0.0.1:8765)、トークンなしで 401、メインウィンドウ表示、ウィンドウを閉じてもプロセスとサーバーが残る(トレイ常駐)、2つ目の起動が終了して1つ目のウィンドウを再表示、独立実装の MCP クライアント(公式 TypeScript SDK 1.32.2)が Bearer トークンで接続し tools/list は許可ツールのみ・未許可ツールの直接呼び出しは PERMISSION_DENIED。管理者で動くランナーでタイトルに「(管理者)」。
 
 ### Windows 11 実機(このPC。.NET ランタイム 10.0.14 のみ、`dotnet.exe <tests>.dll` で実行)
 
@@ -50,8 +50,8 @@
 |---|---|
 | Windows 向けに正常にビルドできる | 確認済み: Windows CI でビルド成功(Linux でも成功) |
 | 実装した自動テストが成功する | 確認済み: Windows CI で全件成功(音声デバイスが必要な3件は実機で成功)、Linux で全件成功 |
-| 管理コンソールとタスクトレイの基盤が動作する | App.Tests が Windows CI と実機で成功(全画面の XAML、通知領域アイコンの生成と状態追従)。exe の対話操作 (M1〜M4) はユーザーの手動確認待ち |
-| Bearer トークンの発行と MCP 接続が可能 | Mcp.Tests(SDK クライアントで 2025-06-18 / 2025-11-25 / 最新の各プロトコルで接続)。実クライアント (Claude/Codex) は未実施 → M9 |
+| 管理コンソールとタスクトレイの基盤が動作する | 確認済み: 実 exe のウィンドウ表示・閉じてもトレイ常駐・単一インスタンスでの再表示 (CI スモーク)、通知領域アイコンの生成と状態追従と全画面の XAML (App.Tests, CI と実機)。トレイメニューのクリック操作は手動確認待ち (M4) |
+| Bearer トークンの発行と MCP 接続が可能 | 確認済み: 発行処理 (Infrastructure/Mcp.Tests)、C# SDK クライアントで各プロトコル版 (Mcp.Tests)、実 exe に独立実装の TypeScript SDK クライアントで接続 (CI スモーク)。Claude Desktop / Codex での接続は手動確認待ち (M9) |
 | クライアントごとの認証・認可が機能する | Mcp.Tests / Core.Tests(主体別 tools/list、直接呼び出し拒否、失効・期限・再発行、待機中の失効) |
 | リファレンスツールが共通実行基盤を経由する | ツールは `SysactaTool<,>` のみ、SDK には2つのハンドラーだけを登録、`ToolCatalog` 経由。Mcp.Tests で監査記録まで確認 |
 | 操作履歴が適切に記録される | Core/Infrastructure/Mcp.Tests(成功・失敗・拒否・認証失敗・pending→最終、許可リスト外の引数とトークンが DB に存在しないこと) |
