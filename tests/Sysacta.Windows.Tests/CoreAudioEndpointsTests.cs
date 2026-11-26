@@ -9,6 +9,7 @@ namespace Sysacta.Windows.Tests;
 /// output device (e.g. most CI runners). Tests that change the volume additionally require
 /// SYSACTA_HARDWARE_TESTS=1 and restore the original value. See docs/manual-tests.md.
 /// </summary>
+[Collection("real audio device")]
 public class CoreAudioEndpointsTests
 {
     private static string RequireDefaultOutput(CoreAudioEndpoints audio)
@@ -71,6 +72,7 @@ public class CoreAudioEndpointsTests
 /// Phase 1B adapters against the real Core Audio API. Only reads run by default; writes need
 /// SYSACTA_HARDWARE_TESTS=1, name their target in the test output and restore the original value.
 /// </summary>
+[Collection("real audio device")]
 public class CoreAudioPhase1BTests
 {
     private static string RequireDefaultOutput(CoreAudioEndpoints audio)
@@ -192,5 +194,6 @@ public class CoreAudioPhase1BTests
         }
 
         Assert.Equal(AudioTarget.ToLevel(original.VolumeScalar!.Value), AudioTarget.ToLevel(handle.Read().VolumeScalar!.Value));
+        Assert.Equal(original.IsMuted, handle.Read().IsMuted);
     }
 }
