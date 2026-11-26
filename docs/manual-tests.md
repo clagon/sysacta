@@ -96,6 +96,34 @@ $env:SYSACTA_HARDWARE_TESTS = "1"; dotnet test tests/Sysacta.Windows.Tests -c Re
 | E3 | `all` 変更と復元 | 利用者の承認後、`role=all` で出力・入力を切り替え、元の 3 役割へ戻す | 3 役割すべてが `verified` となり、既定対象の `audio_set_volume` / `audio_set_mute` が新しい既定に追従する | 未実施 |
 | E4 | 通話・会議中の影響確認 | 影響のない検証環境で再生・録音中の切替挙動を確認 | 意図しない機器変更やハングが起きない | 未実施 |
 
+## Phase 1C-1 チェックリスト(ディスプレイ)
+
+**輝度・コントラストの実機変更は、対象機器と変更幅を利用者が明示的に承認した場合のみ行う。** 元の値を控え、小さく変えて必ず戻す。0/100 や全機器一括は自動テストで行わない。解像度・電源・入力の変更は行わない。画面が見えなくなる恐れがある場合や復元手段がない場合は実施しない。
+
+承認後の自動テスト(指定した 1 台だけを 100 段階で 5 変更して復元する):
+
+```powershell
+$env:SYSACTA_HARDWARE_TESTS = "1"; $env:SYSACTA_HARDWARE_DISPLAY = "<display_list_devices の id>"
+dotnet test tests/Sysacta.Windows.Tests -c Release --filter WindowsDisplaysTests.Set_level
+```
+
+`SYSACTA_HARDWARE_TESTS=1` はオーディオの状態変更テストも有効にするため、上のように `--filter` を付ける。
+
+| # | 項目 | 手順 | 期待結果 | 状況 |
+|---|---|---|---|---|
+| D1 | 列挙と識別 | `display_list_devices` を Windows の「ディスプレイ」設定と比較 | 台数・プライマリ・接続方式・現在モードが一致。再実行・再起動後も ID が同じ | 一部確認: アダプターで DELL S2422HG (DP) / P2314H (HDMI) を列挙、ID の重複なし・再列挙で一致(2026-11-26)。設定画面との目視比較、再起動後は未確認 |
+| D2 | 状態の読み取り | `display_get_state` を各モニターに | 輝度・コントラストが OSD の値と一致 | 一部確認: 2 台とも DDC/CI で読み取り成功(2026-11-26)。OSD との照合は未確認 |
+| D3 | モード列挙 | `display_list_modes` | 設定画面の解像度・リフレッシュと対応 | 一部確認: 166 件 / 27 件と現在モードを取得(2026-11-26)。目視比較は未確認 |
+| D4 | DDC/CI 無効 | OSD で DDC/CI を無効にして get_state / set | `not_supported` か `unavailable`。書き込みなし | 未実施 |
+| D5 | 輝度・コントラスト変更と復元 | 承認後、1 台ずつ小さく変更して戻す | `verified`、画面が変化し元に戻る | **未実施(承認なし)** |
+| D6 | `all` | 承認後、現在値に近い値で実行し戻す | 機器ごとの結果が返る | 未実施(フェイクで自動確認済み) |
+| D7 | 内蔵パネル | ノート PC で get_state / set | `method: wmi`、離散値への丸め、コントラスト非対応 | 未実施(機器なし) |
+| D8 | 複製表示・ドック | 複製表示や MST で list / get_state / set | 複製は `AMBIGUOUS_TARGET`、他方を変更しない | 未実施 |
+| D9 | ホットプラグ | 別名を付けた機器を外して呼び出す | `DEVICE_DISCONNECTED`。別の機器は変わらない | 未実施(フェイクで自動確認済み) |
+| D10 | デバイス画面 | 種類の切り替え、別名の追加・変更・削除・再紐付け、キーボード操作、125〜175% DPI、DDC/CI 非応答機器 | 反映され、ウィンドウが固まらない | 一部確認: ライト/ダークの画面画像と App.Tests。キーボード・DPI・確認ダイアログは未確認 |
+| D11 | 既存 DB のアップグレード | Phase 1B-EXP の `%LOCALAPPDATA%\Sysacta` で起動 | 新しい 5 ツールは無効、既存クライアントに未付与 | 未実施(Mcp.Tests で自動確認済み) |
+| D12 | 実クライアント接続 | Claude Desktop / Codex から 5 ツールを呼び出す | スキーマが受理され、結果が読める | 未実施 |
+
 ## 2026-11-25 の開発環境での制約
 
 開発機 (Windows 11 + WSL2) では以下の理由でアプリ本体と DB を使うテストを Windows 上で実行できませんでした。CI (GitHub Actions `windows-latest`) で自動テストを実行してください。

@@ -7,6 +7,7 @@ using ModelContextProtocol.Client;
 using Sysacta.Core.Security;
 using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
+using Sysacta.Core.Tools.Display;
 using Sysacta.Infrastructure;
 using Sysacta.Tests;
 
@@ -26,6 +27,7 @@ public sealed class ServerFixture : IAsyncDisposable
     public FakeAudioEndpoints AudioDevice { get; } = new();
     public FakeAudioSessions Sessions { get; } = new();
     public FakeDefaultEndpointWriter DefaultWriter { get; }
+    public FakeDisplays Displays { get; } = new();
     public BlockingTool Blocking { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time). The executor and the store use the system clock.</summary>
@@ -54,6 +56,11 @@ public sealed class ServerFixture : IAsyncDisposable
             new AudioSetAppVolumeTool(AudioDevice, Sessions),
             new AudioSetAppMuteTool(AudioDevice, Sessions),
             new AudioSetDefaultDeviceTool(AudioDevice, Store, DefaultWriter),
+            new DisplayListDevicesTool(Displays, Store),
+            new DisplayGetStateTool(Displays, Store),
+            new DisplaySetBrightnessTool(Displays, Store),
+            new DisplaySetContrastTool(Displays, Store),
+            new DisplayListModesTool(Displays, Store),
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");

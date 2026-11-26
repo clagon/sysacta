@@ -98,6 +98,14 @@ public static class ToolOutcome
 
     public static ToolOutcome<TData> Unknown<TData>(TData data, string code, string message) =>
         new(data, Verification.Unknown) { Status = ToolStatus.Unknown, Error = new ToolError(code, message, false) };
+
+    /// <summary>
+    /// The request failed and the resulting state is known; <paramref name="data"/> explains it (for example per-device
+    /// results of a batch). Use <see cref="Partial"/> when some of the requested changes were applied, and
+    /// <see cref="ToolFailureException"/> when there is nothing to report.
+    /// </summary>
+    public static ToolOutcome<TData> Error<TData>(TData data, string code, string message, bool retryable = false) =>
+        new(data, Verification.Unknown) { Status = ToolStatus.Error, Error = new ToolError(code, message, retryable) };
 }
 
 /// <summary>

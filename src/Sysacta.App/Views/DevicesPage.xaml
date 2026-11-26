@@ -22,7 +22,7 @@
     <ui:InfoBar Grid.Row="1" Margin="0,0,0,12" IsOpen="{Binding HasMessage, Mode=TwoWay}" Severity="{Binding MessageSeverity}" Title="{Binding MessageTitle}" Message="{Binding Message}" />
 
     <Grid Grid.Row="2" Margin="0,0,0,8">
-      <TextBlock VerticalAlignment="Center" Style="{StaticResource SectionHeader}" Margin="0" Text="オーディオ" />
+      <ComboBox HorizontalAlignment="Left" MinWidth="180" ItemsSource="{Binding Categories}" DisplayMemberPath="Label" SelectedItem="{Binding Category}" AutomationProperties.Name="デバイスの種類" />
       <ui:Button HorizontalAlignment="Right" Command="{Binding ReloadCommand}" Content="再読み込み" Icon="{ui:SymbolIcon ArrowSync24}" />
     </Grid>
 
@@ -34,7 +34,7 @@
       </Grid.ColumnDefinitions>
 
       <!-- Master: devices -->
-      <TextBlock VerticalAlignment="Top" Style="{StaticResource EmptyState}" Text="オーディオデバイスがありません。" Visibility="{Binding HasDevices, Converter={StaticResource InverseBoolToVisibility}}" />
+      <TextBlock VerticalAlignment="Top" Style="{StaticResource EmptyState}" Text="{Binding EmptyText}" Visibility="{Binding HasDevices, Converter={StaticResource InverseBoolToVisibility}}" />
       <Border Style="{StaticResource Surface}" Padding="4" Visibility="{Binding HasDevices, Converter={StaticResource BoolToVisibility}}">
         <ui:ListView Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Stretch" ItemsSource="{Binding Devices}" SelectedItem="{Binding Selected}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="デバイス一覧">
           <ui:ListView.ItemTemplate>
@@ -58,12 +58,12 @@
               <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold" Text="{Binding Selected.Name}" />
               <TextBlock Style="{StaticResource FieldLabel}" Text="ID" />
               <TextBox FontFamily="Cascadia Mono, Consolas" FontSize="12" IsReadOnly="True" TextWrapping="Wrap" Text="{Binding Selected.Id, Mode=OneWay}" AutomationProperties.Name="デバイスID" />
-              <TextBlock Style="{StaticResource FieldLabel}" Text="方向 / 状態" />
+              <TextBlock Style="{StaticResource FieldLabel}" Text="種類 / 状態" />
               <TextBlock Style="{StaticResource Caption}" Text="{Binding Selected.Summary}" />
-              <TextBlock Style="{StaticResource FieldLabel}" Text="既定の役割" />
+              <TextBlock Style="{StaticResource FieldLabel}" Text="既定の役割 / プライマリ" />
               <TextBlock Style="{StaticResource Caption}" Text="{Binding Selected.DefaultText}" />
               <TextBlock Style="{StaticResource FieldLabel}" Text="現在値" />
-              <TextBlock Style="{StaticResource Caption}" Text="{Binding Selected.Level}" />
+              <TextBlock Style="{StaticResource Caption}" Text="{Binding SelectedValues}" />
               <TextBlock Style="{StaticResource FieldLabel}" Text="対応する操作" />
               <TextBlock Style="{StaticResource Caption}" Text="{Binding Selected.Operations}" />
             </StackPanel>
@@ -74,7 +74,7 @@
             <StackPanel>
               <ui:ListView MaxHeight="160" Background="Transparent" BorderThickness="0" ItemsSource="{Binding Selected.Aliases}" SelectedItem="{Binding SelectedAlias}" AutomationProperties.Name="別名一覧" />
               <TextBlock Style="{StaticResource FieldLabel}" Text="別名（追加、または選択中の別名の変更）" />
-              <ui:TextBox MaxLength="64" PlaceholderText="例: desk-speakers" Text="{Binding AliasName, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="別名" />
+              <ui:TextBox MaxLength="64" PlaceholderText="例: desk" Text="{Binding AliasName, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="別名" />
               <WrapPanel Margin="0,8,0,0">
                 <ui:Button Margin="0,0,8,0" Command="{Binding AddAliasCommand}" Content="追加" Icon="{ui:SymbolIcon Add24}" />
                 <ui:Button Margin="0,0,8,0" Command="{Binding RenameAliasCommand}" Content="変更" Icon="{ui:SymbolIcon Edit24}" />

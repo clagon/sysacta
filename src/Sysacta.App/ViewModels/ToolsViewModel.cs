@@ -110,12 +110,15 @@ public sealed partial class ToolItem : ObservableObject
     private readonly ToolsViewModel _owner;
     private readonly LatestValueSaver<bool> _saver;
     private readonly bool _readOnly;
+    /// <summary>The console test sends no arguments, so tools with a required argument cannot be tested there.</summary>
+    private readonly bool _needsArguments;
 
     public ToolItem(ToolsViewModel owner, SysactaTool tool, bool enabled, ToolAvailability? precomputedAvailability = null)
     {
         _owner = owner;
         _isEnabled = enabled;
         _readOnly = tool.Descriptor.ReadOnly;
+        _needsArguments = tool.InputSchema.TryGetProperty("required", out var required) && required.GetArrayLength() > 0;
         _saver = new LatestValueSaver<bool>(() => IsEnabled, value => owner.SetEnabledAsync(this, value), owner.RefreshAsync);
         Name = tool.Name;
         Title = tool.Descriptor.Title;
@@ -160,7 +163,7 @@ public sealed partial class ToolItem : ObservableObject
     {
         IsAvailable = availability.IsAvailable;
         AvailabilityText = availability.IsAvailable ? "" : $"この環境では利用できません: {availability.Reason}";
-        CanTest = _readOnly && availability.IsAvailable;
+        CanTest = _readOnly && !_needsArguments && availability.IsAvailable;
     }
 
     /// <summary>Shows the stored value without saving it again; ignored while this switch's own save is running.</summary>

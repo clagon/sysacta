@@ -4,9 +4,11 @@ using System.Reflection;
 using Sysacta.Core.Security;
 using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
+using Sysacta.Core.Tools.Display;
 using Sysacta.Infrastructure;
 using Sysacta.Mcp;
 using Sysacta.Windows.Audio;
+using Sysacta.Windows.Display;
 
 namespace Sysacta.App;
 
@@ -39,7 +41,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
-        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints));
+        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
         Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate);
         Host = new McpServerHost(Executor, new TokenAuthenticator(Access, _time), Audit, _time, Version);
@@ -53,6 +55,8 @@ public sealed class SysactaRuntime : IAsyncDisposable
     public AccessStore Access { get; }
     /// <summary>Shared by the audio tools and the device page.</summary>
     public IAudioEndpoints AudioEndpoints { get; } = new CoreAudioEndpoints();
+    /// <summary>Shared by the display tools and the device page.</summary>
+    public IDisplays Displays { get; } = new WindowsDisplays();
     public AuditLog Audit { get; }
     public SettingsStore SettingsStore { get; }
     public ToolRegistry Registry { get; }

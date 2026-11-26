@@ -6,5 +6,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Sysacta.Core\Sysacta.Core.csproj" />
     <PackageReference Include="NAudio.Wasapi" />
+    <PackageReference Include="System.Management" />
   </ItemGroup>
 </Project>

@@ -1,6 +1,7 @@
 using Sysacta.Core.Devices;
 using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
+using Sysacta.Core.Tools.Display;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Experimental.Audio;
 
@@ -12,7 +13,7 @@ namespace Sysacta.App;
 /// </summary>
 internal static class ToolCatalog
 {
-    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio)
+    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays)
     {
         var sessions = new CoreAudioSessions();
         var defaultEndpoints = new PolicyConfigDefaultEndpoints();
@@ -26,6 +27,11 @@ internal static class ToolCatalog
             new AudioSetAppVolumeTool(audio, sessions),
             new AudioSetAppMuteTool(audio, sessions),
             new AudioSetDefaultDeviceTool(audio, aliases, defaultEndpoints),
+            new DisplayListDevicesTool(displays, aliases),
+            new DisplayGetStateTool(displays, aliases),
+            new DisplaySetBrightnessTool(displays, aliases),
+            new DisplaySetContrastTool(displays, aliases),
+            new DisplayListModesTool(displays, aliases),
         ];
     }
 }
