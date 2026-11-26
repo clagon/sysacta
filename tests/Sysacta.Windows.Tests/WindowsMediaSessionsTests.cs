@@ -20,6 +20,7 @@ public class WindowsMediaSessionsTests
         Assert.Equal(expected, WindowsMediaSessions.SafeText(input));
         Assert.Equal(256, WindowsMediaSessions.SafeText(new string('a', 300))!.Length);
         Assert.Null(WindowsMediaSessions.SafeText(new string('a', 4097)));
+        Assert.Null(WindowsMediaSessions.SafeText(new string(' ', 4097)));
     }
 
     [Theory]

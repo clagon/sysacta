@@ -333,7 +333,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
 
     internal static string? SafeText(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > 4096) return null;
+        if (value is null || value.Length > 4096 || string.IsNullOrWhiteSpace(value)) return null;
         var cleaned = new string(value.Where(c => !char.IsControl(c) && char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format).ToArray()).Trim();
         // Relative paths and embedded URLs are private too; prefer omission to leaking a path.
         if (cleaned.IndexOfAny(['/', '\\']) >= 0 || Uri.TryCreate(cleaned, UriKind.Absolute, out _) || SensitiveText().IsMatch(cleaned)) return null;
