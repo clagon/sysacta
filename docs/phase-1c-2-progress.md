@@ -203,7 +203,7 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 - MCP（実際の HTTP、Bearer トークン）: `tools/list` に `display_restore_mode` は出ない。`display_set_mode` で P2314H を 1280×720 に変更して `verified`、`recovery_available: true`。MCP から `display_restore_mode` を呼ぶとプロトコルエラー `-32602 Unknown tool`。
 - トレイメニューの「直前の表示モード変更を元に戻す」: 利用者がクリックし、1920×1080 に戻り、通知が出て項目が消えた（次の変更の `previous_mode` が 1920×1080 であることでも確認）。
 - デバイス画面の「元に戻す」: もう一度 1280×720 にした後に利用者がクリックし、1920×1080 に戻り、成功の通知が出て欄が消えた。最後に MCP の `display_list_modes` で現在モード 1920×1080 60 Hz を確認。
-- 確認用のトークンのファイルは削除し、クライアントの失効を利用者に依頼した。
+- 確認用のトークンのファイルは削除し、確認用のクライアント（phase1c2-check）は利用者が管理コンソールで失効した。
 
 ### 非永続性（サインアウト）の確認（2026-11-26、利用者の承認と操作）
 
