@@ -205,7 +205,7 @@ public sealed class DisplaySetModeTool(IDisplays displays, IDeviceAliases aliase
         Name: "display_set_mode",
         Category: ToolCategories.Display,
         Title: "Set display mode",
-        Description: "Changes the resolution / refresh rate of one non-primary display to a mode_id from display_list_modes. Windows tests the mode first; the change is not saved (signing out or restarting may revert it). The result is verified against the mode Windows reports, which does not prove the monitor shows a picture. If the screen goes blank, only the local user can restore the previous mode (Sysacta console or tray menu). The primary display, mirrored and virtual displays are refused. Rotation and scaling are never changed.",
+        Description: "Changes the resolution / refresh rate of one non-primary display to a mode_id from display_list_modes. Windows tests the mode first; the change is not saved to Windows settings (signing out restores the saved mode). The result is verified against the mode Windows reports, which does not prove the monitor shows a picture. If the screen goes blank, only the local user can restore the previous mode (Sysacta console or tray menu). The primary display, mirrored and virtual displays are refused. Rotation and scaling are never changed.",
         DefaultPolicy: DefaultPolicy.Off,
         ReadOnly: false,
         AuditedArguments: [],

@@ -149,7 +149,7 @@ dotnet test tests/Sysacta.Windows.Tests -c Release --filter ApprovedDisplaySwitc
 | DM2 | モード変更 | 承認後、副画面を一覧の別モードに `display_set_mode` | `verified`、`other_displays_changed: false`、画面が変わる | 確認: P2314H 1920×1080→1280×720 60 Hz、`verified`、618 ms、他画面の変化なし（承認あり, 2026-11-26） |
 | DM3 | トレイから復旧 | DM2 の後、トレイメニューの「元に戻す」 | 元のモードに戻り、メニュー項目が消える | 確認: 実アプリで MCP から変更後、利用者がトレイから復旧。1920×1080 に戻り通知・項目消去（2026-11-26）。MCP からの `display_restore_mode` は `-32602 Unknown tool` |
 | DM4 | デバイス画面から復旧 | DM2 の後、デバイス画面の「元に戻す」 | 同上 | 確認: 利用者がデバイス画面のボタンで復旧、通知・欄消去（2026-11-26） |
-| DM5 | 非永続性 | DM2 の後、復旧せずにサインアウト/サインイン | 元のモードに戻る | **未実施** |
+| DM5 | 非永続性 | DM2 の後、復旧せずにサインアウト/サインイン | 元のモードに戻る | 確認: P2314H を 1280×720 にしてサインアウト → サインイン後は保存済みの 1920×1080（新しい Explorer セッションでサインアウトを確認, 2026-11-26） |
 | DM6 | 他の画面への影響 | 配置が上下・左右の 2 画面で DM2 | 他の画面の位置・モードが変わらない（変われば `partial`） | **未実施** |
 | DM7 | プライマリ・複製の拒否 | プライマリ / 複製表示を指定 | `NOT_SUPPORTED` / `AMBIGUOUS_TARGET`、変化なし | 未実施（フェイクで自動確認済み） |
 | DP1 | 能力と電源状態の読み取り | `display_get_state` + `include_switching: true` | `power.support: supported` と状態 | 一部確認: P2314H で D6(01 04 05)・現在 0x04 を取得。S2422HG は取得失敗（PowerDisplay 動作中, 2026-11-26） |
