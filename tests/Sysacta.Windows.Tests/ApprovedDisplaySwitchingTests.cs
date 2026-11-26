@@ -25,8 +25,8 @@ public class ApprovedDisplaySwitchingTests(ITestOutputHelper output)
         var id = Environment.GetEnvironmentVariable("SYSACTA_HARDWARE_DISPLAY");
         var step = Environment.GetEnvironmentVariable("SYSACTA_HARDWARE_SWITCH");
         Assert.SkipUnless(OperatingSystem.IsWindows() && Environment.GetEnvironmentVariable("SYSACTA_HARDWARE_TESTS") == "1"
-            && !string.IsNullOrEmpty(id) && step is "mode" or "power" or "on" or "input",
-            "Set SYSACTA_HARDWARE_TESTS=1, SYSACTA_HARDWARE_DISPLAY=<approved id> and SYSACTA_HARDWARE_SWITCH=mode|power|on|input.");
+            && !string.IsNullOrEmpty(id) && step is "mode" or "mode-keep" or "power" or "on" or "input",
+            "Set SYSACTA_HARDWARE_TESTS=1, SYSACTA_HARDWARE_DISPLAY=<approved id> and SYSACTA_HARDWARE_SWITCH=mode|mode-keep|power|on|input.");
 
         var displays = new WindowsDisplays();
         var display = displays.GetTopology().Displays.Single(d => d.Id == id);
@@ -60,6 +60,7 @@ public class ApprovedDisplaySwitchingTests(ITestOutputHelper output)
         switch (step)
         {
             case "mode":
+            case "mode-keep": // the change is left in place to check that signing out reverts it (DM5)
             {
                 var modes = (await Call("display_list_modes", new { device = id })).Data!["modes"]!.AsArray();
                 var current = modes.Single(m => (bool)m!["is_current"]!)!;
@@ -68,6 +69,12 @@ public class ApprovedDisplaySwitchingTests(ITestOutputHelper output)
                     && (int)m["orientation"]! == (int)current["orientation"]! && (int)m["fixed_output"]! == (int)current["fixed_output"]!);
                 Assert.SkipWhen(target is null, "No 1280x720 mode with the current refresh rate.");
                 var set = await Call("display_set_mode", new { device = id, mode_id = (string)target!["mode_id"]! });
+                if (step == "mode-keep")
+                {
+                    Assert.True(set.IsSuccess, set.Error?.Code);
+                    break;
+                }
+
                 await Task.Delay(TimeSpan.FromSeconds(4), Ct);
                 var restored = await Call("display_restore_mode", null);
                 var after = (await Call("display_list_modes", new { device = id })).Data!["modes"]!.AsArray().Single(m => (bool)m!["is_current"]!)!;
