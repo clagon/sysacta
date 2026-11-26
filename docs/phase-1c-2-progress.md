@@ -114,7 +114,7 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 ### 共通基盤の変更（最小限）
 
 - `ToolDescriptor.LocalOnly` を追加。`ToolRegistry.All`（MCP の一覧・DB 同期・ツール/クライアント画面）から除外し、MCP クライアントからの呼び出しは executor が**未知のツール**として扱う（MCP ではプロトコルエラー）。全体許可・クライアント別許可は持たず、`Caller.LocalConsole` だけが実行できる。実行は通常どおり `ToolExecutor`（検証・ロック・pending 監査・開始点・タイムアウト・最終監査）。使うのは `display_restore_mode` だけ。
-- ツール画面の「すべて有効」は `DefaultPolicy.Off` のツールを含めない（既存の Off ツールはなかったので既存の挙動は変わらない）。Off の 3 ツールに日本語の注意文を表示する。
+- ツール画面の「すべて有効」は `DefaultPolicy.Off` のツールを含めない（既存の Off ツールはなかったので既存の挙動は変わらない）。Off の 3 ツールに日本語の注意文を表示する。画面の文言には検証状況を書かない（利用者の方針。検証状況は本ファイルと manual-tests.md に記録する）。既存の実験的ツールの注意文からも「（実機未検証）」を外した。
 - Core に `InternalsVisibleTo("Sysacta.App.Tests")` を追加（テストで復旧記録を作るため）。
 - `ToolRegistry.AllNames`（ローカル専用ツールを含む名前一覧）を追加し、監査ログ画面のツールの絞り込みに使う。
 - 認証・要求予算・監査容量・オーディオと 1C-1 の JSON 契約は変更していない。
