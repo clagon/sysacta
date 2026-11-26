@@ -104,6 +104,63 @@ public interface IDisplayControl : IDisposable
     Action PrepareWrite(long native);
 }
 
+/// <summary>Where and how one active target is shown, used to notice changes to displays other than the one changed.</summary>
+/// <param name="X">Position of the desktop source in the virtual screen.</param>
+/// <param name="Orientation">Clockwise rotation of the target in degrees.</param>
+public sealed record DisplayLayout(string Id, bool IsPrimary, bool IsCloned, DisplayCurrentMode? Mode, int X, int Y, int Orientation);
+
+/// <summary>
+/// Exclusive access to the desktop source of one display for a mode change. Holds the same process-wide gate as
+/// <see cref="IDisplayControl"/>, so no DDC/CI or panel access runs during a mode change. Released by Dispose.
+/// </summary>
+public interface IDisplayModeControl : IDisposable
+{
+    /// <summary>The modes Windows enumerates for the source now, and the current one (null when it cannot be read).</summary>
+    DisplayModeSet ListModes();
+
+    /// <summary>The whole active topology (every identified target).</summary>
+    IReadOnlyList<DisplayLayout> Layout();
+
+    /// <summary>
+    /// Asks Windows whether the mode could be set (CDS_TEST) without changing anything. Throws when it is refused.
+    /// Success does not prove the monitor will show the mode.
+    /// </summary>
+    void Test(DisplayMode mode);
+
+    /// <summary>
+    /// Builds the request from the mode Windows enumerates now (never from caller input) and checks that the source still
+    /// shows the same display. The returned action performs only the dynamic, non-persistent mode change for this source
+    /// and throws <see cref="ToolFailureException"/> when Windows reports failure. A failure does not prove nothing changed.
+    /// </summary>
+    Action PrepareApply(DisplayMode mode);
+}
+
+/// <summary>The only DDC/CI settings beyond brightness/contrast Sysacta reads or writes (MCCS VCP 0xD6 and 0x60).</summary>
+public enum DisplaySwitch
+{
+    Power,
+    Input,
+}
+
+/// <summary>
+/// Exclusive, short-lived DDC/CI access to one physical monitor for the power and input settings. Holds the same
+/// process-wide gate as <see cref="IDisplayControl"/>. Handles are released by Dispose.
+/// </summary>
+public interface IDisplaySwitchControl : IDisposable
+{
+    /// <summary>The MCCS capabilities string the monitor reports (bounded length). Never returned to clients.</summary>
+    string ReadCapabilities();
+
+    /// <summary>The current value (VCP SL byte) of the setting.</summary>
+    byte Read(DisplaySwitch setting);
+
+    /// <summary>
+    /// Validates the value against the fixed allow-list (<see cref="Mccs.IsAllowed"/>) and returns the write, which performs
+    /// only the native call that changes the monitor. A failure of that action does not prove the monitor is unchanged.
+    /// </summary>
+    Action PrepareWrite(DisplaySwitch setting, byte value);
+}
+
 /// <summary>
 /// OS adapter for displays. Calls are synchronous and may be slow. Failures are <see cref="ToolFailureException"/>:
 /// NOT_SUPPORTED only for a definite lack of support, DEVICE_DISCONNECTED / OS_API_ERROR for temporary trouble.
@@ -121,4 +178,10 @@ public interface IDisplays
     /// Never opens a different display than <paramref name="displayId"/>.
     /// </summary>
     IDisplayControl Open(string displayId, DisplayFeature feature, CancellationToken cancellationToken);
+
+    /// <summary>Like <see cref="Open"/>, for a mode change of the display's desktop source.</summary>
+    IDisplayModeControl OpenMode(string displayId, CancellationToken cancellationToken);
+
+    /// <summary>Like <see cref="Open"/>, for the DDC/CI power and input settings.</summary>
+    IDisplaySwitchControl OpenSwitch(string displayId, CancellationToken cancellationToken);
 }

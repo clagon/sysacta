@@ -21,6 +21,21 @@ internal static class NativeMethods
     public const uint EnumCurrentSettings = unchecked((uint)-1);
     public const uint DmInterlaced = 0x2;
 
+    // wingdi.h DEVMODE dmFields: only the members ChangeDisplaySettingsEx documents for a mode change. DM_POSITION,
+    // DM_DISPLAYORIENTATION and DM_DISPLAYFIXEDOUTPUT are never set, so position, rotation and scaling are kept.
+    public const uint DmBitsPerPel = 0x00040000;
+    public const uint DmPelsWidth = 0x00080000;
+    public const uint DmPelsHeight = 0x00100000;
+    public const uint DmDisplayFlags = 0x00200000;
+    public const uint DmDisplayFrequency = 0x00400000;
+
+    // winuser.h ChangeDisplaySettingsEx flags and results.
+    public const uint CdsDynamic = 0; // changed dynamically, not saved in the registry
+    public const uint CdsTest = 0x00000002;
+    public const int DispChangeSuccessful = 0;
+    public const int DispChangeRestart = 1;
+    public const int DispChangeBadMode = -2;
+
     [StructLayout(LayoutKind.Sequential)]
     public struct Luid
     {
@@ -115,6 +130,8 @@ internal static class NativeMethods
     public struct DevMode
     {
         [FieldOffset(68)] public ushort Size;
+        [FieldOffset(70)] public ushort DriverExtra;
+        [FieldOffset(72)] public uint Fields;
         [FieldOffset(84)] public uint DisplayOrientation;
         [FieldOffset(88)] public uint DisplayFixedOutput;
         [FieldOffset(168)] public uint BitsPerPel;
@@ -175,6 +192,10 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool EnumDisplaySettingsEx(string deviceName, uint modeNum, ref DevMode devMode, uint flags);
 
+    [DllImport("user32.dll", EntryPoint = "ChangeDisplaySettingsExW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    public static extern int ChangeDisplaySettingsEx(string deviceName, ref DevMode devMode, IntPtr hwnd, uint flags, IntPtr param);
+
     [DllImport("user32.dll", ExactSpelling = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -224,4 +245,26 @@ internal static class NativeMethods
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetMonitorContrast(IntPtr physicalMonitor, uint value);
+
+    [DllImport("dxva2.dll", SetLastError = true, ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetCapabilitiesStringLength(IntPtr physicalMonitor, out uint lengthInCharacters);
+
+    /// <summary>The buffer receives an ASCII string; its length includes the terminating null.</summary>
+    [DllImport("dxva2.dll", SetLastError = true, ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CapabilitiesRequestAndCapabilitiesReply(IntPtr physicalMonitor, [Out] byte[] asciiCapabilities, uint lengthInCharacters);
+
+    /// <summary><paramref name="codeType"/> may be null (IntPtr.Zero).</summary>
+    [DllImport("dxva2.dll", SetLastError = true, ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetVCPFeatureAndVCPFeatureReply(IntPtr physicalMonitor, byte code, IntPtr codeType, out uint currentValue, out uint maximumValue);
+
+    [DllImport("dxva2.dll", SetLastError = true, ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetVCPFeature(IntPtr physicalMonitor, byte code, uint newValue);
 }

@@ -15,6 +15,8 @@
 | 統合テスト(HTTP/MCP) | Mcp.Tests | `tests/Sysacta.Mcp.Tests/McpServerTests.cs` |
 | 実機テスト | Windows.Tests | `tests/Sysacta.Windows.Tests/CoreAudioEndpointsTests.cs` |
 | 複数対象への変更・部分成功、排他が必要な OS ハンドル | Core + Windows | `src/Sysacta.Core/Tools/Display/DisplaySetLevelTools.cs`, `src/Sysacta.Windows/Display/WindowsDisplays.cs` |
+| 画面消失の恐れがある変更・ローカル専用の復旧ツール | Core + App | `src/Sysacta.Core/Tools/Display/DisplayModeTools.cs`（`DisplaySetModeTool` / `DisplayRestoreModeTool`） |
+| 固定の許可リストに限った低レベル操作・通信消失時の `accepted` | Core + Windows | `src/Sysacta.Core/Tools/Display/DisplaySwitchTools.cs`, `Mccs.cs`, `src/Sysacta.Windows/Display/DdcCiSwitchControl.cs` |
 
 ## 1 回の呼び出しで起きること
 
@@ -120,6 +122,10 @@ public sealed class DisplaySetBrightnessTool(IDisplays displays, IDeviceAliases 
 - ロックキーは `"<category>:device:<id>"`。既定デバイスを対象にした場合は `"<category>:default:<direction>:<role>"`（例: `audio:default:output:multimedia`）も含める(参考: `AudioTarget.Resolve`)。複数の役割ロックを取る場合は `ResourceLocks` にまとめて渡し、辞書順取得でデッドロックを防ぐ。既定を対象にした変更ツールは、ロック取得後に `AudioTarget.EnsureStillDefault` 等で現在も既定であることを再確認する。
 - 結果データに秘密・個人ファイル・コマンドライン・環境変数を含めない。
 - 時間がかかる/応答しない可能性がある OS 呼び出しはキャンセル不能でもよい。executor がタイムアウト時に `status: unknown` を返し、処理が終わるまでロックを保持する。
+
+### ローカル専用ツール（`LocalOnly`）
+
+管理コンソール（トレイメニュー・画面）からだけ実行する復旧操作は `ToolDescriptor(LocalOnly: true)` にする。MCP クライアントからは一覧に出ず、呼び出しは未知のツールとして拒否される。全体・クライアント別の許可は持たず（DB に登録されない）、`Caller.LocalConsole` で `ToolExecutor` を通して実行する（検証・ロック・監査・タイムアウトは通常どおり）。任意の値を受け取る汎用操作には使わない（参考: `display_restore_mode` は Sysacta 自身の直前の変更を元に戻すだけ）。
 
 ### 5. 本番ツール一覧に登録する
 

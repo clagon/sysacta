@@ -41,7 +41,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
-        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays));
+        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
         Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate);
         Host = new McpServerHost(Executor, new TokenAuthenticator(Access, _time), Audit, _time, Version);
@@ -57,11 +57,17 @@ public sealed class SysactaRuntime : IAsyncDisposable
     public IAudioEndpoints AudioEndpoints { get; } = new CoreAudioEndpoints();
     /// <summary>Shared by the display tools and the device page.</summary>
     public IDisplays Displays { get; } = new WindowsDisplays();
+    /// <summary>The latest display mode change, restorable from the tray menu and the device page (app lifetime only).</summary>
+    public DisplayModeRecovery DisplayModeRecovery { get; } = new();
     public AuditLog Audit { get; }
     public SettingsStore SettingsStore { get; }
     public ToolRegistry Registry { get; }
     public ToolExecutor Executor { get; }
     public McpServerHost Host { get; }
+
+    /// <summary>Restores the latest display mode change through the executor, as the local console (locks, audit, timeout).</summary>
+    public Task<ToolResult> RestoreDisplayModeAsync() =>
+        Task.Run(() => Executor.ExecuteAsync(Caller.LocalConsole, "display_restore_mode", null, CancellationToken.None));
 
     /// <summary>Current settings (replaced on save).</summary>
     public AppSettings Settings { get; private set; }

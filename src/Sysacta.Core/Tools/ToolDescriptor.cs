@@ -27,6 +27,12 @@ public enum DefaultPolicy
 /// Allow-list of argument names that may be written to the audit log. Anything else is never logged.
 /// </param>
 /// <param name="Timeout">Upper bound for one execution. Defaults to <see cref="ToolDescriptor.DefaultTimeout"/>.</param>
+/// <param name="LocalOnly">
+/// True for local recovery actions of the console (for example restoring a display mode). Such a tool is not an MCP
+/// tool: MCP clients can neither list nor call it (it is reported as unknown), it has no global or per-client
+/// permission, and it is not shown in the tool and client pages. It still runs through <see cref="ToolExecutor"/>
+/// (validation, locks, timeout, audit).
+/// </param>
 public sealed record ToolDescriptor(
     string Name,
     string Category,
@@ -35,7 +41,8 @@ public sealed record ToolDescriptor(
     DefaultPolicy DefaultPolicy,
     bool ReadOnly,
     IReadOnlyList<string> AuditedArguments,
-    TimeSpan? Timeout = null)
+    TimeSpan? Timeout = null,
+    bool LocalOnly = false)
 {
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
 

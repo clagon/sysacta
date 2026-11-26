@@ -183,7 +183,7 @@ public class DisplayServerTests
     }
 
     /// <summary>Checks a value against the subset of JSON Schema that ToolJson generates.</summary>
-    private static void AssertMatches(JsonElement schema, JsonElement value, string path = "$")
+    internal static void AssertMatches(JsonElement schema, JsonElement value, string path = "$")
     {
         if (schema.TryGetProperty("anyOf", out var anyOf))
         {

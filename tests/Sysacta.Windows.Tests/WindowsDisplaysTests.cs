@@ -69,6 +69,37 @@ public class WindowsDisplayLogicTests
     [InlineData(0u, "OS_API_ERROR")]
     public void Ddc_errors_separate_missing_support_from_temporary_failures(uint error, string code) =>
         Assert.Equal(code, DdcCiControl.Failure(unchecked((int)error)).Code);
+
+    [Fact]
+    public void Only_the_two_mccs_codes_can_be_addressed()
+    {
+        Assert.Equal(0xD6, DdcCiSwitchControl.Code(DisplaySwitch.Power));
+        Assert.Equal(0x60, DdcCiSwitchControl.Code(DisplaySwitch.Input));
+        Assert.Throws<ArgumentOutOfRangeException>(() => DdcCiSwitchControl.Code((DisplaySwitch)99));
+    }
+
+    [Theory]
+    [InlineData(-2, "NOT_SUPPORTED")] // DISP_CHANGE_BADMODE
+    [InlineData(1, "NOT_SUPPORTED")] // DISP_CHANGE_RESTART: not applied now
+    [InlineData(-1, "OS_API_ERROR")] // DISP_CHANGE_FAILED
+    [InlineData(-5, "OS_API_ERROR")] // DISP_CHANGE_BADPARAM
+    public void Mode_change_results_are_never_success(int result, string code)
+    {
+        Assert.Equal(code, DisplayModeControl.Failure(result, tested: true).Code);
+        Assert.Equal(code, DisplayModeControl.Failure(result, tested: false).Code);
+    }
+
+    [Fact]
+    public void Mode_requests_set_only_the_documented_mode_members()
+    {
+        // DM_POSITION (0x20), DM_DISPLAYORIENTATION (0x80) and DM_DISPLAYFIXEDOUTPUT (0x20000000) are never part of it.
+        const uint Fields = NativeMethods.DmBitsPerPel | NativeMethods.DmPelsWidth | NativeMethods.DmPelsHeight | NativeMethods.DmDisplayFlags | NativeMethods.DmDisplayFrequency;
+        Assert.Equal(0x007C0000u, Fields);
+        Assert.Equal(72, (int)Marshal.OffsetOf<NativeMethods.DevMode>(nameof(NativeMethods.DevMode.Fields)));
+        Assert.Equal(70, (int)Marshal.OffsetOf<NativeMethods.DevMode>(nameof(NativeMethods.DevMode.DriverExtra)));
+        Assert.Equal(0u, NativeMethods.CdsDynamic);
+        Assert.Equal(2u, NativeMethods.CdsTest);
+    }
 }
 
 /// <summary>
@@ -131,6 +162,56 @@ public class WindowsDisplaysTests(ITestOutputHelper output)
             }
         }
     }
+
+    /// <summary>
+    /// Read-only: the MCCS capabilities, power state and input of each external monitor, and Windows' CDS_TEST of the
+    /// current mode (documented not to change the display). Nothing is written.
+    /// </summary>
+    [Fact]
+    public void Switching_capabilities_and_current_values_can_be_read()
+    {
+        var displays = new WindowsDisplays();
+        var topology = Require(displays);
+        var ct = TestContext.Current.CancellationToken;
+        foreach (var d in topology.Displays)
+        {
+            var watch = Stopwatch.StartNew();
+            try
+            {
+                using var control = displays.OpenSwitch(d.Id, ct);
+                var text = control.ReadCapabilities();
+                var caps = Mccs.Parse(text);
+                output.WriteLine($"{d.Name}: capabilities {text.Length} chars, parsed={caps is not null}, mccs={caps?.MajorVersion}, {watch.ElapsedMilliseconds} ms");
+                output.WriteLine($"  D6 declared: {Values(caps, 0xD6)}; 60 declared: {Values(caps, 0x60)}");
+                watch.Restart();
+                var power = control.Read(DisplaySwitch.Power);
+                var input = control.Read(DisplaySwitch.Input);
+                output.WriteLine($"  power=0x{power:x2} ({Mccs.PowerState(power)}), input=0x{input:x2} ({Mccs.InputName(input)}), {watch.ElapsedMilliseconds} ms");
+            }
+            catch (ToolFailureException ex)
+            {
+                output.WriteLine($"{d.Name}: switching {ex.Code} after {watch.ElapsedMilliseconds} ms");
+            }
+
+            var (p, i) = DisplaySwitching.Read(displays, d.Id, ct);
+            output.WriteLine($"  get_state: power {p.Support}/{p.State}/{p.ErrorCode}, input {i.Support}/{i.Inputs.Count} inputs/{i.ErrorCode}");
+            Assert.Equal(p.Support == DisplaySupport.Supported, p.ErrorCode is null);
+
+            if (DisplayCatalog.BlockedForMode(d) is null)
+            {
+                using var mode = displays.OpenMode(d.Id, ct);
+                var current = mode.ListModes().Current;
+                Assert.NotNull(current);
+                watch.Restart();
+                mode.Test(current);
+                output.WriteLine($"  CDS_TEST of the current mode passed, {watch.ElapsedMilliseconds} ms");
+                Assert.Contains(mode.Layout(), l => l.Id == d.Id);
+            }
+        }
+    }
+
+    private static string Values(MccsCapabilities? caps, byte code) =>
+        caps is null || !caps.Vcp.TryGetValue(code, out var values) ? "no" : values is null ? "without values" : string.Join(' ', values.Select(v => v.ToString("x2", System.Globalization.CultureInfo.InvariantCulture)));
 
     [Fact]
     public void A_panel_without_a_matching_wmi_instance_is_never_substituted()

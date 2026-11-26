@@ -13,7 +13,7 @@ namespace Sysacta.App;
 /// </summary>
 internal static class ToolCatalog
 {
-    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays)
+    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery)
     {
         var sessions = new CoreAudioSessions();
         var defaultEndpoints = new PolicyConfigDefaultEndpoints();
@@ -32,6 +32,11 @@ internal static class ToolCatalog
             new DisplaySetBrightnessTool(displays, aliases),
             new DisplaySetContrastTool(displays, aliases),
             new DisplayListModesTool(displays, aliases),
+            new DisplaySetModeTool(displays, aliases, recovery),
+            new DisplaySetPowerTool(displays, aliases),
+            new DisplaySetInputTool(displays, aliases),
+            // Local console only (tray menu / device page); never listed or callable over MCP.
+            new DisplayRestoreModeTool(displays, recovery),
         ];
     }
 }

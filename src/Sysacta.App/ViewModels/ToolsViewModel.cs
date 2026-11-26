@@ -85,11 +85,12 @@ public sealed partial class ToolCategoryGroup(string name, IReadOnlyList<ToolIte
 
     public IReadOnlyList<ToolItem> Items { get; } = items;
 
-    // Setting IsEnabled saves through each item's LatestValueSaver.
+    // Setting IsEnabled saves through each item's LatestValueSaver. Tools that are off by default (screen loss, lost
+    // connection) and experimental tools are only ever enabled one by one.
     [RelayCommand]
     private void EnableAll()
     {
-        foreach (var item in Items.Where(i => i.IsAvailable && !i.IsExperimental))
+        foreach (var item in Items.Where(i => i.IsAvailable && !i.IsExperimental && !i.IsOffByDefault))
         {
             item.IsEnabled = true;
         }
@@ -124,6 +125,8 @@ public sealed partial class ToolItem : ObservableObject
         Title = tool.Descriptor.Title;
         Description = tool.Descriptor.Description;
         IsExperimental = tool.Descriptor.DefaultPolicy == DefaultPolicy.Experimental;
+        IsOffByDefault = tool.Descriptor.DefaultPolicy == DefaultPolicy.Off;
+        Caution = CautionFor(tool.Name);
         PolicyLabel = tool.Descriptor.DefaultPolicy switch
         {
             DefaultPolicy.On => tool.Descriptor.ReadOnly ? "既定で有効・読み取り" : "既定で有効・状態変更",
@@ -138,6 +141,20 @@ public sealed partial class ToolItem : ObservableObject
     public string Description { get; }
     public string PolicyLabel { get; }
     public bool IsExperimental { get; }
+    public bool IsOffByDefault { get; }
+
+    /// <summary>What the local user must be able to do before enabling the tool (physical recovery), or "".</summary>
+    public string Caution { get; }
+
+    public bool HasCaution => Caution.Length > 0;
+
+    private static string CautionFor(string tool) => tool switch
+    {
+        "display_set_mode" => "注意: 画面が映らなくなることがあります。対象はプライマリ以外のディスプレイだけです。元に戻すには、トレイメニューまたはデバイス画面の「元に戻す」を使います（Sysacta の起動中の直近 1 件のみ）。保存されない変更のため、サインアウトや再起動でも戻る想定です（実機未検証）。",
+        "display_set_power" => "注意: オフにしたモニターは DDC/CI に応答しなくなったり Windows から消えたりして、Sysacta からはオンに戻せないことがあります。モニターの電源ボタンで戻せることを確認してから有効にしてください。すべての画面をオフにすると、物理操作でしか戻せません。",
+        "display_set_input" => "注意: 切り替え先に信号がないと画面が映らず、Sysacta から戻せないことがあります。モニターのメニュー（OSD）で入力を戻せることを確認してから有効にしてください。入力名は MCCS の定義で、本体の端子表示と一致しないことがあります。",
+        _ => "",
+    };
 
     [ObservableProperty]
     private bool _isAvailable;

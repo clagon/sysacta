@@ -54,6 +54,10 @@ public sealed class DisplayGetStateArgs
     [StringLength(512, MinimumLength = 1)]
     [NoControlCharacters]
     public string? Device { get; init; }
+
+    [Description("Also query the monitor's DDC/CI power state and input sources (slower: the capabilities query can take seconds). Default false: 'power' and 'input' are 'unchecked'.")]
+    [DefaultValue(false)]
+    public bool IncludeSwitching { get; init; }
 }
 
 public sealed record DisplayGetStateData(
@@ -66,7 +70,9 @@ public sealed record DisplayGetStateData(
     bool IsCloned,
     [property: Description("Desktop resolution and refresh rate, not necessarily the panel's native resolution.")] DisplayCurrentMode? CurrentMode,
     DisplayFeatureState Brightness,
-    DisplayFeatureState Contrast);
+    DisplayFeatureState Contrast,
+    [property: Description("DDC/CI power state (external monitors). 'unchecked' unless include_switching is true.")] DisplayPowerInfo Power,
+    [property: Description("DDC/CI input sources (external monitors). 'unchecked' unless include_switching is true.")] DisplayInputInfo Input);
 
 public sealed class DisplayGetStateTool(IDisplays displays, IDeviceAliases aliases) : SysactaTool<DisplayGetStateArgs, DisplayGetStateData>
 {
@@ -74,11 +80,11 @@ public sealed class DisplayGetStateTool(IDisplays displays, IDeviceAliases alias
         Name: "display_get_state",
         Category: ToolCategories.Display,
         Title: "Get display state",
-        Description: "Returns the identity, current desktop mode, brightness and contrast (0-100) of a display. A value that is unsupported or cannot be read is null with a support status and error code. Uses the primary display when 'device' is omitted.",
+        Description: "Returns the identity, current desktop mode, brightness and contrast (0-100) of a display. With include_switching: true it also returns the DDC/CI power state and the input sources (input_id values for display_set_input). A value that is unsupported or cannot be read is null with a support status and error code. Uses the primary display when 'device' is omitted.",
         DefaultPolicy: DefaultPolicy.On,
         ReadOnly: true,
         AuditedArguments: [],
-        Timeout: TimeSpan.FromSeconds(10)); // DDC/CI
+        Timeout: TimeSpan.FromSeconds(15)); // DDC/CI; the optional capabilities query can take seconds
 
     protected override ValueTask<ToolTarget> ResolveTargetAsync(DisplayGetStateArgs args, CancellationToken cancellationToken)
     {
@@ -94,7 +100,14 @@ public sealed class DisplayGetStateTool(IDisplays displays, IDeviceAliases alias
         var brightness = DisplayFeatureState.Read(displays, d.Id, DisplayFeature.Brightness, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         var contrast = DisplayFeatureState.Read(displays, d.Id, DisplayFeature.Contrast, cancellationToken);
-        var data = new DisplayGetStateData(d.Id, d.Name, "active", d.Kind, d.Connection, d.IsPrimary, d.IsCloned, d.CurrentMode, brightness, contrast);
+        var (power, input) = (DisplaySwitching.PowerUnchecked, DisplaySwitching.InputUnchecked);
+        if (args.IncludeSwitching)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            (power, input) = DisplaySwitching.Read(displays, d.Id, cancellationToken);
+        }
+
+        var data = new DisplayGetStateData(d.Id, d.Name, "active", d.Kind, d.Connection, d.IsPrimary, d.IsCloned, d.CurrentMode, brightness, contrast, power, input);
         return Task.FromResult(new ToolOutcome<DisplayGetStateData>(data, Verification.NotApplicable));
     }
 }

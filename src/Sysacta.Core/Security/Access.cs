@@ -80,6 +80,12 @@ public sealed class AccessPolicy(IAccessStore store, TimeProvider time)
             return AccessDecision.NotAvailable;
         }
 
+        // Local recovery actions have no permission of their own: only the local console may run them.
+        if (tool.Descriptor.LocalOnly)
+        {
+            return caller.Kind == CallerKind.LocalConsole ? AccessDecision.Allowed : AccessDecision.NotPermitted;
+        }
+
         if (!store.IsToolEnabled(tool.Name))
         {
             return AccessDecision.ToolDisabled;

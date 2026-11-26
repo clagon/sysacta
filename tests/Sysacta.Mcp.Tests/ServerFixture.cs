@@ -28,6 +28,7 @@ public sealed class ServerFixture : IAsyncDisposable
     public FakeAudioSessions Sessions { get; } = new();
     public FakeDefaultEndpointWriter DefaultWriter { get; }
     public FakeDisplays Displays { get; } = new();
+    public DisplayModeRecovery Recovery { get; } = new();
     public BlockingTool Blocking { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time). The executor and the store use the system clock.</summary>
@@ -61,6 +62,10 @@ public sealed class ServerFixture : IAsyncDisposable
             new DisplaySetBrightnessTool(Displays, Store),
             new DisplaySetContrastTool(Displays, Store),
             new DisplayListModesTool(Displays, Store),
+            new DisplaySetModeTool(Displays, Store, Recovery),
+            new DisplaySetPowerTool(Displays, Store),
+            new DisplaySetInputTool(Displays, Store),
+            new DisplayRestoreModeTool(Displays, Recovery),
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");

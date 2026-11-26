@@ -32,8 +32,10 @@ public sealed partial class ToolRegistry
         }
     }
 
-    public IReadOnlyCollection<SysactaTool> All => _tools.Values;
+    /// <summary>The MCP tools (everything except <see cref="ToolDescriptor.LocalOnly"/> tools).</summary>
+    public IReadOnlyCollection<SysactaTool> All => [.. _tools.Values.Where(t => !t.Descriptor.LocalOnly)];
 
+    /// <summary>Any registered tool, including local-only ones. The executor refuses local-only tools to MCP clients.</summary>
     public SysactaTool? Find(string name) => _tools.GetValueOrDefault(name);
 
     [GeneratedRegex("^[a-z]+(_[a-z0-9]+){1,4}$")]

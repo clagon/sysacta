@@ -77,7 +77,8 @@ public sealed partial class ToolExecutor
     {
 
         var tool = _registry.Find(toolName);
-        if (tool is null)
+        // A local-only tool does not exist for MCP clients.
+        if (tool is null || (tool.Descriptor.LocalOnly && caller.Kind != CallerKind.LocalConsole))
         {
             return call.Finish(AuditOutcome.Denied, ToolResult.Fail(UnknownToolCode, "Unknown tool."));
         }

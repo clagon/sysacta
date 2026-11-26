@@ -32,7 +32,46 @@ public sealed partial class DevicesViewModel : PageViewModel
     {
         this.runtime = runtime;
         _category = Categories[0];
+        if (runtime is not null)
+        {
+            var context = SynchronizationContext.Current;
+            runtime.DisplayModeRecovery.Changed += (_, _) =>
+            {
+                if (context is null)
+                {
+                    UpdateRecovery();
+                }
+                else
+                {
+                    context.Post(_ => UpdateRecovery(), null);
+                }
+            };
+            UpdateRecovery();
+        }
     }
+
+    /// <summary>What "元に戻す" would restore (the latest display mode change), or null.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRecovery))]
+    [NotifyCanExecuteChangedFor(nameof(RestoreModeCommand))]
+    private string? _recoveryText;
+
+    public bool HasRecovery => RecoveryText is not null;
+
+    private void UpdateRecovery() => RecoveryText = DisplayModeRestoreText.Pending(runtime.DisplayModeRecovery);
+
+    /// <summary>Restores the latest mode change through the executor as the local console. No confirmation: the screen may be blank.</summary>
+    [RelayCommand(CanExecute = nameof(HasRecovery))]
+    private Task RestoreModeAsync() => RunAsync(async () =>
+    {
+        var (ok, title, message) = DisplayModeRestoreText.Describe(await runtime.RestoreDisplayModeAsync());
+        UpdateRecovery();
+        Notify(ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning, title, message);
+        if (Category.Id == ToolCategories.Display)
+        {
+            await LoadAsync();
+        }
+    }, "表示モードを元に戻せませんでした");
 
     public IReadOnlyList<DeviceCategory> Categories { get; } =
         [new(ToolCategories.Audio, "オーディオ"), new(ToolCategories.Display, "ディスプレイ")];
