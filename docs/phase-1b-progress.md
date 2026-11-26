@@ -9,7 +9,7 @@
 | `audio_list_devices` / `audio_set_mute` | 実装済み | `src/Sysacta.Core/Tools/Audio/` |
 | `audio_list_sessions` / `audio_set_app_volume` / `audio_set_app_mute` | 実装済み | `AudioSessions.cs`, `IAudioSessions.cs`, `src/Sysacta.Windows/Audio/CoreAudioSessions.cs` |
 | デバイス管理画面(列挙・別名の登録/変更/削除/再紐付け) | 実装済み | `src/Sysacta.App/Views/DevicesPage.xaml`, `ViewModels/DevicesViewModel.cs` |
-| 実機での状態変更(ミュート・アプリ別音量/ミュート) | **未確認** | [manual-tests.md](manual-tests.md) B3, B5 |
+| 実機での状態変更(ミュート・アプリ別音量/ミュート) | **一部確認**(アダプター層。出力のミュート、システム音セッション) | [manual-tests.md](manual-tests.md) B3, B5 |
 | Phase 1B-EXP(`audio_set_default_device`) | **未着手** | — |
 
 ## JSON 契約
@@ -115,6 +115,7 @@
 | Windows CI (windows-latest, [PR #5](https://github.com/clagon/sysacta/pull/5), run 45738440278, コード `2015a51` を含む `b3c2928`) | ビルドとスモークテスト成功。Core 185 / Infrastructure 50 / Mcp 74 / App 17 成功、Windows 6 成功・6 スキップ(音声出力デバイスがないための 3 件と状態変更 3 件) |
 
 - Windows 実機の実行は、出力を Windows の一時フォルダーにコピーして行った(Mcp / App は WSL の UNC パスからだと出力なしで停止した。原因は未調査)。実行後にデバイス画面の余白を 1 行直した(直した後のコードは CI で確認)。
+- 状態変更の実機テスト(所有者の承認後): Windows 11 で `SYSACTA_HARDWARE_TESTS=1`、Windows.Tests 12 件すべて成功。同じ機器を書き換えるテストが並列に走らないよう同一コレクションにし、システム音セッションのミュート復元の確認を追加してから実行した。
 - 実デバイスの読み取り: 46 エンドポイント、既定出力のセッション 12 件、失敗 0。
 - ミューテーション確認: `audio_set_mute` とアプリ別変更の開始点宣言を書き込みの後に移すと Core.Tests 18 件が失敗。セッションのロックキーを呼び出しごとに別にすると 1 件が失敗。確認後に元へ戻した。
 
@@ -122,7 +123,7 @@
 
 ## 既知の制約・残存リスク
 
-- 実機の状態変更は未確認([manual-tests.md](manual-tests.md) B3, B5)。切断・セッション再生成・複数役割の実機確認も未実施。
+- 実機の状態変更はアダプター層で出力のミュートとシステム音セッションのみ確認。ツール/MCP 経由、入力、一般アプリのセッションは未確認([manual-tests.md](manual-tests.md) B3, B5)。切断・セッション再生成・複数役割の実機確認も未実施。
 - `session_id` は鍵なしハッシュなので、パスを推測した照合は防げない。Windows が同じインスタンス ID を再利用した場合は区別できない([security.md](security.md))。
 - セッションの照合は呼び出しごとに全 active 出力機器を列挙する(解決時と実行時の 2 回)。機器やセッションが非常に多い環境で 5 秒のタイムアウトに近づく可能性は未計測。
 - 書き込み API が失敗を返した場合は未適用として `error` を返す(既存の `audio_set_volume` と同じ)。

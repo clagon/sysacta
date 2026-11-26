@@ -68,15 +68,15 @@ $env:SYSACTA_HARDWARE_TESTS = "1"; dotnet test tests/Sysacta.Windows.Tests -c Re
 
 状態を変える項目は、通話・会議・録音中でない機器で、手動で行い、元の値に戻す。
 
-自動テストでの実機確認(2026-11-26、開発機の Windows 11、.NET 10.0.15、Windows の一時フォルダーに出力をコピーして `dotnet.exe` で実行): Core 185 / Infrastructure 50 / Mcp 74 / App 17 / Windows 9 件成功。Windows.Tests の状態変更 3 件(`SYSACTA_HARDWARE_TESTS=1`)は**未実施**。列挙は 46 エンドポイント(失敗 0)、既定出力のセッションは 12 件(失敗 0)。WSL のパス(UNC)から直接実行すると Mcp / App のテストは出力なしで停止した(原因未調査)。
+自動テストでの実機確認(2026-11-26、開発機の Windows 11、.NET 10.0.15、Windows の一時フォルダーに出力をコピーして `dotnet.exe` で実行): Core 185 / Infrastructure 50 / Mcp 74 / App 17 / Windows 9 件成功。この時点では状態変更の 3 件は未実施。同日、リポジトリ所有者の承認後に `SYSACTA_HARDWARE_TESTS=1` で Windows.Tests 12 件すべて成功(既定出力 Yamaha ZG02 の音量 2% 変更とミュート切替、システム音セッションの音量・ミュート変更。いずれも読み戻しと元の値への復元を確認)。アダプター層の確認で、MCP / ツール経由の実機操作は未実施。列挙は 46 エンドポイント(失敗 0)、既定出力のセッションは 12 件(失敗 0)。WSL のパス(UNC)から直接実行すると Mcp / App のテストは出力なしで停止した(原因未調査)。
 
 | # | 項目 | 手順 | 期待結果 | 状況 |
 |---|---|---|---|---|
 | B1 | デバイス列挙 | `audio_list_devices` を direction=all/output/input で実行し、Windows の「サウンド」設定と比較 | 名称・状態・既定が一致。非接続は volume/muted が null | アダプターの列挙と既定 3 役割の整合のみ確認済み(Windows.Tests)。設定画面との目視比較は未確認 |
 | B2 | 役割の区別 | 通信の既定デバイスを別の機器にして列挙 | `default_roles` が console/multimedia と communications で分かれる | 未確認 |
-| B3 | デバイスのミュート | `audio_set_mute` を出力と入力で true → false | `verified`、音量は不変、Windows の表示も変わる | 未確認(`Set_mute_changes_and_restores_the_real_device` 未実施) |
+| B3 | デバイスのミュート | `audio_set_mute` を出力と入力で true → false | `verified`、音量は不変、Windows の表示も変わる | 一部確認: アダプターで既定出力のミュート切替 → 音量不変 → 復元(2026-11-26)。入力、ツール経由、Windows の表示は未確認 |
 | B4 | セッション列挙 | 2 つ以上のアプリで再生して `audio_list_sessions` | 音量ミキサーと対応する名前・音量・ミュート。パスやウィンドウ内容がない | 列挙・1 件を開いて読み取り・名前にパスがないことは確認済み。音量ミキサーとの目視比較は未確認 |
-| B5 | アプリ別音量・ミュート | 対象アプリの session_id に `audio_set_app_volume` / `audio_set_app_mute` | そのセッションだけが変わり、デバイス音量と他アプリは不変 | 未確認(`System_sounds_session_volume_and_mute_change_and_restore` 未実施) |
+| B5 | アプリ別音量・ミュート | 対象アプリの session_id に `audio_set_app_volume` / `audio_set_app_mute` | そのセッションだけが変わり、デバイス音量と他アプリは不変 | 一部確認: アダプターでシステム音セッションの音量・ミュート変更 → 復元(2026-11-26)。アプリのセッション、デバイス音量と他アプリが不変であること、ツール経由は未確認 |
 | B6 | セッションの再生成 | アプリを再起動して古い session_id を使う | TARGET_NOT_FOUND。新しいセッションは変わらない | 未確認(フェイクで自動確認済み) |
 | B7 | 同じアプリの複数セッション | ブラウザーなど複数セッションを持つアプリで列挙・変更 | 別々の session_id。指定した 1 件だけ変わる | 未確認(フェイクで自動確認済み。実機の列挙で ID の重複がないことは確認) |
 | B8 | 切断 | USB/Bluetooth 機器を外して、その別名で `audio_set_mute`、その機器のセッション ID で変更 | DEVICE_DISCONNECTED / TARGET_NOT_FOUND。別の機器は変わらない | 未確認 |
