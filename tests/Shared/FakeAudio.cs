@@ -49,14 +49,27 @@ public sealed class FakeAudioEndpoints : IAudioEndpoints
     /// <summary>When set, reads fail after the first successful write (device removed during read-back).</summary>
     public bool FailReadAfterSet { get; set; }
 
+    /// <summary>When set, GetDefaultEndpointId throws OS_API_ERROR.</summary>
+    public Exception? DefaultReadFailure { get; set; }
+
     /// <summary>Runs on every endpoint read (e.g. to change permissions just before a write).</summary>
     public Action? OnRead { get; set; }
 
     /// <summary>Runs inside every write, before it is applied.</summary>
     public Action<string>? OnWrite { get; set; }
 
-    public string? GetDefaultEndpointId(AudioDirection direction, AudioRole role = AudioRole.Multimedia) =>
-        RoleDefaults.TryGetValue((direction, role), out var id) ? id : direction == AudioDirection.Output ? DefaultOutput : DefaultInput;
+    public string? GetDefaultEndpointId(AudioDirection direction, AudioRole role = AudioRole.Multimedia)
+    {
+        if (DefaultReadFailure is not null)
+        {
+            throw DefaultReadFailure;
+        }
+
+        lock (Devices)
+        {
+            return RoleDefaults.TryGetValue((direction, role), out var id) ? id : direction == AudioDirection.Output ? DefaultOutput : DefaultInput;
+        }
+    }
 
     public AudioEndpointState GetEndpoint(string id)
     {
@@ -237,5 +250,105 @@ public sealed class FakeAudioSessions : IAudioSessions
         }
 
         public void Dispose() => Interlocked.Decrement(ref owner._openHandles);
+    }
+}
+
+/// <summary>In-memory writer for <see cref="AudioSetDefaultDeviceTool"/> tests.</summary>
+public sealed class FakeDefaultEndpointWriter(FakeAudioEndpoints audio) : IAudioDefaultEndpointWriter
+{
+    private readonly object _gate = new();
+
+    public FakeAudioEndpoints Audio { get; } = audio;
+    public ToolAvailability Availability { get; set; } = ToolAvailability.Available;
+    public Exception? OpenFailure { get; set; }
+    public Dictionary<AudioRole, Exception> FailWith { get; } = [];
+    public HashSet<AudioRole> ApplyDespiteFailure { get; } = [];
+    public HashSet<AudioRole> Ignore { get; } = [];
+    public Dictionary<AudioRole, AudioRole> Couple { get; } = [];
+    public bool CrossDirectionSideEffect { get; set; }
+    public bool FailReadAfterWrite { get; set; }
+    public Action<string, AudioRole>? OnWrite { get; set; }
+    public Dictionary<AudioRole, ManualResetEventSlim> BlockGates { get; } = [];
+    public List<(string EndpointId, AudioRole Role)> Writes { get; } = [];
+
+    private int _openHandles;
+    public int OpenHandles => Volatile.Read(ref _openHandles);
+
+    public ToolAvailability GetAvailability() => Availability;
+
+    public IAudioDefaultEndpointChange Open()
+    {
+        if (OpenFailure is not null)
+        {
+            throw OpenFailure;
+        }
+
+        Interlocked.Increment(ref _openHandles);
+        return new Change(this);
+    }
+
+    private sealed class Change(FakeDefaultEndpointWriter owner) : IAudioDefaultEndpointChange
+    {
+        private int _disposed;
+
+        public void SetDefault(string endpointId, AudioRole role)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (owner.BlockGates.TryGetValue(role, out var block))
+            {
+                block.Wait(CancellationToken.None);
+            }
+
+            owner.OnWrite?.Invoke(endpointId, role);
+
+            Exception? failure;
+            bool applyDespiteFailure;
+            lock (owner._gate)
+            {
+                owner.Writes.Add((endpointId, role));
+                owner.FailWith.TryGetValue(role, out failure);
+                applyDespiteFailure = owner.ApplyDespiteFailure.Contains(role);
+            }
+
+            if (failure is null || applyDespiteFailure)
+            {
+                if (!owner.Ignore.Contains(role))
+                {
+                    lock (owner.Audio.Devices)
+                    {
+                        var dir = owner.Audio.Devices[endpointId].Direction;
+                        owner.Audio.RoleDefaults[(dir, role)] = endpointId;
+                        if (owner.Couple.TryGetValue(role, out var coupled))
+                        {
+                            owner.Audio.RoleDefaults[(dir, coupled)] = endpointId;
+                        }
+
+                        if (owner.CrossDirectionSideEffect)
+                        {
+                            var otherDir = dir == AudioDirection.Output ? AudioDirection.Input : AudioDirection.Output;
+                            owner.Audio.RoleDefaults[(otherDir, role)] = endpointId;
+                        }
+                    }
+                }
+            }
+
+            if (owner.FailReadAfterWrite)
+            {
+                owner.Audio.DefaultReadFailure = new ToolFailureException(ErrorCodes.OsApiError, "The Windows audio API returned an error.");
+            }
+
+            if (failure is not null)
+            {
+                throw failure;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                Interlocked.Decrement(ref owner._openHandles);
+            }
+        }
     }
 }
