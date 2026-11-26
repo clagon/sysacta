@@ -8,6 +8,7 @@ using Sysacta.Core.Security;
 using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Infrastructure;
+using Sysacta.Tests;
 
 namespace Sysacta.Mcp.Tests;
 
@@ -22,7 +23,8 @@ public sealed class ServerFixture : IAsyncDisposable
     public AuditLog Audit { get; }
     public ToolExecutor Executor { get; }
     public McpServerHost Host { get; }
-    public FakeAudio AudioDevice { get; } = new();
+    public FakeAudioEndpoints AudioDevice { get; } = new();
+    public FakeAudioSessions Sessions { get; } = new();
     public BlockingTool Blocking { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time). The executor and the store use the system clock.</summary>
@@ -39,7 +41,18 @@ public sealed class ServerFixture : IAsyncDisposable
         Store = new AccessStore(Database, TimeProvider.System, Gate);
         Counted = new CountingStore(Store);
         Audit = new AuditLog(Database, limits);
-        var registry = new ToolRegistry([new AudioGetStateTool(AudioDevice, Store), new AudioSetVolumeTool(AudioDevice, Store), Blocking]);
+        AudioDevice.Devices["spk"] = AudioDevice.Devices["spk"] with { VolumeScalar = 0.4f };
+        var registry = new ToolRegistry(
+        [
+            new AudioGetStateTool(AudioDevice, Store),
+            new AudioSetVolumeTool(AudioDevice, Store),
+            new AudioListDevicesTool(AudioDevice, Store),
+            new AudioSetMuteTool(AudioDevice, Store),
+            new AudioListSessionsTool(AudioDevice, Store, Sessions),
+            new AudioSetAppVolumeTool(AudioDevice, Sessions),
+            new AudioSetAppMuteTool(AudioDevice, Sessions),
+            Blocking,
+        ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
         Store.SetToolEnabled(Blocking.Name, true);
         Executor = new ToolExecutor(registry, new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, Gate);
@@ -153,37 +166,6 @@ public sealed class CountingStore(IAccessStore inner) : IAccessStore
     {
         Interlocked.Increment(ref _uses);
         inner.RecordClientUse(clientId, at);
-    }
-}
-
-public sealed class FakeAudio : IAudioEndpoints
-{
-    private readonly object _gate = new();
-    private float _volume = 0.4f;
-    private int _writes;
-
-    /// <summary>Calls that changed the (fake) device.</summary>
-    public int Writes => Volatile.Read(ref _writes);
-
-    public string? GetDefaultEndpointId(AudioDirection direction) => direction == AudioDirection.Output ? "spk" : null;
-
-    public AudioEndpointState GetEndpoint(string id)
-    {
-        lock (_gate)
-        {
-            return string.Equals(id, "spk", StringComparison.OrdinalIgnoreCase) // GetDevice may accept other spellings
-                ? new AudioEndpointState("spk", "Speakers", AudioDirection.Output, AudioDeviceState.Active, _volume, false)
-                : throw new ToolFailureException(ErrorCodes.TargetNotFound, "The specified audio device was not found.");
-        }
-    }
-
-    public void SetVolumeScalar(string id, float scalar)
-    {
-        lock (_gate)
-        {
-            _writes++;
-            _volume = scalar;
-        }
     }
 }
 

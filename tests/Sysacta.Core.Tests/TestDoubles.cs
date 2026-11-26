@@ -38,6 +38,9 @@ internal sealed class FakeAccessStore : IAccessStore, IDeviceAliases
 
     public string? Resolve(string category, string alias) => Aliases.GetValueOrDefault((category, alias));
 
+    public IReadOnlyList<DeviceAlias> List(string category) =>
+        [.. Aliases.Where(a => a.Key.Item1 == category).Select(a => new DeviceAlias(a.Key.Item2, a.Value)).OrderBy(a => a.Alias, StringComparer.Ordinal)];
+
     /// <summary>Adds an active client allowed to use <paramref name="tools"/> (and enables them globally).</summary>
     public (Caller Caller, string Token) AddClient(string id, params string[] tools)
     {
@@ -166,55 +169,6 @@ internal sealed class GateTool(TimeSpan? timeout = null) : SysactaTool<GateArgs,
         int current;
         while ((current = Volatile.Read(ref target)) < value && Interlocked.CompareExchange(ref target, value, current) != current)
         {
-        }
-    }
-}
-
-internal sealed class FakeAudioEndpoints : IAudioEndpoints
-{
-    // Case-insensitive like a lookup that accepts several spellings of one endpoint; GetEndpoint returns the canonical id.
-    public Dictionary<string, AudioEndpointState> Devices { get; } = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["spk"] = new("spk", "Speakers", AudioDirection.Output, AudioDeviceState.Active, 0.5f, false),
-        ["hp"] = new("hp", "Headphones", AudioDirection.Output, AudioDeviceState.Unplugged, null, null),
-        ["mic"] = new("mic", "Microphone", AudioDirection.Input, AudioDeviceState.Active, 0.8f, true),
-    };
-
-    public string? DefaultOutput { get; set; } = "spk";
-    public string? DefaultInput { get; set; } = "mic";
-    public List<(string, float)> SetCalls { get; } = [];
-    public Func<float, float> ApplyTransform { get; set; } = v => v;
-    public Exception? SetFailure { get; set; }
-
-    /// <summary>When set, reads fail after the first successful SetVolumeScalar (device removed during read-back).</summary>
-    public bool FailReadAfterSet { get; set; }
-
-    public string? GetDefaultEndpointId(AudioDirection direction) => direction == AudioDirection.Output ? DefaultOutput : DefaultInput;
-
-    public AudioEndpointState GetEndpoint(string id)
-    {
-        lock (Devices)
-        {
-            if (FailReadAfterSet && SetCalls.Count > 0)
-            {
-                throw new ToolFailureException(ErrorCodes.DeviceDisconnected, "The audio device was removed or disabled.");
-            }
-
-            return Devices.TryGetValue(id, out var d) ? d : throw new ToolFailureException(ErrorCodes.TargetNotFound, "The specified audio device was not found.");
-        }
-    }
-
-    public void SetVolumeScalar(string id, float scalar)
-    {
-        if (SetFailure is not null)
-        {
-            throw SetFailure;
-        }
-
-        lock (Devices)
-        {
-            SetCalls.Add((id, scalar));
-            Devices[id] = Devices[id] with { VolumeScalar = ApplyTransform(scalar) };
         }
     }
 }

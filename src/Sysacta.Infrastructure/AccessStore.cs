@@ -193,17 +193,89 @@ public sealed class AccessStore(SysactaDatabase database, TimeProvider time, Aut
         return Scalar(c, "SELECT device_id FROM device_aliases WHERE category = $c AND alias = $a", ("$c", category), ("$a", alias)) as string;
     }
 
-    /// <summary>Registers an alias. Rejects reserved words and aliases that equal an existing device id (spec §8).</summary>
-    public void SetAlias(string category, string deviceId, string alias, IReadOnlyCollection<string> knownDeviceIds)
+    public IReadOnlyList<DeviceAlias> List(string category)
     {
-        alias = alias.Trim();
-        if (alias.Length is 0 or > 64 || DeviceAliasRules.Reserved.Contains(alias) || knownDeviceIds.Contains(alias, StringComparer.OrdinalIgnoreCase))
+        using var c = database.Open();
+        using var cmd = Command(c, "SELECT alias, device_id FROM device_aliases WHERE category = $c ORDER BY alias", ("$c", category));
+        using var r = cmd.ExecuteReader();
+        var list = new List<DeviceAlias>();
+        while (r.Read())
         {
-            throw new ArgumentException("The alias is empty, too long, reserved or collides with a device id.", nameof(alias));
+            list.Add(new DeviceAlias(r.GetString(0), r.GetString(1)));
         }
 
+        return list;
+    }
+
+    // Alias writes (console only). They do not change permissions, so they need no authorization gate; a call that is
+    // already queued keeps the device it resolved. Uniqueness and lookup both use the column's NOCASE collation.
+
+    /// <summary>Registers an alias. Rejects reserved words, duplicates and aliases that equal a device id (spec §8).</summary>
+    public void SetAlias(string category, string deviceId, string alias, IReadOnlyCollection<string> knownDeviceIds)
+    {
+        alias = ValidateAlias(category, alias, knownDeviceIds);
+        WriteUnique("INSERT INTO device_aliases (category, device_id, alias) VALUES ($c, $d, $a)",
+            ("$c", category), ("$d", deviceId), ("$a", alias));
+    }
+
+    public void RenameAlias(string category, string alias, string newAlias, IReadOnlyCollection<string> knownDeviceIds)
+    {
+        newAlias = ValidateAlias(category, newAlias, knownDeviceIds);
+        WriteUnique("UPDATE device_aliases SET alias = $n WHERE category = $c AND alias = $a",
+            ("$n", newAlias), ("$c", category), ("$a", alias));
+    }
+
+    /// <summary>Points an existing alias at another device. Only ever done on the user's explicit choice (spec §8).</summary>
+    public void RebindAlias(string category, string alias, string newDeviceId) =>
+        WriteUnique("UPDATE device_aliases SET device_id = $d WHERE category = $c AND alias = $a",
+            ("$d", newDeviceId), ("$c", category), ("$a", alias));
+
+    public void RemoveAlias(string category, string alias)
+    {
         using var c = database.Open();
-        Execute(c, "INSERT INTO device_aliases (category, device_id, alias) VALUES ($c, $d, $a)", ("$c", category), ("$d", deviceId), ("$a", alias));
+        Execute(c, "DELETE FROM device_aliases WHERE category = $c AND alias = $a", ("$c", category), ("$a", alias));
+    }
+
+    /// <summary>The messages are shown to the local user as they are.</summary>
+    private string ValidateAlias(string category, string alias, IReadOnlyCollection<string> knownDeviceIds)
+    {
+        alias = alias.Trim();
+        if (alias.Length is 0 or > 64 || alias.Any(char.IsControl))
+        {
+            throw new ArgumentException("別名は制御文字を含まない1〜64文字で入力してください。");
+        }
+
+        if (DeviceAliasRules.Reserved.Contains(alias))
+        {
+            throw new ArgumentException("「all」と「default」は予約語のため別名にできません。");
+        }
+
+        // Ids already registered count as known even while their device is not connected.
+        if (knownDeviceIds.Concat(List(category).Select(a => a.DeviceId)).Contains(alias, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("デバイスIDと同じ文字列は別名にできません。");
+        }
+
+        return alias;
+    }
+
+    private void WriteUnique(string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var c = database.Open();
+        int changed;
+        try
+        {
+            changed = Execute(c, sql, parameters);
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 19) // SQLITE_CONSTRAINT
+        {
+            throw new ArgumentException("同じ別名がすでに登録されています。");
+        }
+
+        if (changed == 0)
+        {
+            throw new InvalidOperationException("別名が見つかりません。再読み込みしてください。");
+        }
     }
 
     private const string ClientSelect = "SELECT id, name, created_at, expires_at, revoked_at, last_used_at FROM clients";

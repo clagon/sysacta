@@ -222,19 +222,6 @@ public sealed partial class ClientsViewModel(SysactaRuntime runtime) : PageViewM
         IssuedFor = issued.Client.Name;
         IssuedToken = issued.Token;
     }
-
-    private static async Task<bool> ConfirmAsync(string title, string message, string action)
-    {
-        var box = new Wpf.Ui.Controls.MessageBox
-        {
-            Title = title,
-            Content = message,
-            PrimaryButtonText = action,
-            PrimaryButtonAppearance = ControlAppearance.Primary,
-            CloseButtonText = "キャンセル",
-        };
-        return await box.ShowDialogAsync() == Wpf.Ui.Controls.MessageBoxResult.Primary;
-    }
 }
 
 public sealed record ClientItem(ClientRecord Record)

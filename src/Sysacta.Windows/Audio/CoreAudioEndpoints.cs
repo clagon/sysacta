@@ -18,10 +18,13 @@ public sealed class CoreAudioEndpoints : IAudioEndpoints
     // E_NOTFOUND (HRESULT_FROM_WIN32(ERROR_NOT_FOUND)) from IMMDeviceEnumerator::GetDevice.
     private const int ENotFound = unchecked((int)0x80070490);
 
-    public string? GetDefaultEndpointId(AudioDirection direction) => Guard(() =>
+    // AUDCLNT_E_DEVICE_INVALIDATED
+    private const int DeviceInvalidated = unchecked((int)0x88890004);
+
+    public string? GetDefaultEndpointId(AudioDirection direction, AudioRole role = AudioRole.Multimedia) => Guard(() =>
     {
         using var enumerator = new MMDeviceEnumerator();
-        if (!enumerator.TryGetDefaultAudioEndpoint(ToFlow(direction), Role.Multimedia, out var device) || device is null)
+        if (!enumerator.TryGetDefaultAudioEndpoint(ToFlow(direction), ToRole(role), out var device) || device is null)
         {
             return null;
         }
@@ -37,7 +40,7 @@ public sealed class CoreAudioEndpoints : IAudioEndpoints
         using var enumerator = new MMDeviceEnumerator();
         using var device = GetDevice(enumerator, id);
         var state = ToState(device.State);
-        var direction = device.DataFlow == DataFlow.Capture ? AudioDirection.Input : AudioDirection.Output;
+        var direction = ToDirection(device.DataFlow);
         if (state != AudioDeviceState.Active)
         {
             return new AudioEndpointState(device.ID, SafeName(device), direction, state, null, null);
@@ -47,18 +50,103 @@ public sealed class CoreAudioEndpoints : IAudioEndpoints
         return new AudioEndpointState(device.ID, SafeName(device), direction, state, volume.MasterVolumeLevelScalar, volume.Mute);
     });
 
+    public AudioEndpointList ListEndpoints(AudioDirection? direction, int max) => Guard(() =>
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        var flow = direction is { } d ? ToFlow(d) : DataFlow.All;
+        using var collection = enumerator.EnumerateAudioEndPoints(flow, DeviceState.All);
+        var total = collection.Count;
+        var failed = 0;
+        var found = new List<(MMDevice Device, string Id, AudioDirection Direction, AudioDeviceState State)>(total);
+        try
+        {
+            // Identity and state first (cheap), so that active devices are kept when the limit applies.
+            for (var i = 0; i < total; i++)
+            {
+                MMDevice? device = null;
+                try
+                {
+                    device = collection[i];
+                    found.Add((device, device.ID, ToDirection(device.DataFlow), ToState(device.State)));
+                }
+                catch (Exception ex) when (IsApiFailure(ex))
+                {
+                    device?.Dispose();
+                    failed++;
+                }
+            }
+
+            AudioEndpointEntry[] items = [.. found.OrderBy(f => f.State).ThenBy(f => f.Direction).Take(max).Select(f => Entry(f.Device, f.Id, f.Direction, f.State))];
+            return new AudioEndpointList(items, total, failed);
+        }
+        finally
+        {
+            foreach (var f in found)
+            {
+                f.Device.Dispose();
+            }
+        }
+    });
+
     public void SetVolumeScalar(string id, float scalar) => Guard(() =>
     {
         using var enumerator = new MMDeviceEnumerator();
-        using var device = GetDevice(enumerator, id);
-        if (device.State != DeviceState.Active)
-        {
-            throw new ToolFailureException(ErrorCodes.DeviceDisconnected, "The specified audio device is not active.");
-        }
-
+        using var device = GetActiveDevice(enumerator, id);
         device.AudioEndpointVolume.MasterVolumeLevelScalar = Math.Clamp(scalar, 0f, 1f);
         return 0;
     });
+
+    public void SetMute(string id, bool muted) => Guard(() =>
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        using var device = GetActiveDevice(enumerator, id);
+        device.AudioEndpointVolume.Mute = muted;
+        return 0;
+    });
+
+    private static AudioEndpointEntry Entry(MMDevice device, string id, AudioDirection direction, AudioDeviceState state)
+    {
+        var name = "(unknown)";
+        float? scalar = null;
+        bool? muted = null;
+        string? error = null;
+        try
+        {
+            name = device.FriendlyName;
+            if (state == AudioDeviceState.Active)
+            {
+                var volume = device.AudioEndpointVolume;
+                scalar = volume.MasterVolumeLevelScalar;
+                muted = volume.Mute;
+            }
+        }
+        catch (Exception ex) when (IsApiFailure(ex))
+        {
+            // One broken device must not hide the others.
+            error = ex.HResult == DeviceInvalidated ? ErrorCodes.DeviceDisconnected : ErrorCodes.OsApiError;
+        }
+
+        return new AudioEndpointEntry(new AudioEndpointState(id, name, direction, state, scalar, muted), error);
+    }
+
+    internal static MMDevice GetActiveDevice(MMDeviceEnumerator enumerator, string id)
+    {
+        var device = GetDevice(enumerator, id);
+        try
+        {
+            if (device.State != DeviceState.Active)
+            {
+                throw new ToolFailureException(ErrorCodes.DeviceDisconnected, "The specified audio device is not active.");
+            }
+
+            return device;
+        }
+        catch
+        {
+            device.Dispose();
+            throw;
+        }
+    }
 
     private static MMDevice GetDevice(MMDeviceEnumerator enumerator, string id)
     {
@@ -88,26 +176,37 @@ public sealed class CoreAudioEndpoints : IAudioEndpoints
         }
     }
 
-    private static T Guard<T>(Func<T> action)
+    /// <summary>Failures of the audio API itself (NAudio reports a missing interface as the last two).</summary>
+    internal static bool IsApiFailure(Exception ex) => ex is COMException or InvalidCastException or NotSupportedException or InvalidOperationException;
+
+    internal static T Guard<T>(Func<T> action)
     {
         try
         {
             return action();
         }
-        catch (COMException ex) when (ex.HResult == unchecked((int)0x88890004))
+        catch (COMException ex) when (ex.HResult == DeviceInvalidated)
         {
-            // AUDCLNT_E_DEVICE_INVALIDATED
             throw new ToolFailureException(ErrorCodes.DeviceDisconnected, "The audio device was removed or disabled.");
         }
         catch (COMException)
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "The Windows audio API returned an error.", retryable: false);
         }
-        catch (InvalidCastException)
+        catch (Exception ex) when (IsApiFailure(ex))
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "The Windows audio API is not available.");
         }
     }
+
+    private static AudioDirection ToDirection(DataFlow flow) => flow == DataFlow.Capture ? AudioDirection.Input : AudioDirection.Output;
+
+    private static Role ToRole(AudioRole role) => role switch
+    {
+        AudioRole.Console => Role.Console,
+        AudioRole.Communications => Role.Communications,
+        _ => Role.Multimedia,
+    };
 
     private static DataFlow ToFlow(AudioDirection direction) => direction == AudioDirection.Input ? DataFlow.Capture : DataFlow.Render;
 

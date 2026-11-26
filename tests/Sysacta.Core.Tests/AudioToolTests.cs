@@ -1,5 +1,6 @@
 using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
+using Sysacta.Tests;
 
 namespace Sysacta.Core.Tests;
 

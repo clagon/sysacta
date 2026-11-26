@@ -187,6 +187,9 @@ public class AccessStoreTests
     [InlineData("all")]
     [InlineData("DEFAULT")]
     [InlineData("dev-1")]
+    [InlineData("DEV-1")]
+    [InlineData("bad\nname")]
+    [InlineData("01234567890123456789012345678901234567890123456789012345678901234")]
     public void Invalid_aliases_are_rejected(string alias)
     {
         using var t = new TempDatabase();
@@ -205,7 +208,35 @@ public class AccessStoreTests
 
         Assert.Equal("dev-1", store.Resolve("audio", "desk"));
         Assert.Null(store.Resolve("display", "desk"));
-        Assert.ThrowsAny<SqliteException>(() => store.SetAlias("audio", "dev-2", "DESK", ["dev-1", "dev-2"]));
+        Assert.Throws<ArgumentException>(() => store.SetAlias("audio", "dev-2", "DESK", ["dev-1", "dev-2"]));
+        store.SetAlias("display", "dev-2", "desk", []); // unique per category only
+    }
+
+    [Fact]
+    public void Aliases_can_be_renamed_rebound_and_removed_and_survive_a_restart()
+    {
+        using var t = new TempDatabase();
+        t.Database.Migrate();
+        var store = new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate());
+        store.SetAlias("audio", "dev-1", " desk ", ["dev-1"]);
+        store.SetAlias("audio", "dev-2", "tv", ["dev-2"]);
+
+        Assert.Throws<ArgumentException>(() => store.RenameAlias("audio", "desk", "TV", []));
+        Assert.Throws<ArgumentException>(() => store.RenameAlias("audio", "desk", "default", []));
+        // An id that is only registered (its device is not connected) still counts as a known id.
+        Assert.Throws<ArgumentException>(() => store.RenameAlias("audio", "desk", "Dev-2", []));
+        store.RenameAlias("audio", "DESK", "Desk", []); // changing only the case of the same alias
+        store.RenameAlias("audio", "desk", "speakers", []);
+        store.RebindAlias("audio", "speakers", "dev-3");
+
+        var reopened = new AccessStore(t.Database, TimeProvider.System, new AuthorizationGate());
+        Assert.Equal([new("speakers", "dev-3"), new("tv", "dev-2")], reopened.List("audio"));
+        Assert.Null(reopened.Resolve("audio", "desk"));
+
+        reopened.RemoveAlias("audio", "SPEAKERS");
+        Assert.Null(reopened.Resolve("audio", "speakers"));
+        Assert.Throws<InvalidOperationException>(() => reopened.RebindAlias("audio", "speakers", "dev-1"));
+        Assert.Throws<InvalidOperationException>(() => reopened.RenameAlias("audio", "speakers", "x", []));
     }
 
     [Theory]
