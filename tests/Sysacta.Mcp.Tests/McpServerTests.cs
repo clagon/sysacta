@@ -91,7 +91,10 @@ public class AuthenticationTests
         using var liveDatabase = f.Database.Open(); // Keep SQLite from removing WAL during inspection.
         foreach (var file in Directory.GetFiles(Path.GetDirectoryName(f.Database.Path)!))
         {
-            Assert.Equal(-1, File.ReadAllBytes(file).AsSpan().IndexOf(secret));
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            Assert.Equal(-1, copy.ToArray().AsSpan().IndexOf(secret));
         }
 
         Assert.DoesNotContain(f.Audit.Query(new AuditQuery()), e => (e.Arguments ?? "").Contains("Bearer", StringComparison.OrdinalIgnoreCase));
