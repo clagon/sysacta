@@ -35,6 +35,9 @@ public sealed partial class ToolRegistry
     /// <summary>The MCP tools (everything except <see cref="ToolDescriptor.LocalOnly"/> tools).</summary>
     public IReadOnlyCollection<SysactaTool> All => [.. _tools.Values.Where(t => !t.Descriptor.LocalOnly)];
 
+    /// <summary>Every registered tool name, including local-only tools (for filtering the audit log).</summary>
+    public IReadOnlyCollection<string> AllNames => _tools.Keys;
+
     /// <summary>Any registered tool, including local-only ones. The executor refuses local-only tools to MCP clients.</summary>
     public SysactaTool? Find(string name) => _tools.GetValueOrDefault(name);
 

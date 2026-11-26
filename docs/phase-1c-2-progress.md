@@ -69,6 +69,15 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 
 「他の表示」の比較対象は、対象以外の表示の ID・プライマリ・複製・現在モード・位置・回転と、対象自身のプライマリ・複製・回転（対象の位置とモードは変わってよい）。観測された変化を Sysacta によるものと断定しない（説明文に明記）。
 
+### 判断の補足（レビューで確認した点）
+
+- **整数 Hz で区別できないモード**: 要求に使うのは `dmFields` の 5 項目だけで、その値は `mode_id` が表す値と同じ。Windows が同じ 5 項目の値を持つ DEVMODE を複数列挙しても、渡す要求は同一になる（Sysacta が別の信号モードを選んでいるわけではない）。59.94 Hz と 60 Hz を Windows が別の整数（59 / 60）で列挙する場合は別の `mode_id` になる。整数 Hz の API で表せない区別（分数 Hz の選択）はできず、`SetDisplayConfig` での分数指定は今回の範囲外。
+- **復旧に必要なトポロジー**: 復旧が変えるのは対象のソースのモードだけなので、記録するのは表示 ID・元のモード・適用したモード。復旧時に、同じ表示 ID が単独で（複製でなく）存在し、現在モードが適用したモード（回転・スケーリングを含む）と一致することを確認する。他の表示の配置は復旧の対象にしない（他の画面が抜き差しされても、映らない画面を戻せるようにするため）。復旧後も他の表示の変化を比較して報告する。
+- **復旧の競合**: 待機中に別の表示の変更（別のロックキー）で記録が置き換わった場合に古い記録を適用しないよう、アダプターのゲート取得後にも記録が最新か確認する（レビュー指摘で追加、テストあり）。
+- **入力の現在値が宣言外のとき**: 値そのものは読めている（実機の P2314H のように宣言外の値を返す機種がある）。書く値は宣言済みの標準値に限るので、現在値の意味が分からなくても書き込みを許可する。電源は現在値が MCCS の定義外なら状態そのものが不明なので書かない。
+- **能力の再評価**: 能力文字列も現在値もキャッシュせず、呼び出しのたびに取得し直す。切替後の読み戻しは同じハンドルで値だけを読む（能力文字列の再取得は数秒かかり、通信が切れた直後は意味がない）。次の呼び出しで再評価される。
+- **読み戻しの証拠**: 読み戻しで一度でも目標以外の値が読めた場合は、その後に読めなくなっても `accepted` にせず `VERIFICATION_FAILED`（最後に読めた値を報告）。一度も読めないときだけ `accepted`（レビュー指摘で修正、テストあり）。
+
 ### 電源・入力の手順
 
 1. 解決 → ロック → トポロジーで再確認（外部・非複製）→ `OpenSwitch`（ゲート、再解決、物理ハンドル、ソース名の再確認）。
@@ -98,7 +107,7 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 
 | ツール | 秒 | 根拠 |
 |---|---:|---|
-| display_set_mode / display_restore_mode | 15 | モード設定は同期でドライバにより数秒かかり得る（文書に記載なし、実測未実施）。開始後のタイムアウトは `unknown` になるため余裕を持たせる |
+| display_set_mode / display_restore_mode | 15 | **暫定値（実測なし）**。読み取り側の実測は列挙 1〜9 ms・CDS_TEST 1〜22 ms。適用の所要時間はモード変更を実施していないため未測定。短すぎると開始後のタイムアウトが `unknown` になり、利用者に確認を強いるため、ゲート待ちを含めて余裕を持たせた。実機確認（DM2）で見直す |
 | display_set_power / display_set_input | 15 | 能力文字列の実測 3.6〜3.8 秒 + 読み取り（約 60〜120 ms）+ 書き込み + 読み戻し最大約 1.3 秒 |
 | display_get_state | 10 → **15** | `include_switching: true` の能力文字列のため。既定（false）では処理は増えない（上限が延びるだけ） |
 
@@ -107,7 +116,12 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 - `ToolDescriptor.LocalOnly` を追加。`ToolRegistry.All`（MCP の一覧・DB 同期・ツール/クライアント画面）から除外し、MCP クライアントからの呼び出しは executor が**未知のツール**として扱う（MCP ではプロトコルエラー）。全体許可・クライアント別許可は持たず、`Caller.LocalConsole` だけが実行できる。実行は通常どおり `ToolExecutor`（検証・ロック・pending 監査・開始点・タイムアウト・最終監査）。使うのは `display_restore_mode` だけ。
 - ツール画面の「すべて有効」は `DefaultPolicy.Off` のツールを含めない（既存の Off ツールはなかったので既存の挙動は変わらない）。Off の 3 ツールに日本語の注意文を表示する。
 - Core に `InternalsVisibleTo("Sysacta.App.Tests")` を追加（テストで復旧記録を作るため）。
+- `ToolRegistry.AllNames`（ローカル専用ツールを含む名前一覧）を追加し、監査ログ画面のツールの絞り込みに使う。
 - 認証・要求予算・監査容量・オーディオと 1C-1 の JSON 契約は変更していない。
+
+### レビューと修正
+
+独立した 2 系統のレビュー（規約・仕様）を行い、次を修正した: `display_set_mode` がモード変更の完了前にコントロール（ゲート）を解放し得る形（`await` なしの返却）、読み戻しの不一致の証拠を捨てて `accepted` にする経路、復旧ツールの記録の再確認がゲート取得前だけだった競合、監査ログ画面で `display_restore_mode` を絞り込めない点。モード変更と電源・入力の排他テストを追加した。重複コード（3 ツールの `ResolveTargetAsync` など）の共通化は、各ツールの読みやすさを優先して見送った。
 
 ## 3. JSON 契約
 
@@ -144,8 +158,8 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 | 環境 | 結果 |
 |---|---|
 | WSL2 (Linux) `dotnet build Sysacta.sln -c Release` | 警告 0・エラー 0 |
-| WSL2 `dotnet test Sysacta.sln -c Release` | Core 424 / Mcp 91 / Infrastructure 50 成功、Windows.Tests 27 成功・15 スキップ（Windows 専用）。App.Tests は対象外 |
-| 開発機 Windows 11 (build 26300) `dotnet.exe test`（`SYSACTA_HARDWARE_TESTS` 未設定） | （§5 末尾の追記を参照） |
+| WSL2 `dotnet test Sysacta.sln -c Release` | Core 428 / Mcp 91 / Infrastructure 50 成功、Windows.Tests 27 成功・15 スキップ（Windows 専用）。App.Tests は対象外 |
+| 開発機 Windows 11 (build 26300) `dotnet.exe test`（`SYSACTA_HARDWARE_TESTS` 未設定、書き込みなし） | Core 428 / Mcp 91 / Infrastructure 50 / Windows 36 成功・6 スキップ（状態変更）。App 27 成功・1 スキップ・**1 失敗**: `Concurrent_start_and_settings_save_end_consistent` が起動中の別の Sysacta が使うポート 8765 に衝突（1C-1 と同じ環境要因。ポートが空いていた回は成功）。途中、新しいトレイのテストが既存のトレイのテストと並列に通知領域アイコンを作り testhost が異常終了したため、同じクラスに移して順次実行にした。新しい MCP テストの WAL 走査の競合（SQLite が `-wal` を削除）も修正（既存の `RejectionAuditTests` にも同じ断続的失敗があるが変更していない） |
 | Windows CI (windows-latest) | PR 作成後に記録 |
 
 追加した主な自動テスト: `DisplayModeToolTests`（35 件: 検証・no-op・プライマリ/複製/仮想/不明の拒否、待機中にプライマリになった場合、厳格な引数、他機器・未列挙の `mode_id`、回転・スケーリング、現在モード不明、CDS_TEST 失敗、適用失敗で不変・別モード・読めない、他の表示の変化、準備中の失効・無効化、ネイティブ呼び出しのハングとロック保持、復旧の成功・無許可で動くこと・MCP から呼べないこと・記録なし・古い記録・別機器・既に元のモード・元のモードが消えた・同じ表示との排他）、`MccsTests` / `DisplaySwitchToolTests`（69 件: 能力文字列の正常/不正/上限、MCCS 3.0・未宣言・部分宣言の拒否、許可リスト、`input_id`、`include_switching` の既定と各失敗理由、電源・入力の検証・no-op・accepted・unknown・不一致・証拠なしの拒否・厳格な引数・他機器/未宣言/消えた入力・メーカー固有値・準備中の失効/無効化/期限切れ・ハング）、`DisplaySwitchingServerTests`（5 件: 新規/アップグレード DB で無効・未付与、無効/未許可で表示を開かない、復旧ツールが MCP の一覧に出ず呼べない、出力スキーマと isError、合成秘密が DB/WAL/CSV/応答に残らない）、`DisplayRecoveryUiTests`（App: 復旧文言、「すべて有効」が Off ツールを含まない、トレイの復旧項目の表示追従）、Windows.Tests（定数・オフセット、読み取り専用の実機テスト）。

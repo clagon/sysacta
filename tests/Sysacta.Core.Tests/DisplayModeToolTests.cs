@@ -23,8 +23,10 @@ public class DisplayModeToolTests
             new DisplaySetModeTool(displays, store, recovery),
             new DisplayRestoreModeTool(displays, recovery),
             new DisplaySetBrightnessTool(displays, store),
+            new DisplaySetPowerTool(displays, store),
+            new DisplaySetInputTool(displays, store),
         ]);
-        var (caller, _) = h.Store.AddClient("c1", SetMode, "display_set_brightness");
+        var (caller, _) = h.Store.AddClient("c1", SetMode, "display_set_brightness", "display_set_power", "display_set_input");
         return (h, displays, recovery, caller);
     }
 
@@ -464,5 +466,55 @@ public class DisplayModeToolTests
         release.Release();
         Assert.True((await mode).IsSuccess);
         Assert.True((await sameDisplay).IsSuccess);
+    }
+
+    [Fact]
+    public async Task Power_and_input_of_the_same_display_wait_for_a_running_mode_change()
+    {
+        var (h, displays, _, caller) = Setup();
+        using var entered = new SemaphoreSlim(0);
+        using var release = new SemaphoreSlim(0);
+        displays.OnModeApply = _ =>
+        {
+            entered.Release();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+
+        var mode = Set(h, caller, FakeDisplays.Mode720p60);
+        Assert.True(await entered.WaitAsync(TimeSpan.FromSeconds(5), Ct));
+        var power = h.Executor.ExecuteAsync(caller, "display_set_power", TestJson.Args(new { device = Secondary, state = "off" }), Ct);
+        var input = h.Executor.ExecuteAsync(caller, "display_set_input", TestJson.Args(new { device = Secondary, input_id = Mccs.InputId(Secondary, 0x11) }), Ct);
+        await Task.Delay(100, Ct);
+
+        Assert.False(power.IsCompleted);
+        Assert.False(input.IsCompleted);
+        Assert.Empty(displays.SwitchWrites);
+        release.Release();
+        Assert.True((await mode).IsSuccess);
+        Assert.True((await power).IsSuccess);
+        Assert.True((await input).IsSuccess);
+    }
+
+    [Fact]
+    public async Task A_record_replaced_while_the_restore_waits_for_the_adapter_is_not_applied()
+    {
+        var (h, displays, recovery, caller) = Setup();
+        displays.Add("display-c", "Third");
+        await Set(h, caller, FakeDisplays.Mode720p60);
+        displays.OnOpen = id =>
+        {
+            if (id == Secondary)
+            {
+                displays.OnOpen = null;
+                // Another display's change (different lock key) completes while the restore waits.
+                Assert.True(Set(h, caller, FakeDisplays.Mode720p60, "display-c").GetAwaiter().GetResult().IsSuccess);
+            }
+        };
+
+        var r = await RestoreLocally(h);
+
+        Assert.Equal(ErrorCodes.TargetChanged, r.Error?.Code);
+        Assert.Equal(FakeDisplays.Mode720p60, displays.CurrentMode(Secondary));
+        Assert.Equal("display-c", recovery.Latest?.DisplayId);
     }
 }

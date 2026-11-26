@@ -274,6 +274,28 @@ public class DisplaySwitchToolTests
         Assert.Single(displays.SwitchWrites);
     }
 
+    [Fact]
+    public async Task A_different_value_read_back_once_is_never_reported_as_accepted()
+    {
+        var (h, displays, caller) = Setup();
+        displays.Switches[Device].Apply = (_, _) => null;
+        var reads = 0;
+        // Read 1 is before the write, read 2 is the first read-back; afterwards the monitor stops answering.
+        displays.OnRead = _ =>
+        {
+            if (++reads > 2)
+            {
+                throw new ToolFailureException(ErrorCodes.OsApiError, "fixed");
+            }
+        };
+
+        var r = await SetPower(h, caller, "off");
+
+        Assert.Equal(ErrorCodes.VerificationFailed, r.Error?.Code);
+        Assert.Equal("on", (string)r.Data!["current_state"]!);
+        Assert.Single(displays.SwitchWrites);
+    }
+
     [Theory]
     [InlineData("undefined")]
     [InlineData("unreadable")]

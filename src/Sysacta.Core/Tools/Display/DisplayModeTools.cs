@@ -217,7 +217,7 @@ public sealed class DisplaySetModeTool(IDisplays displays, IDeviceAliases aliase
         return ValueTask.FromResult(new ToolTarget([DisplayTarget.DeviceKey(id)], id));
     }
 
-    protected override Task<ToolOutcome<DisplayModeChangeData>> ExecuteAsync(DisplaySetModeArgs args, ToolExecution execution, CancellationToken cancellationToken)
+    protected override async Task<ToolOutcome<DisplayModeChangeData>> ExecuteAsync(DisplaySetModeArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
         var display = Check(DisplayTarget.Current(displays.GetTopology(), execution.TargetId!));
         using var control = displays.OpenMode(display.Id, cancellationToken);
@@ -243,8 +243,7 @@ public sealed class DisplaySetModeTool(IDisplays displays, IDeviceAliases aliase
         if (requested == current)
         {
             var value = DisplayModeValue.From(display.Id, current);
-            return Task.FromResult(new ToolOutcome<DisplayModeChangeData>(
-                new(display.Id, display.Name, value.ModeId, value, value, false, false, false), Verification.Verified));
+            return new(new(display.Id, display.Name, value.ModeId, value, value, false, false, false), Verification.Verified);
         }
 
         if (requested.Orientation != current.Orientation || requested.FixedOutput != current.FixedOutput)
@@ -252,7 +251,8 @@ public sealed class DisplaySetModeTool(IDisplays displays, IDeviceAliases aliase
             throw new ToolFailureException(ErrorCodes.InvalidArgument, "Changing the rotation or scaling of a display is not supported; choose a mode with the current values.");
         }
 
-        return DisplayModeChange.RunAsync(control, display, current, requested, recovery, null, execution, d => ReportProgress(execution, d), cancellationToken);
+        // Awaited inside the using: the control (and the adapter gate) must outlive the change and its read-back.
+        return await DisplayModeChange.RunAsync(control, display, current, requested, recovery, null, execution, d => ReportProgress(execution, d), cancellationToken).ConfigureAwait(false);
     }
 
     private static DisplayInfo Check(DisplayInfo display)
@@ -311,6 +311,12 @@ public sealed class DisplayRestoreModeTool(IDisplays displays, DisplayModeRecove
         }
 
         using var control = displays.OpenMode(display.Id, cancellationToken);
+        // Checked again under the adapter gate: a change of another display (other lock key) may have replaced the record.
+        if (recovery.Latest != record)
+        {
+            throw new ToolFailureException(ErrorCodes.TargetChanged, "A newer mode change was made while waiting. Nothing was changed; retry.", retryable: true);
+        }
+
         var set = control.ListModes();
         if (set.Current == record.Original)
         {

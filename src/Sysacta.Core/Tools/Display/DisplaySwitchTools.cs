@@ -138,7 +138,7 @@ public static class DisplaySwitching
         /// <summary>Read back at the target value.</summary>
         Verified,
 
-        /// <summary>Read back at another value.</summary>
+        /// <summary>Read back, but never at the target value (the last value read is reported).</summary>
         Mismatch,
 
         /// <summary>The write was accepted, but the monitor could not be read afterwards.</summary>
@@ -159,13 +159,13 @@ public static class DisplaySwitching
         execution.BeginSideEffect();
         write();
 
+        byte? last = null; // a value read back at least once is evidence; only total silence is "accepted"
         for (var attempt = 1; attempt <= ReadBackAttempts; attempt++)
         {
             await Task.Delay(ReadBackDelay, cancellationToken).ConfigureAwait(false);
-            byte after;
             try
             {
-                after = control.Read(setting);
+                last = control.Read(setting);
             }
             catch (ToolFailureException)
             {
@@ -173,15 +173,15 @@ public static class DisplaySwitching
                 continue;
             }
 
-            if (after == value)
+            if (last == value)
             {
-                return (WriteResult.Verified, after);
+                return (WriteResult.Verified, last);
             }
+        }
 
-            if (attempt == ReadBackAttempts)
-            {
-                return (WriteResult.Mismatch, after);
-            }
+        if (last is { } different)
+        {
+            return (WriteResult.Mismatch, different);
         }
 
         return (WriteResult.Accepted, null);
