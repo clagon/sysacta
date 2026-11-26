@@ -210,6 +210,30 @@ public class MediaToolTests
     }
 
     [Fact]
+    public async Task Prepared_session_is_kept_alive_until_native_operation_finishes()
+    {
+        var native = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _media.NativeResult = native.Task;
+        _media.TrackPreparedLifetime = true;
+        using var cancel = new CancellationTokenSource();
+        var call = _h.Executor.ExecuteAsync(_caller, "media_next_track", TestJson.Args(new { }), cancel.Token);
+        await _media.Started.Task.WaitAsync(Ct);
+        cancel.Cancel();
+        Assert.Equal(ToolStatus.Unknown, (await call).Status);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.True(_media.PreparedLifetime!.IsAlive);
+        native.SetResult(true);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_h.Executor.InFlight > 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline);
+            await Task.Delay(10, Ct);
+        }
+    }
+
+    [Fact]
     public async Task Accepted_request_survives_readback_cancellation_without_releasing_the_lock()
     {
         _media.ReadGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -277,6 +301,8 @@ public class MediaToolTests
         public Action<int>? OnRead;
         public Action? OnPrepare;
         public Action? OnStart;
+        public bool TrackPreparedLifetime;
+        public WeakReference? PreparedLifetime;
         public Task<bool>? NativeResult;
         public TaskCompletionSource<bool>? ReadGate;
         public TaskCompletionSource<bool> ReadbackStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -305,15 +331,18 @@ public class MediaToolTests
             {
                 throw new ToolFailureException(ErrorCodes.TargetChanged, "Current session changed.");
             }
+            var lifetime = TrackPreparedLifetime ? new object() : null;
+            if (lifetime is not null) PreparedLifetime = new WeakReference(lifetime);
             return () =>
             {
-            Interlocked.Increment(ref Starts);
-            Started.TrySetResult(true);
-            OnStart?.Invoke();
-            StartedId = sessionId;
-            Ticks = positionTicks;
-            if (operation == MediaOperation.Play && Accepted) State = State with { PlaybackStatus = MediaPlaybackStatus.Playing };
-            return NativeResult ?? Task.FromResult(Accepted);
+                GC.KeepAlive(lifetime);
+                Interlocked.Increment(ref Starts);
+                Started.TrySetResult(true);
+                OnStart?.Invoke();
+                StartedId = sessionId;
+                Ticks = positionTicks;
+                if (operation == MediaOperation.Play && Accepted) State = State with { PlaybackStatus = MediaPlaybackStatus.Playing };
+                return NativeResult ?? Task.FromResult(Accepted);
             };
         }
     }

@@ -101,43 +101,51 @@ public abstract class MediaChangeTool<TArgs>(IMediaSessions sessions) : SysactaT
         var start = sessions.Prepare(id, current, Operation, ticks);
         cancellationToken.ThrowIfCancellationRequested();
         execution.BeginSideEffect();
-        bool accepted;
         try
         {
-            accepted = await start().ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            return ToolOutcome.Unknown(progress, ErrorCodes.OsApiError, "The media operation could not be confirmed.");
-        }
+            bool accepted;
+            try
+            {
+                accepted = await start().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return ToolOutcome.Unknown(progress, ErrorCodes.OsApiError, "The media operation could not be confirmed.");
+            }
 
-        if (!accepted)
-        {
-            return ToolOutcome.Unknown(progress with { Accepted = false }, ErrorCodes.OsApiError, "The media operation could not be confirmed.");
-        }
+            if (!accepted)
+            {
+                return ToolOutcome.Unknown(progress with { Accepted = false }, ErrorCodes.OsApiError, "The media operation could not be confirmed.");
+            }
 
-        // Preserve evidence of acceptance even if the executor times out during the readback.
-        progress = progress with { Accepted = true };
-        ReportAccepted(execution, progress);
+            // Preserve evidence of acceptance even if the executor times out during the readback.
+            progress = progress with { Accepted = true };
+            ReportAccepted(execution, progress);
 
-        // Once accepted, readback failure does not erase evidence that the request was accepted.
-        MediaState? after = null;
-        try
-        {
-            after = await sessions.ReadAsync(id, requireCurrent: false, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            // Reading is best effort and never changes the target.
-        }
+            // Once accepted, readback failure does not erase evidence that the request was accepted.
+            MediaState? after = null;
+            try
+            {
+                after = await sessions.ReadAsync(id, requireCurrent: false, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Reading is best effort and never changes the target.
+            }
 
-        var verified = after is not null && ((desired != MediaPlaybackStatus.Unknown && after.PlaybackStatus == desired)
-            || (Operation == MediaOperation.Seek && IsStationary(ready) && IsStationary(after)
-                && ready.LastUpdatedTime is not null && after.LastUpdatedTime > ready.LastUpdatedTime
-                && after.PositionTicks == ticks && ready.MetadataFingerprint is not null
-                && ready.MetadataFingerprint == after.MetadataFingerprint));
-        var data = progress with { AfterStatus = after?.PlaybackStatus, AfterPositionMs = after?.PositionMs, Accepted = true, Changed = verified ? true : null };
-        return new(data, verified ? Verification.Verified : Verification.Accepted);
+            var verified = after is not null && ((desired != MediaPlaybackStatus.Unknown && after.PlaybackStatus == desired)
+                || (Operation == MediaOperation.Seek && IsStationary(ready) && IsStationary(after)
+                    && ready.LastUpdatedTime is not null && after.LastUpdatedTime > ready.LastUpdatedTime
+                    && after.PositionTicks == ticks && ready.MetadataFingerprint is not null
+                    && ready.MetadataFingerprint == after.MetadataFingerprint));
+            var data = progress with { AfterStatus = after?.PlaybackStatus, AfterPositionMs = after?.PositionMs, Accepted = true, Changed = verified ? true : null };
+            return new(data, verified ? Verification.Verified : Verification.Accepted);
+        }
+        finally
+        {
+            // The prepared delegate owns the native session reference while the write and readback are in flight.
+            GC.KeepAlive(start);
+        }
     }
 
     private static bool IsStationary(MediaState state) => state.PlaybackStatus is MediaPlaybackStatus.Paused or MediaPlaybackStatus.Stopped;
