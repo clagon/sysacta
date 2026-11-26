@@ -6,11 +6,11 @@ using static Sysacta.Windows.Display.NativeMethods;
 namespace Sysacta.Windows.Display;
 
 /// <summary>
-/// Display adapter: DisplayConfig for the topology, EnumDisplaySettingsEx for modes, DDC/CI for external monitors and
-/// WMI for internal panels.
+/// Display adapter: DisplayConfig for the topology, EnumDisplaySettingsEx / ChangeDisplaySettingsEx for modes, DDC/CI for
+/// external monitors and WMI for internal panels.
 /// <list type="bullet">
 /// <item>Threading: called on thread-pool threads by the executor and the device page; never on the WPF UI thread.</item>
-/// <item>Exclusion: one process-wide gate covers every value access from open to dispose. A native call that hangs keeps
+/// <item>Exclusion: one process-wide gate covers every value access and mode change from open to dispose. A native call that hangs keeps
 /// the gate; later callers wait only until their own cancellation.</item>
 /// <item>Lifetime: physical monitor handles and WMI objects are created per call and disposed.</item>
 /// </list>
@@ -29,47 +29,16 @@ public sealed class WindowsDisplays : IDisplays
         return new DisplayTopology([.. paths.Paths.Select(p => p.Info)], paths.UnidentifiedCount);
     }
 
-    public DisplayModeSet ListModes(string displayId)
-    {
-        var path = Find(displayId);
-        if (path.GdiDeviceName.Length == 0)
+    public DisplayModeSet ListModes(string displayId) => Modes(Find(displayId).GdiDeviceName);
+
+    public IDisplayControl Open(string displayId, DisplayFeature feature, CancellationToken cancellationToken) =>
+        Acquire<IDisplayControl>(displayId, (path, release) =>
         {
-            throw new ToolFailureException(ErrorCodes.OsApiError, "The display source cannot be identified.");
-        }
-
-        var modes = new HashSet<DisplayMode>();
-        for (uint i = 0; i < MaxModeIndex; i++)
-        {
-            if (Mode(path.GdiDeviceName, i) is not { } mode)
-            {
-                break;
-            }
-
-            modes.Add(mode);
-        }
-
-        if (modes.Count == 0)
-        {
-            throw new ToolFailureException(ErrorCodes.OsApiError, "Windows returned no display modes.");
-        }
-
-        return new DisplayModeSet([.. modes], Mode(path.GdiDeviceName, EnumCurrentSettings));
-    }
-
-    public IDisplayControl Open(string displayId, DisplayFeature feature, CancellationToken cancellationToken)
-    {
-        _gate.Wait(cancellationToken);
-        var release = new Release(_gate);
-        try
-        {
-            // Resolved again under the gate: the topology may have changed while waiting.
-            var path = Find(displayId);
             if (DisplayCatalog.Blocked(path.Info, feature) is { } blocked)
             {
                 throw blocked;
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
             if (path.Info.Kind == DisplayKind.Internal)
             {
                 var instanceId = WmiPanelControl.InstanceId(path.DevicePath)
@@ -77,23 +46,42 @@ public sealed class WindowsDisplays : IDisplays
                 return new WmiPanelControl(instanceId, release);
             }
 
-            var control = DdcCiControl.Open(path.GdiDeviceName, feature, release);
-            try
-            {
-                // The monitor handle was found by source name; make sure that name still belongs to the same target.
-                var again = Find(displayId);
-                if (again.GdiDeviceName != path.GdiDeviceName || again.Info.IsCloned)
-                {
-                    throw new ToolFailureException(ErrorCodes.TargetChanged, "The display configuration changed. Nothing was changed; retry.", retryable: true);
-                }
+            return Checked(DdcCiControl.Open(path.GdiDeviceName, feature, release), displayId, path.GdiDeviceName);
+        }, cancellationToken);
 
-                return control;
-            }
-            catch
+    public IDisplayModeControl OpenMode(string displayId, CancellationToken cancellationToken) =>
+        Acquire<IDisplayModeControl>(displayId, (path, release) =>
+        {
+            if (DisplayCatalog.BlockedForMode(path.Info) is { } blocked)
             {
-                control.Dispose();
-                throw;
+                throw blocked;
             }
+
+            return path.GdiDeviceName.Length == 0
+                ? throw new ToolFailureException(ErrorCodes.OsApiError, "The display source cannot be identified.")
+                : new DisplayModeControl(displayId, path.GdiDeviceName, release);
+        }, cancellationToken);
+
+    public IDisplaySwitchControl OpenSwitch(string displayId, CancellationToken cancellationToken) =>
+        Acquire<IDisplaySwitchControl>(displayId, (path, release) =>
+            DisplayCatalog.BlockedForSwitch(path.Info) is { } blocked
+                ? throw blocked
+                : Checked(new DdcCiSwitchControl(DdcCiControl.OpenPhysical(path.GdiDeviceName), release), displayId, path.GdiDeviceName),
+            cancellationToken);
+
+    /// <summary>
+    /// Waits for the gate, re-resolves the display under it (the topology may have changed while waiting) and opens it.
+    /// The gate is released with the returned control, or here when opening fails.
+    /// </summary>
+    private T Acquire<T>(string displayId, Func<DisplayPath, IDisposable, T> open, CancellationToken cancellationToken)
+    {
+        _gate.Wait(cancellationToken);
+        var release = new Release(_gate);
+        try
+        {
+            var path = Find(displayId);
+            cancellationToken.ThrowIfCancellationRequested();
+            return open(path, release);
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or MarshalDirectiveException)
         {
@@ -107,7 +95,77 @@ public sealed class WindowsDisplays : IDisplays
         }
     }
 
-    private static DisplayPath Find(string displayId)
+    /// <summary>A physical monitor handle was found by source name; make sure that name still belongs to the same target.</summary>
+    private static T Checked<T>(T control, string displayId, string gdiDeviceName)
+        where T : IDisposable
+    {
+        try
+        {
+            EnsureSameSource(displayId, gdiDeviceName);
+            return control;
+        }
+        catch
+        {
+            control.Dispose();
+            throw;
+        }
+    }
+
+    internal static void EnsureSameSource(string displayId, string gdiDeviceName)
+    {
+        var again = Find(displayId);
+        if (again.GdiDeviceName != gdiDeviceName || again.Info.IsCloned)
+        {
+            throw new ToolFailureException(ErrorCodes.TargetChanged, "The display configuration changed. Nothing was changed; retry.", retryable: true);
+        }
+    }
+
+    internal static DisplayModeSet Modes(string gdiDeviceName)
+    {
+        if (gdiDeviceName.Length == 0)
+        {
+            throw new ToolFailureException(ErrorCodes.OsApiError, "The display source cannot be identified.");
+        }
+
+        var modes = new HashSet<DisplayMode>();
+        for (uint i = 0; i < MaxModeIndex; i++)
+        {
+            if (Raw(gdiDeviceName, i) is not { } raw)
+            {
+                break;
+            }
+
+            modes.Add(ToMode(raw));
+        }
+
+        if (modes.Count == 0)
+        {
+            throw new ToolFailureException(ErrorCodes.OsApiError, "Windows returned no display modes.");
+        }
+
+        return new DisplayModeSet([.. modes], Raw(gdiDeviceName, EnumCurrentSettings) is { } current ? ToMode(current) : null);
+    }
+
+    /// <summary>The first DEVMODE Windows enumerates now for this mode, or null.</summary>
+    internal static DevMode? Find(string gdiDeviceName, DisplayMode mode)
+    {
+        for (uint i = 0; i < MaxModeIndex; i++)
+        {
+            if (Raw(gdiDeviceName, i) is not { } raw)
+            {
+                return null;
+            }
+
+            if (ToMode(raw) == mode)
+            {
+                return raw;
+            }
+        }
+
+        return null;
+    }
+
+    internal static DisplayPath Find(string displayId)
     {
         var matches = DisplayTopologyReader.Read().Paths.Where(p => p.Info.Id == displayId).ToArray();
         return matches.Length switch
@@ -118,15 +176,15 @@ public sealed class WindowsDisplays : IDisplays
         };
     }
 
-    private static DisplayMode? Mode(string gdiDeviceName, uint index)
+    private static DevMode? Raw(string gdiDeviceName, uint index)
     {
         var devMode = new DevMode { Size = (ushort)Marshal.SizeOf<DevMode>() };
-        return EnumDisplaySettingsEx(gdiDeviceName, index, ref devMode, 0)
-            ? new DisplayMode(
-                (int)devMode.PelsWidth, (int)devMode.PelsHeight, (int)devMode.DisplayFrequency, (int)devMode.BitsPerPel,
-                (devMode.DisplayFlags & DmInterlaced) != 0, (int)(devMode.DisplayOrientation * 90), (int)devMode.DisplayFixedOutput)
-            : null;
+        return EnumDisplaySettingsEx(gdiDeviceName, index, ref devMode, 0) ? devMode : null;
     }
+
+    private static DisplayMode ToMode(DevMode devMode) => new(
+        (int)devMode.PelsWidth, (int)devMode.PelsHeight, (int)devMode.DisplayFrequency, (int)devMode.BitsPerPel,
+        (devMode.DisplayFlags & DmInterlaced) != 0, (int)(devMode.DisplayOrientation * 90), (int)devMode.DisplayFixedOutput);
 
     /// <summary>Releases the gate once.</summary>
     private sealed class Release(SemaphoreSlim gate) : IDisposable

@@ -68,7 +68,7 @@ public sealed partial class LogsViewModel(SysactaRuntime runtime) : PageViewMode
         if (ToolOptions.Count == 0)
         {
             ToolOptions.Add("すべてのツール");
-            foreach (var name in runtime.Registry.All.Select(t => t.Name).Order(StringComparer.Ordinal))
+            foreach (var name in runtime.Registry.AllNames.Order(StringComparer.Ordinal))
             {
                 ToolOptions.Add(name);
             }

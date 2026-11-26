@@ -4,6 +4,8 @@ using System.Windows.Media.Imaging;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
 using Sysacta.App.Views;
+using Sysacta.Core.Tools;
+using Sysacta.Core.Tools.Display;
 using Sysacta.Mcp;
 using Wpf.Ui.Controls;
 using MenuItem = Wpf.Ui.Controls.MenuItem;
@@ -20,13 +22,24 @@ internal sealed class TrayIcon : IDisposable
     private readonly TaskbarIcon _icon;
     private readonly MenuItem _status;
     private readonly MenuItem _toggleServer;
+    private readonly MenuItem _restoreMode;
+    private readonly DisplayModeRecovery? _recovery;
 
     public TrayIcon(SysactaRuntime runtime, Action<Type?> show, Action exit)
-        : this(runtime.Host, () => runtime.LocalEndpointUrl, runtime.StartServerAsync, runtime.StopServerAsync, show, exit)
+        : this(runtime.Host, () => runtime.LocalEndpointUrl, runtime.StartServerAsync, runtime.StopServerAsync, show, exit,
+            runtime.DisplayModeRecovery, runtime.RestoreDisplayModeAsync)
     {
     }
 
-    internal TrayIcon(McpServerHost host, Func<string> endpointUrl, Func<Task<string?>> startServer, Func<Task> stopServer, Action<Type?> show, Action exit)
+    internal TrayIcon(
+        McpServerHost host,
+        Func<string> endpointUrl,
+        Func<Task<string?>> startServer,
+        Func<Task> stopServer,
+        Action<Type?> show,
+        Action exit,
+        DisplayModeRecovery? recovery = null,
+        Func<Task<ToolResult>>? restoreMode = null)
     {
         _host = host;
         _endpointUrl = endpointUrl;
@@ -35,6 +48,11 @@ internal sealed class TrayIcon : IDisposable
         _status = new MenuItem { IsEnabled = false };
         _toggleServer = new MenuItem();
         _toggleServer.Click += async (_, _) => await ToggleServerAsync();
+
+        // Reachable from the primary display's notification area, which a mode change never targets.
+        _recovery = recovery;
+        _restoreMode = new MenuItem { Header = DisplayModeRestoreText.MenuHeader, Icon = new SymbolIcon(SymbolRegular.ArrowUndo24), Visibility = Visibility.Collapsed };
+        _restoreMode.Click += async (_, _) => await RestoreModeAsync(restoreMode);
 
         var copy = new MenuItem { Header = "接続URLをコピー", Icon = new SymbolIcon(SymbolRegular.Copy24) };
         copy.Click += (_, _) => ClipboardHelper.TrySetText(_endpointUrl());
@@ -48,15 +66,23 @@ internal sealed class TrayIcon : IDisposable
         _icon = new TaskbarIcon
         {
             IconSource = new BitmapImage(new Uri("pack://application:,,,/Sysacta;component/Assets/sysacta.ico")),
-            ContextMenu = new ContextMenu { Items = { open, new Separator(), _status, _toggleServer, copy, logs, new Separator(), quit } },
+            ContextMenu = new ContextMenu { Items = { open, _restoreMode, new Separator(), _status, _toggleServer, copy, logs, new Separator(), quit } },
             NoLeftClickDelay = true,
         };
         _icon.TrayLeftMouseUp += (_, _) => show(null);
         _icon.ForceCreate(enablesEfficiencyMode: false);
 
         _host.StateChanged += OnStateChanged;
+        if (_recovery is not null)
+        {
+            _recovery.Changed += OnRecoveryChanged;
+        }
+
         UpdateState();
+        UpdateRecovery();
     }
+
+    internal bool CanRestoreMode => _restoreMode.Visibility == Visibility.Visible;
 
     /// <summary>For tests: the native notification icon exists.</summary>
     internal bool IsCreated => _icon.IsCreated;
@@ -69,10 +95,43 @@ internal sealed class TrayIcon : IDisposable
     public void Dispose()
     {
         _host.StateChanged -= OnStateChanged;
+        if (_recovery is not null)
+        {
+            _recovery.Changed -= OnRecoveryChanged;
+        }
+
         _icon.Dispose();
     }
 
     private void OnStateChanged(object? sender, EventArgs e) => _icon.Dispatcher.BeginInvoke(UpdateState);
+
+    private void OnRecoveryChanged(object? sender, EventArgs e) => _icon.Dispatcher.BeginInvoke(UpdateRecovery);
+
+    private void UpdateRecovery()
+    {
+        var pending = _recovery is null ? null : DisplayModeRestoreText.Pending(_recovery);
+        _restoreMode.Visibility = pending is null ? Visibility.Collapsed : Visibility.Visible;
+        _restoreMode.ToolTip = pending;
+    }
+
+    private async Task RestoreModeAsync(Func<Task<ToolResult>>? restore)
+    {
+        if (restore is null)
+        {
+            return;
+        }
+
+        _restoreMode.IsEnabled = false;
+        try
+        {
+            var (ok, title, message) = DisplayModeRestoreText.Describe(await restore());
+            _icon.ShowNotification(title, message.Length == 0 ? " " : message, ok ? NotificationIcon.Info : NotificationIcon.Warning);
+        }
+        finally
+        {
+            _restoreMode.IsEnabled = true;
+        }
+    }
 
     private void UpdateState()
     {

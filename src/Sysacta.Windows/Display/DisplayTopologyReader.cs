@@ -7,7 +7,10 @@ using static Sysacta.Windows.Display.NativeMethods;
 namespace Sysacta.Windows.Display;
 
 /// <summary>An active target with the OS names needed to reach it. The names never leave the adapter.</summary>
-internal sealed record DisplayPath(DisplayInfo Info, string GdiDeviceName, string DevicePath);
+internal sealed record DisplayPath(DisplayInfo Info, string GdiDeviceName, string DevicePath, int X = 0, int Y = 0, int Orientation = 0)
+{
+    public DisplayLayout Layout => new(Info.Id, Info.IsPrimary, Info.IsCloned, Info.CurrentMode, X, Y, Orientation);
+}
 
 internal sealed record DisplayPaths(IReadOnlyList<DisplayPath> Paths, int UnidentifiedCount);
 
@@ -54,7 +57,9 @@ internal static class DisplayTopologyReader
                 cloned,
                 mode,
                 gdiName.Length == 0 || mode is null ? ErrorCodes.OsApiError : null);
-            result.Add(new DisplayPath(info, gdiName, target.MonitorDevicePath));
+            // DISPLAYCONFIG_ROTATION: 1 identity, 2 90, 3 180, 4 270 degrees.
+            var orientation = path.Target.Rotation is >= 1 and <= 4 ? (int)(path.Target.Rotation - 1) * 90 : -1;
+            result.Add(new DisplayPath(info, gdiName, target.MonitorDevicePath, sourceMode?.SourceX ?? 0, sourceMode?.SourceY ?? 0, orientation));
         }
 
         return new DisplayPaths(result, unidentified);

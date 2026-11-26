@@ -59,6 +59,28 @@ public static class DisplayCatalog
         _ => null,
     };
 
+    /// <summary>
+    /// The failure when the topology rules out a mode change: a mirrored source cannot be attributed to one monitor, and
+    /// only internal and external monitors are changed (virtual, wireless and indirect displays are not).
+    /// </summary>
+    public static ToolFailureException? BlockedForMode(DisplayInfo display) => display switch
+    {
+        { IsCloned: true } => new(ErrorCodes.AmbiguousTarget, "The display is mirrored; its mode cannot be changed for one monitor."),
+        { Kind: DisplayKind.Internal or DisplayKind.External } => null,
+        _ => new(ErrorCodes.NotSupported, "Mode changes are supported for internal and external monitors only."),
+    };
+
+    /// <summary>
+    /// The failure when the topology rules out the DDC/CI power and input settings: only external monitors, and only when
+    /// the physical monitor can be identified (not mirrored).
+    /// </summary>
+    public static ToolFailureException? BlockedForSwitch(DisplayInfo display) => display switch
+    {
+        { Kind: not DisplayKind.External } => new(ErrorCodes.NotSupported, "Power and input control over DDC/CI is available for external monitors only."),
+        { IsCloned: true } => new(ErrorCodes.AmbiguousTarget, "The display is mirrored, so its physical monitor cannot be identified reliably."),
+        _ => null,
+    };
+
     public static DisplaySupport SupportFor(string errorCode) =>
         errorCode == ErrorCodes.NotSupported ? DisplaySupport.NotSupported : DisplaySupport.Unavailable;
 

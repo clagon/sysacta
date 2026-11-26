@@ -97,6 +97,32 @@ public class TrayIconTests
         }
     }
 
+    // In this class so that it never runs in parallel with the other tray test: two notification icons at once make
+    // H.NotifyIcon fail on the UI thread.
+    [Fact]
+    public async Task The_tray_menu_offers_the_display_mode_restore_only_while_there_is_one()
+    {
+        var host = TestHost.Create();
+        var recovery = new Sysacta.Core.Tools.Display.DisplayModeRecovery();
+        var restored = 0;
+        var tray = UiThread.Run(() => new TrayIcon(host, () => "http://127.0.0.1:1/mcp", () => Task.FromResult<string?>(null), () => Task.CompletedTask, _ => { }, () => { },
+            recovery, () => { Interlocked.Increment(ref restored); return Task.FromResult(Sysacta.Core.Tools.ToolResult.Fail(Sysacta.Core.Tools.ErrorCodes.TargetNotFound, "x")); }));
+        try
+        {
+            Assert.False(UiThread.Run(() => tray.CanRestoreMode));
+            recovery.Replace(DisplayRecoveryUiTests.Record);
+            Assert.True(SpinWait.SpinUntil(() => UiThread.Run(() => tray.CanRestoreMode), TimeSpan.FromSeconds(5)));
+            recovery.Withdraw(DisplayRecoveryUiTests.Record, null);
+            Assert.True(SpinWait.SpinUntil(() => !UiThread.Run(() => tray.CanRestoreMode), TimeSpan.FromSeconds(5)));
+            Assert.Equal(0, restored);
+        }
+        finally
+        {
+            UiThread.Run(tray.Dispose);
+            await host.DisposeAsync();
+        }
+    }
+
     private static async Task WaitForStatus(TrayIcon tray, Func<string, bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);

@@ -39,7 +39,11 @@ internal sealed class DdcCiControl : IDisplayControl
     /// Opens the single physical monitor of the desktop source. More than one is ambiguous (there is no reliable
     /// mapping from a physical handle to a target), so nothing is chosen by list order.
     /// </summary>
-    public static DdcCiControl Open(string gdiDeviceName, DisplayFeature feature, IDisposable release)
+    public static DdcCiControl Open(string gdiDeviceName, DisplayFeature feature, IDisposable release) =>
+        new(OpenPhysical(gdiDeviceName), feature, release);
+
+    /// <summary>The handle of the single physical monitor of the desktop source. The caller destroys it.</summary>
+    internal static IntPtr OpenPhysical(string gdiDeviceName)
     {
         var monitor = FindMonitor(gdiDeviceName);
         if (!GetNumberOfPhysicalMonitorsFromHMONITOR(monitor, out var count))
@@ -60,7 +64,7 @@ internal sealed class DdcCiControl : IDisplayControl
             throw Failure(Marshal.GetLastPInvokeError());
         }
 
-        return new DdcCiControl(physical[0].Handle, feature, release);
+        return physical[0].Handle;
     }
 
     public LevelRange Read()

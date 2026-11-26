@@ -11,6 +11,7 @@
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" MinHeight="200" />
     </Grid.RowDefinitions>
 
@@ -21,12 +22,27 @@
 
     <ui:InfoBar Grid.Row="1" Margin="0,0,0,12" IsOpen="{Binding HasMessage, Mode=TwoWay}" Severity="{Binding MessageSeverity}" Title="{Binding MessageTitle}" Message="{Binding Message}" />
 
-    <Grid Grid.Row="2" Margin="0,0,0,8">
+    <!-- Local recovery of the latest display mode change (also in the tray menu). -->
+    <Border Grid.Row="2" Margin="0,0,0,12" Style="{StaticResource Surface}" Visibility="{Binding HasRecovery, Converter={StaticResource BoolToVisibility}}">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold" Text="直前の表示モード変更" />
+          <TextBlock Style="{StaticResource Caption}" Text="{Binding RecoveryText}" TextWrapping="Wrap" />
+        </StackPanel>
+        <ui:Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Command="{Binding RestoreModeCommand}" Content="元に戻す" Icon="{ui:SymbolIcon ArrowUndo24}" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="3" Margin="0,0,0,8">
       <ComboBox HorizontalAlignment="Left" MinWidth="180" ItemsSource="{Binding Categories}" DisplayMemberPath="Label" SelectedItem="{Binding Category}" AutomationProperties.Name="デバイスの種類" />
       <ui:Button HorizontalAlignment="Right" Command="{Binding ReloadCommand}" Content="再読み込み" Icon="{ui:SymbolIcon ArrowSync24}" />
     </Grid>
 
-    <Grid Grid.Row="3">
+    <Grid Grid.Row="4">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="2*" MinWidth="220" />
         <ColumnDefinition Width="16" />
