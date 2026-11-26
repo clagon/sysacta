@@ -67,6 +67,18 @@ public sealed class DisplayModeRecovery
         return previous;
     }
 
+    /// <summary>Replaces <paramref name="record"/> with <paramref name="reconciled"/> if it is still the latest.</summary>
+    internal bool Reconcile(DisplayModeRecord record, DisplayModeRecord reconciled)
+    {
+        if (Interlocked.CompareExchange(ref _latest, reconciled, record) != record)
+        {
+            return false;
+        }
+
+        Changed?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
     /// <summary>Puts <paramref name="previous"/> back if <paramref name="record"/> is still the latest.</summary>
     internal void Withdraw(DisplayModeRecord record, DisplayModeRecord? previous)
     {
@@ -103,6 +115,8 @@ internal static class DisplayModeChange
 
         control.Test(to);
         var apply = control.PrepareApply(to);
+        // The preparation is slow: check the target, the primary rule and the current mode again right before the start.
+        EnsureUnchanged(control, id, from, refusePrimary: restoring is null);
 
         var record = restoring ?? new DisplayModeRecord(id, display.Name, from, to);
         var data = new DisplayModeChangeData(id, display.Name, DisplayListModesTool.ModeId(id, to), DisplayModeValue.From(id, from), null, null, true, null);
@@ -152,6 +166,12 @@ internal static class DisplayModeChange
             return ToolOutcome.Unknown(data, ErrorCodes.OsApiError, "The mode change was started but the resulting mode could not be read.");
         }
 
+        // ListModes verified that the source still shows this display; the layout must also still hold it exactly once.
+        if (layout.Count(l => l.Id == id) != 1)
+        {
+            return ToolOutcome.Unknown(data, ErrorCodes.TargetChanged, "The mode change was started but the display could no longer be identified.");
+        }
+
         var othersChanged = !Others(before, id).SequenceEqual(Others(layout, id));
         if (after == from && restoring is null)
         {
@@ -160,6 +180,12 @@ internal static class DisplayModeChange
         else if (after == to && restoring is not null)
         {
             recovery.Withdraw(record, null);
+        }
+        else if (after != from && after != to && recovery.Reconcile(record, record with { Applied = after }))
+        {
+            // Read back from the same target: the way back starts from the mode it actually shows, so a restore still
+            // passes its "unchanged since Sysacta's change" check. Any later change still makes the record stale.
+            record = record with { Applied = after };
         }
 
         data = data with
@@ -189,6 +215,16 @@ internal static class DisplayModeChange
         }
 
         return ToolOutcome.Error(data, ErrorCodes.VerificationFailed, "The display ended up in a mode other than the requested one.");
+    }
+
+    private static void EnsureUnchanged(IDisplayModeControl control, string id, DisplayMode from, bool refusePrimary)
+    {
+        if (control.Layout().Where(l => l.Id == id).ToArray() is not [{ IsCloned: false } self]
+            || (refusePrimary && self.IsPrimary)
+            || control.ListModes().Current != from)
+        {
+            throw new ToolFailureException(ErrorCodes.TargetChanged, "The display configuration or mode changed while preparing. Nothing was changed; retry.", retryable: true);
+        }
     }
 
     /// <summary>

@@ -517,4 +517,150 @@ public class DisplayModeToolTests
         Assert.Equal(FakeDisplays.Mode720p60, displays.CurrentMode(Secondary));
         Assert.Equal("display-c", recovery.Latest?.DisplayId);
     }
+
+    [Fact]
+    public async Task An_unexpected_resulting_mode_can_be_restored_right_away()
+    {
+        var (h, displays, recovery, caller) = Setup();
+        displays.ApplyMode = (_, m) => m == FakeDisplays.Mode720p60 ? FakeDisplays.Mode1080p144 : m;
+
+        var set = await Set(h, caller, FakeDisplays.Mode720p60);
+
+        Assert.Equal(ErrorCodes.VerificationFailed, set.Error?.Code);
+        Assert.True((bool)set.Data!["recovery_available"]!);
+        Assert.Equal(FakeDisplays.Mode1080p144, recovery.Latest?.Applied);
+        var restored = await RestoreLocally(h);
+        Assert.True(restored.IsSuccess, restored.Error?.Code);
+        Assert.Equal(FakeDisplays.Mode1080p60, displays.CurrentMode(Secondary));
+        Assert.Null(recovery.Latest);
+    }
+
+    [Fact]
+    public async Task An_unexpected_resulting_mode_changed_again_outside_sysacta_is_not_restored()
+    {
+        var (h, displays, recovery, caller) = Setup();
+        displays.ApplyMode = (_, m) => m == FakeDisplays.Mode720p60 ? FakeDisplays.Mode1080p144 : m;
+        await Set(h, caller, FakeDisplays.Mode720p60);
+        displays.Modes[Secondary] = displays.Modes[Secondary] with { Current = FakeDisplays.Mode720p60 };
+
+        var r = await RestoreLocally(h);
+
+        Assert.Equal(ErrorCodes.TargetChanged, r.Error?.Code);
+        Assert.Single(displays.ModeWrites);
+        Assert.Null(recovery.Latest);
+    }
+
+    [Fact]
+    public async Task A_restore_ending_in_another_mode_stays_restorable_from_that_mode()
+    {
+        var (h, displays, recovery, caller) = Setup();
+        await Set(h, caller, FakeDisplays.Mode720p60);
+        displays.ApplyMode = (_, m) => m == FakeDisplays.Mode1080p60 ? FakeDisplays.Mode1080p144 : m;
+
+        var first = await RestoreLocally(h);
+
+        Assert.Equal(ErrorCodes.VerificationFailed, first.Error?.Code);
+        Assert.True((bool)first.Data!["recovery_available"]!);
+        Assert.Equal(new DisplayModeRecord(Secondary, "DELL P2314H", FakeDisplays.Mode1080p60, FakeDisplays.Mode1080p144), recovery.Latest);
+        displays.ApplyMode = (_, m) => m;
+        Assert.True((await RestoreLocally(h)).IsSuccess);
+        Assert.Equal(FakeDisplays.Mode1080p60, displays.CurrentMode(Secondary));
+    }
+
+    [Theory]
+    [InlineData("test", "primary")]
+    [InlineData("prepare", "primary")]
+    [InlineData("test", "cloned")]
+    [InlineData("prepare", "source")]
+    [InlineData("prepare", "mode")]
+    [InlineData("test", "gone")]
+    public async Task A_change_during_the_preparation_writes_nothing(string when, string change)
+    {
+        var (h, displays, recovery, caller) = Setup();
+        void Change(string _)
+        {
+            switch (change)
+            {
+                case "primary":
+                    displays.Replace("display-a", d => d with { IsPrimary = false });
+                    displays.Replace(Secondary, d => d with { IsPrimary = true });
+                    break;
+                case "cloned": displays.Replace(Secondary, d => d with { IsCloned = true }); break;
+                case "source": displays.ReassignedSources.Add(Secondary); break;
+                case "mode": displays.Modes[Secondary] = displays.Modes[Secondary] with { Current = FakeDisplays.Mode1080p144 }; break;
+                case "gone": displays.Displays.RemoveAll(d => d.Id == Secondary); break;
+            }
+        }
+
+        if (when == "test")
+        {
+            displays.OnModeTest = Change;
+        }
+        else
+        {
+            displays.OnPrepare = Change;
+        }
+
+        var r = await Set(h, caller, FakeDisplays.Mode720p60);
+
+        Assert.Equal(ToolStatus.Error, r.Status);
+        Assert.Equal(ErrorCodes.TargetChanged, r.Error?.Code);
+        Assert.Empty(displays.ModeWrites);
+        Assert.Null(recovery.Latest);
+        Assert.Equal(AuditOutcome.Error, h.Audit.Final(r.RequestId).Outcome);
+    }
+
+    [Fact]
+    public async Task A_restore_still_runs_when_the_display_became_primary_but_not_over_a_newer_mode()
+    {
+        var (h, displays, recovery, caller) = Setup();
+        await Set(h, caller, FakeDisplays.Mode720p60);
+        displays.OnPrepare = _ =>
+        {
+            displays.Replace("display-a", d => d with { IsPrimary = false });
+            displays.Replace(Secondary, d => d with { IsPrimary = true });
+        };
+
+        var restored = await RestoreLocally(h);
+        // Applied, and the primary moving to it is reported as a change of the layout (partial), not hidden.
+        Assert.Equal(ToolStatus.Partial, restored.Status);
+        Assert.Equal(FakeDisplays.Mode1080p60, displays.CurrentMode(Secondary));
+        displays.OnPrepare = null;
+
+        Assert.True((await Set(h, caller, FakeDisplays.Mode720p60, "display-a")).IsSuccess);
+        var record = recovery.Latest!;
+        displays.OnPrepare = id => displays.Modes[id] = displays.Modes[id] with { Current = FakeDisplays.Mode1080p144 };
+        var r = await RestoreLocally(h);
+        Assert.Equal(ErrorCodes.TargetChanged, r.Error?.Code);
+        Assert.Equal(FakeDisplays.Mode1080p144, displays.CurrentMode("display-a"));
+        Assert.Same(record, recovery.Latest);
+    }
+
+    [Fact]
+    public async Task A_source_reassigned_before_the_read_back_is_unknown_and_keeps_the_record_unchanged()
+    {
+        var (h, displays, recovery, caller) = Setup();
+        displays.OnModeApply = id => displays.ReassignedSources.Add(id);
+
+        var r = await Set(h, caller, FakeDisplays.Mode720p60);
+
+        Assert.Equal(ToolStatus.Unknown, r.Status);
+        Assert.Equal(ErrorCodes.TargetChanged, r.Error?.Code);
+        Assert.NotEqual(Verification.Verified, r.Verification);
+        Assert.Equal(new DisplayModeRecord(Secondary, "DELL P2314H", FakeDisplays.Mode1080p60, FakeDisplays.Mode720p60), recovery.Latest);
+    }
+
+    [Fact]
+    public async Task A_restore_never_reads_another_monitor_through_a_reassigned_source()
+    {
+        var (h, displays, recovery, caller) = Setup();
+        await Set(h, caller, FakeDisplays.Mode720p60);
+        displays.ReassignedSources.Add(Secondary);
+
+        var r = await RestoreLocally(h);
+
+        Assert.Equal(ErrorCodes.TargetChanged, r.Error?.Code);
+        Assert.Single(displays.ModeWrites);
+        Assert.NotNull(recovery.Latest);
+    }
 }

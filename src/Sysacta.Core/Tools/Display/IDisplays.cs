@@ -115,7 +115,11 @@ public sealed record DisplayLayout(string Id, bool IsPrimary, bool IsCloned, Dis
 /// </summary>
 public interface IDisplayModeControl : IDisposable
 {
-    /// <summary>The modes Windows enumerates for the source now, and the current one (null when it cannot be read).</summary>
+    /// <summary>
+    /// The modes Windows enumerates for the source now, and the current one (null when it cannot be read). Throws
+    /// TARGET_CHANGED / DEVICE_DISCONNECTED when, before or after reading, the source no longer shows this display (so a
+    /// mode of another monitor is never reported for it).
+    /// </summary>
     DisplayModeSet ListModes();
 
     /// <summary>The whole active topology (every identified target).</summary>

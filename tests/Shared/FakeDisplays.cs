@@ -73,6 +73,12 @@ public sealed class FakeDisplays : IDisplays
     public List<(string Id, DisplayMode Mode)> ModeTests { get; } = [];
     public Dictionary<string, (int X, int Y)> Positions { get; } = [];
 
+    /// <summary>Displays whose source now shows another monitor: mode reads of them fail like the adapter's check.</summary>
+    public HashSet<string> ReassignedSources { get; } = [];
+
+    /// <summary>Runs inside CDS_TEST.</summary>
+    public Action<string>? OnModeTest { get; set; }
+
     /// <summary>Thrown by CDS_TEST.</summary>
     public Exception? ModeTestFailure { get; set; }
 
@@ -164,6 +170,11 @@ public sealed class FakeDisplays : IDisplays
                 throw failure;
             }
 
+            if (owner.ReassignedSources.Contains(id))
+            {
+                throw new ToolFailureException(ErrorCodes.TargetChanged, "fixed");
+            }
+
             return owner.ModesFailure is { } f ? throw f : owner.Modes[id];
         }
 
@@ -178,6 +189,7 @@ public sealed class FakeDisplays : IDisplays
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             owner.ModeTests.Add((id, mode));
+            owner.OnModeTest?.Invoke(id);
             if (owner.ModeTestFailure is { } failure)
             {
                 throw failure;

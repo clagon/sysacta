@@ -16,7 +16,11 @@ internal sealed class DisplayModeControl(string displayId, string gdiDeviceName,
     public DisplayModeSet ListModes()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return WindowsDisplays.Modes(gdiDeviceName);
+        // The GDI name can be reassigned to another monitor (hot-plug): check the mapping on both sides of the read.
+        WindowsDisplays.EnsureSameSource(displayId, gdiDeviceName);
+        var modes = WindowsDisplays.Modes(gdiDeviceName);
+        WindowsDisplays.EnsureSameSource(displayId, gdiDeviceName);
+        return modes;
     }
 
     public IReadOnlyList<DisplayLayout> Layout()
