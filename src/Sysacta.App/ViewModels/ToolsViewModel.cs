@@ -27,7 +27,9 @@ public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewMod
         {
             foreach (var item in Categories.SelectMany(c => c.Items))
             {
-                item.ApplyStoredValue(states[item.Name].Enabled);
+                var state = states[item.Name];
+                item.ApplyStoredValue(state.Enabled);
+                item.ApplyAvailability(state.Availability);
             }
 
             return;
@@ -107,11 +109,13 @@ public sealed partial class ToolItem : ObservableObject
 {
     private readonly ToolsViewModel _owner;
     private readonly LatestValueSaver<bool> _saver;
+    private readonly bool _readOnly;
 
     public ToolItem(ToolsViewModel owner, SysactaTool tool, bool enabled, ToolAvailability? precomputedAvailability = null)
     {
         _owner = owner;
         _isEnabled = enabled;
+        _readOnly = tool.Descriptor.ReadOnly;
         _saver = new LatestValueSaver<bool>(() => IsEnabled, value => owner.SetEnabledAsync(this, value), owner.RefreshAsync);
         Name = tool.Name;
         Title = tool.Descriptor.Title;
@@ -123,10 +127,7 @@ public sealed partial class ToolItem : ObservableObject
             DefaultPolicy.Off => "既定で無効・注意が必要な操作",
             _ => "実験的・非公開APIを使用",
         };
-        var availability = precomputedAvailability ?? tool.GetAvailability();
-        IsAvailable = availability.IsAvailable;
-        AvailabilityText = availability.IsAvailable ? "" : $"この環境では利用できません: {availability.Reason}";
-        CanTest = tool.Descriptor.ReadOnly && availability.IsAvailable;
+        ApplyAvailability(precomputedAvailability ?? tool.GetAvailability());
     }
 
     public string Name { get; }
@@ -134,9 +135,15 @@ public sealed partial class ToolItem : ObservableObject
     public string Description { get; }
     public string PolicyLabel { get; }
     public bool IsExperimental { get; }
-    public bool IsAvailable { get; }
-    public string AvailabilityText { get; }
-    public bool CanTest { get; }
+
+    [ObservableProperty]
+    private bool _isAvailable;
+
+    [ObservableProperty]
+    private string _availabilityText = "";
+
+    [ObservableProperty]
+    private bool _canTest;
 
     [ObservableProperty]
     private bool _isEnabled;
@@ -148,6 +155,13 @@ public sealed partial class ToolItem : ObservableObject
     private bool _hasTestResult;
 
     private bool _applyingStoredValue;
+
+    internal void ApplyAvailability(ToolAvailability availability)
+    {
+        IsAvailable = availability.IsAvailable;
+        AvailabilityText = availability.IsAvailable ? "" : $"この環境では利用できません: {availability.Reason}";
+        CanTest = _readOnly && availability.IsAvailable;
+    }
 
     /// <summary>Shows the stored value without saving it again; ignored while this switch's own save is running.</summary>
     internal void ApplyStoredValue(bool enabled)
