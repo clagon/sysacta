@@ -54,7 +54,7 @@ public abstract class SysactaTool
 
     internal abstract ValueTask<ToolTarget> ResolveAsync(object arguments, CancellationToken cancellationToken);
 
-    internal abstract Task<(JsonNode? Data, Verification Verification)> RunAsync(object arguments, ToolExecution execution, CancellationToken cancellationToken);
+    internal abstract Task<ToolRun> RunAsync(object arguments, ToolExecution execution, CancellationToken cancellationToken);
 
     /// <summary>Argument type, for the audit allow-list check at registration.</summary>
     internal abstract Type ArgumentsType { get; }
@@ -100,6 +100,8 @@ public abstract class SysactaTool
     }
 }
 
+internal sealed record ToolRun(JsonNode? Data, Verification Verification, ToolStatus Status, ToolError? Error);
+
 /// <summary>
 /// Base class for every MCP tool. Implement only the domain logic; authentication, authorization,
 /// argument parsing, locking, timeouts, re-authorization and auditing are applied by <see cref="ToolExecutor"/>.
@@ -140,9 +142,12 @@ public abstract class SysactaTool<TArgs, TData> : SysactaTool
 
     internal sealed override Type ArgumentsType => typeof(TArgs);
 
-    internal sealed override async Task<(JsonNode? Data, Verification Verification)> RunAsync(object arguments, ToolExecution execution, CancellationToken cancellationToken)
+    protected static void ReportProgress(ToolExecution execution, TData data) =>
+        execution.SetProgress(JsonSerializer.SerializeToNode(data, ToolJson.Options));
+
+    internal sealed override async Task<ToolRun> RunAsync(object arguments, ToolExecution execution, CancellationToken cancellationToken)
     {
         var outcome = await ExecuteAsync((TArgs)arguments, execution, cancellationToken).ConfigureAwait(false);
-        return (JsonSerializer.SerializeToNode(outcome.Data, ToolJson.Options), outcome.Verification);
+        return new ToolRun(JsonSerializer.SerializeToNode(outcome.Data, ToolJson.Options), outcome.Verification, outcome.Status, outcome.Error);
     }
 }

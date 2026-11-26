@@ -37,6 +37,7 @@ public static class ErrorCodes
     public const string NotSupported = "NOT_SUPPORTED";
     public const string TargetNotFound = "TARGET_NOT_FOUND";
     public const string AmbiguousTarget = "AMBIGUOUS_TARGET";
+    public const string TargetChanged = "TARGET_CHANGED";
     public const string DeviceDisconnected = "DEVICE_DISCONNECTED";
     public const string NoActiveSession = "NO_ACTIVE_SESSION";
     public const string Busy = "BUSY";
@@ -82,8 +83,22 @@ public sealed record ToolResult
         new() { Status = ToolStatus.Unknown, Verification = Tools.Verification.Unknown, Error = new ToolError(code, message, false) };
 }
 
-/// <summary>What a tool returns on success. The executor wraps it into a <see cref="ToolResult"/>.</summary>
-public sealed record ToolOutcome<TData>(TData Data, Verification Verification);
+/// <summary>What a tool returns on completion. The executor wraps it into a <see cref="ToolResult"/>.</summary>
+public sealed record ToolOutcome<TData>(TData Data, Verification Verification)
+{
+    public ToolStatus Status { get; internal init; } = ToolStatus.Success;
+    public ToolError? Error { get; internal init; }
+}
+
+/// <summary>Factories for non-success <see cref="ToolOutcome{TData}"/> values.</summary>
+public static class ToolOutcome
+{
+    public static ToolOutcome<TData> Partial<TData>(TData data, Verification verification, string code, string message) =>
+        new(data, verification) { Status = ToolStatus.Partial, Error = new ToolError(code, message, false) };
+
+    public static ToolOutcome<TData> Unknown<TData>(TData data, string code, string message) =>
+        new(data, Verification.Unknown) { Status = ToolStatus.Unknown, Error = new ToolError(code, message, false) };
+}
 
 /// <summary>
 /// Throw from a state-changing tool when a failure happens after the change may already have been applied (for
