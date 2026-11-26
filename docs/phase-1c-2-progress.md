@@ -177,7 +177,7 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 - P2314H は Windows ではアクティブだが VCP 0xD6 は 0x04（DPM off）を返し、入力は能力文字列にない 0x04 を返した。**入力名と物理端子の対応は一般化できない**ことの実例として、宣言外の現在値は `current_input_id: null` になる（自動テストで同じ形を確認）。
 ### 承認された実機の書き込み確認（2026-11-26）
 
-利用者が対象（DELL P2314H、HDMI、副画面）・内容（モード変更と復旧、電源 off → on、入力切替と OSD での復帰）・復旧手段（トレイ/Windows 設定、電源ボタン、OSD）を明示承認した上で、PowerToys PowerDisplay を停止し、`ApprovedDisplaySwitchingTests`（本番のツールと executor を `Caller.LocalConsole` で実行）で 1 ステップずつ実施した。プライマリの S2422HG には書き込んでいない。
+利用者が対象（DELL P2314H、HDMI、副画面）・内容（モード変更と復旧、電源 off → on、入力切替と OSD での復帰）・復旧手段（トレイ/Windows 設定、電源ボタン、OSD）を明示承認した上で、PowerToys PowerDisplay を停止し、一時的なテストコード（本番のツールと executor を `Caller.LocalConsole` で実行）で 1 ステップずつ、利用者が見ている状態で実施した。このテストコードは、電源・画面消失を起こす操作を実機テストとして自動実行しないという AGENTS.md の規則に反するため、PR のレビュー指摘（Codex）を受けて削除した。今後の確認は manual-tests.md の手順（実アプリと MCP クライアントで 1 回ずつ）で行う。プライマリの S2422HG には書き込んでいない。
 
 | 手順 | 結果 |
 |---|---|
@@ -207,7 +207,7 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 
 ### 非永続性（サインアウト）の確認（2026-11-26、利用者の承認と操作）
 
-- `mode-keep` で P2314H を 1920×1080 → 1280×720 に変更して残し（`verified`）、利用者がサインアウト → サインインした。
+- 一時的なテストコードで P2314H を 1920×1080 → 1280×720 に変更して残し（`verified`）、利用者がサインアウト → サインインした。
 - サインアウトが実際に行われたことを確認: Explorer が新しいセッション（セッション 2、18:48:12 起動）で動き、Sysacta（テスト用ビルド）は終了していた。
 - サインイン後の P2314H は **1920×1080 60 Hz**（Windows に保存された設定）で、Sysacta の変更（1280×720）は残っていなかった。`CDS_UPDATEREGISTRY` を付けない変更が保存されないことを、この機種・この Windows ビルドで確認した。
 - 1 回目の依頼では、サインアウトせずに回答が返った（Explorer と Sysacta のプロセスが同じで、モードも別の値だった）ため記録せず、やり直した。

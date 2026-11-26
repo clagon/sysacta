@@ -128,13 +128,7 @@ dotnet test tests/Sysacta.Windows.Tests -c Release --filter WindowsDisplaysTests
 
 **モード・電源・入力の実機変更は、対象モニター・具体的な変更内容・復旧手段を利用者が明示的に承認した場合のみ、手動で行う。** `SYSACTA_HARDWARE_TESTS=1` だけでは実行されない（書き込みの自動実機テストはない）。全画面の変更、プライマリ画面の変更、自動実行はしない。
 
-承認後の手順（1 ステップずつ。本番のツールと executor をローカルコンソールとして実行する）:
-
-```powershell
-$env:SYSACTA_HARDWARE_TESTS = "1"; $env:SYSACTA_HARDWARE_DISPLAY = "<承認された副画面の id>"
-$env:SYSACTA_HARDWARE_SWITCH = "mode"   # mode / power / on / input
-dotnet test tests/Sysacta.Windows.Tests -c Release --filter ApprovedDisplaySwitchingTests --logger "console;verbosity=detailed"
-```
+承認後の手順: Sysacta を起動し、ツール画面で対象のツールだけを個別に有効にし、そのツールだけを許可したクライアントを発行する。MCP クライアントから 1 回ずつ呼び出し、結果を見てから次に進む。電源・入力・モードの変更を実行するテストコード（xUnit やスクリプト）は作らない（AGENTS.md）。確認後はクライアントを失効させる。
 
 事前準備（承認時に確認する）:
 
