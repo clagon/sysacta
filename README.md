@@ -4,7 +4,7 @@ A native Windows control MCP server for AI agents.
 
 Sysacta is a Windows 11 desktop utility that exposes structured system-management tools through the Model Context Protocol (MCP). It is designed for local and self-hosted personal AI agents without granting arbitrary shell or GUI access.
 
-> **Status:** The foundation (Phase 0 and 1A: MCP server, per-client Bearer tokens and permissions, bounded audit log, WPF management console and tray icon), the standard audio tools (Phase 1B, with a device/alias page), and the experimental default audio device tool (`audio_set_default_device`, Phase 1B-EXP, disabled by default and **not yet verified on real hardware**) are implemented. Everything else under "Planned features" is not implemented. State-changing audio tools have only partly been verified on real hardware (see [docs/manual-tests.md](docs/manual-tests.md)). There are no release builds yet; build from source. See [docs/phase-1b-progress.md](docs/phase-1b-progress.md) and [docs/phase-1b-exp-progress.md](docs/phase-1b-exp-progress.md) for verification results and known limitations.
+> **Status:** The foundation (Phase 0 and 1A: MCP server, per-client Bearer tokens and permissions, bounded audit log, WPF management console and tray icon), the standard audio tools (Phase 1B, with a device/alias page), and the experimental default audio device tool (`audio_set_default_device`, Phase 1B-EXP, disabled by default and **not yet verified on real hardware**) are implemented, as are the basic display tools (Phase 1C-1: list, state, brightness, contrast, mode listing). Display **reads** were verified on two external monitors; **changing brightness or contrast has not been verified on real hardware**, and internal panels are untested (see [docs/phase-1c-1-progress.md](docs/phase-1c-1-progress.md)). Everything else under "Planned features" is not implemented. State-changing audio tools have only partly been verified on real hardware (see [docs/manual-tests.md](docs/manual-tests.md)). There are no release builds yet; build from source. See [docs/phase-1b-progress.md](docs/phase-1b-progress.md) and [docs/phase-1b-exp-progress.md](docs/phase-1b-exp-progress.md) for verification results and known limitations.
 
 ## Currently available
 
@@ -18,14 +18,19 @@ Sysacta is a Windows 11 desktop utility that exposes structured system-managemen
 | `audio_set_app_volume` | Sets the volume of one app session (by `session_id`) and verifies it | Enabled |
 | `audio_set_app_mute` | Mutes or unmutes one app session and verifies it | Enabled |
 | `audio_set_default_device` | **Experimental** (undocumented Windows COM API, unverified on real hardware): sets the default audio device by direction and role (`console` / `multimedia` / `communications` / `all`) | Disabled (Experimental) |
+| `display_list_devices` | Active displays with id, kind, connection, current desktop mode and aliases | Enabled |
+| `display_get_state` | Current mode, brightness and contrast (0–100) of a display, with per-feature support status | Enabled |
+| `display_set_brightness` | Sets hardware brightness (DDC/CI, or Windows control for internal panels) and verifies it; `device: "all"` reports each display | Enabled |
+| `display_set_contrast` | Sets hardware contrast over DDC/CI and verifies it | Enabled |
+| `display_list_modes` | Resolution / refresh rate combinations Windows enumerates (nothing is applied) | Enabled |
 
-"Enabled" applies to new installations. Experimental tools and newly added tools on upgrade start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console.
+"Enabled" applies to new installations. Experimental tools and newly added tools on upgrade start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console. Display support depends on the monitor, cable, dock and the monitor's DDC/CI setting; mirrored displays cannot be adjusted over DDC/CI.
 
 ## Planned features
 
 | Category | Capabilities |
 | --- | --- |
-| Display | Brightness, contrast, display settings and supported DDC/CI controls |
+| Display (remaining) | Changing resolution / refresh rate, display power and input source |
 | Media | Playback control and media session information |
 | Power | Lock, sleep, shutdown, restart and power plans |
 | System | CPU, GPU, memory, storage and supported hardware sensors |
@@ -99,7 +104,7 @@ For contributors (and coding agents): [AGENTS.md](AGENTS.md) (rules), [docs/tool
 ## Roadmap
 
 - [x] Phase 0 — MCP server, authentication, authorization, settings UI and audit logs (see [progress](docs/phase-0-progress.md) for items verified only by automated tests)
-- [ ] Phase 1 — Audio (standard tools done; default-device change pending), display, media, power, system monitoring and notifications
+- [ ] Phase 1 — Audio (standard tools done; default-device change pending), display (basic tools done), media, power, system monitoring and notifications
 - [ ] Phase 2 — Apps and processes, networking and Bluetooth
 - [ ] Phase 3 — Testing, security review and Windows distribution
 

@@ -178,6 +178,11 @@ public sealed partial class ToolExecutor
                     return call.Finish(AuditOutcome.Success, new ToolResult { Status = ToolStatus.Success, Verification = run.Verification, Data = run.Data });
                 }
 
+                if (run.Status == ToolStatus.Error && run.Error is not null)
+                {
+                    return call.Finish(AuditOutcome.Error, new ToolResult { Status = ToolStatus.Error, Data = run.Data, Error = run.Error });
+                }
+
                 if (!execution.HasStarted)
                 {
                     // Fail safe: a partial or unknown outcome cannot be reported without a started side effect.

@@ -8,6 +8,7 @@ using Sysacta.App.Views;
 using Sysacta.Core.Auditing;
 using Sysacta.Core.Security;
 using Sysacta.Core.Tools.Audio;
+using Sysacta.Core.Tools.Display;
 using Wpf.Ui.Appearance;
 
 namespace Sysacta.App.Tests;
@@ -71,6 +72,13 @@ public class PageScreenshots
         devices.SelectedAlias = "desk";
         yield return ("devices", new DevicesPage(devices));
 
+        var displays = new DevicesViewModel(null!);
+        displays.Category = displays.Categories[1];
+        displays.ShowDisplays(SampleDisplays(), [new("main", "display-0000000000000000000000000000a1b2c3"), new("old-monitor", "display-gone")]);
+        displays.Selected = displays.Devices[0];
+        displays.SelectedValues = "1920×1080 @ 165 Hz\n輝度: 60（モニター本体・DDC/CI、値域 0〜100）\nコントラスト: 取得できません（OS_API_ERROR）";
+        yield return ("devices-display", new DevicesPage(displays));
+
         var logs = new LogsViewModel(null!) { RetentionDays = 30, HasEvents = true, ResultSummary = "46 件" };
         foreach (var e in SampleEvents(now))
         {
@@ -85,6 +93,17 @@ public class PageScreenshots
         [
             new("{0.0.0.00000000}.{speakers}", "スピーカー (とても長いオーディオデバイス名の表示確認用 High Definition Audio)", AudioDirection.Output, AudioDeviceState.Active, true, [AudioRole.Console, AudioRole.Multimedia], 40, false, ["desk"], ["audio_get_state", "audio_set_volume", "audio_set_mute", "audio_list_sessions"], null),
             new("{0.0.1.00000000}.{mic}", "マイク", AudioDirection.Input, AudioDeviceState.Unplugged, false, [], null, null, [], ["audio_get_state"], null),
+        ],
+        2,
+        0,
+        false);
+
+    private static DisplayDeviceListData SampleDisplays() => new(
+        [
+            new("display-0000000000000000000000000000a1b2c3", "Sample Monitor (とても長いディスプレイ名の表示確認用)", "active", DisplayKind.External, "displayport", true, false, new(1920, 1080, 165000, 1000), ["main"],
+                new(DisplaySupport.Unchecked, null), new(DisplaySupport.Unchecked, null), ["display_get_state", "display_list_modes"], null),
+            new("display-0000000000000000000000000000d4e5f6", "Sample Monitor", "active", DisplayKind.External, "hdmi", false, true, null, [],
+                new(DisplaySupport.Unavailable, "AMBIGUOUS_TARGET"), new(DisplaySupport.Unavailable, "AMBIGUOUS_TARGET"), ["display_get_state"], null),
         ],
         2,
         0,

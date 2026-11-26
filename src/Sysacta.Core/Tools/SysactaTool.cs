@@ -22,7 +22,8 @@ public sealed record ToolAvailability(bool IsAvailable, string? ErrorCode, strin
 /// log as <c>target</c>, so it must be an identifier obtained from the OS or Sysacta's own registry, never the
 /// caller's raw input.
 /// </param>
-public sealed record ToolTarget(IReadOnlyList<string> LockKeys, string? TargetId)
+/// <remarks>A tool that must carry more of what it resolved (a fixed batch, for example) derives from this record.</remarks>
+public record ToolTarget(IReadOnlyList<string> LockKeys, string? TargetId)
 {
     public static readonly ToolTarget None = new([], null);
 }
