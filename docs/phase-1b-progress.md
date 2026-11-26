@@ -112,9 +112,9 @@
 | Linux (WSL2) `dotnet build Sysacta.sln -c Release` | 警告 0 / エラー 0 |
 | Linux `dotnet test` | Core 185 / Infrastructure 50 / Mcp 74 成功、Windows 5 成功・7 スキップ。App.Tests は対象外 |
 | Windows 11 実機(`dotnet.exe <tests>.dll`) | Core 185 / Infrastructure 50 / Mcp 74 / App 17 成功、Windows 9 成功・3 スキップ(状態変更) |
-| Windows CI | PR を参照 |
+| Windows CI (windows-latest, [PR #5](https://github.com/clagon/sysacta/pull/5), run 45738440278, コード `2015a51` を含む `b3c2928`) | ビルドとスモークテスト成功。Core 185 / Infrastructure 50 / Mcp 74 / App 17 成功、Windows 6 成功・6 スキップ(音声出力デバイスがないための 3 件と状態変更 3 件) |
 
-- Windows 実機の実行は、出力を Windows の一時フォルダーにコピーして行った(Mcp / App は WSL の UNC パスからだと出力なしで停止した。原因は未調査)。実行後にデバイス画面の余白を 1 行直した(以降の Windows 上の確認は CI)。
+- Windows 実機の実行は、出力を Windows の一時フォルダーにコピーして行った(Mcp / App は WSL の UNC パスからだと出力なしで停止した。原因は未調査)。実行後にデバイス画面の余白を 1 行直した(直した後のコードは CI で確認)。
 - 実デバイスの読み取り: 46 エンドポイント、既定出力のセッション 12 件、失敗 0。
 - ミューテーション確認: `audio_set_mute` とアプリ別変更の開始点宣言を書き込みの後に移すと Core.Tests 18 件が失敗。セッションのロックキーを呼び出しごとに別にすると 1 件が失敗。確認後に元へ戻した。
 
