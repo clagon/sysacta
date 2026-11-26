@@ -33,11 +33,20 @@ public sealed record AuditEvent
     public long? DurationMs { get; init; }
     /// <summary>Socket peer address only; forwarded headers are never trusted here.</summary>
     public string? RemoteAddress { get; init; }
+
+    /// <summary>
+    /// Set on an aggregated record: this many rejections with the same <see cref="ErrorCode"/> happened in the window
+    /// starting at <see cref="Timestamp"/> and were not recorded individually. Null for an individual record.
+    /// </summary>
+    public long? AggregateCount { get; init; }
 }
 
 /// <summary>Audit sink. <see cref="Write"/> inserts, or replaces the record with the same <see cref="AuditEvent.RequestId"/>.</summary>
 public interface IAuditLog
 {
-    /// <summary>Must throw on failure; the executor refuses state changes when the intent cannot be persisted.</summary>
+    /// <summary>
+    /// Must throw on failure, including when the record does not fit the storage limits; the executor refuses state
+    /// changes when the intent (<see cref="AuditOutcome.Pending"/>) cannot be persisted.
+    /// </summary>
     void Write(AuditEvent auditEvent);
 }

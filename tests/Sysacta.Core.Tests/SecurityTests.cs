@@ -45,13 +45,22 @@ public class TokenAuthenticatorTests
     }
 
     [Fact]
-    public void Accepts_valid_token_and_records_use()
+    public void Accepts_valid_token_and_records_use_only_when_asked()
     {
         var (_, token) = _store.AddClient("c1");
         var result = _auth.Authenticate("bearer " + token);
         Assert.True(result.Succeeded);
         Assert.Equal("c1", result.Client!.Id);
+        Assert.Empty(_store.Uses); // authentication itself never writes (SEC-05)
+
+        _auth.RecordUse(result.Client);
         Assert.Single(_store.Uses);
+
+        // Within a minute of the stored last-used time nothing is written.
+        _auth.RecordUse(result.Client with { LastUsedAt = DateTimeOffset.UtcNow.AddSeconds(-30) });
+        Assert.Single(_store.Uses);
+        _auth.RecordUse(result.Client with { LastUsedAt = DateTimeOffset.UtcNow.AddMinutes(-2) });
+        Assert.Equal(2, _store.Uses.Count);
     }
 
     [Fact]

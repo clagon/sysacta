@@ -25,23 +25,30 @@ public sealed class ServerFixture : IAsyncDisposable
     public FakeAudio AudioDevice { get; } = new();
     public BlockingTool Blocking { get; } = new();
 
-    private ServerFixture()
+    /// <summary>Clock of the HTTP layer (budgets, last-used time). The executor and the store use the system clock.</summary>
+    public ManualTime Time { get; } = new();
+
+    /// <summary>What the authentication layer sees of the store; counts its database calls.</summary>
+    public CountingStore Counted { get; }
+
+    private ServerFixture(AuditLimits? limits)
     {
         Database = new SysactaDatabase(Path.Combine(_dir, "sysacta.db"));
         Database.Migrate();
         Gate = new AuthorizationGate();
         Store = new AccessStore(Database, TimeProvider.System, Gate);
-        Audit = new AuditLog(Database);
+        Counted = new CountingStore(Store);
+        Audit = new AuditLog(Database, limits);
         var registry = new ToolRegistry([new AudioGetStateTool(AudioDevice, Store), new AudioSetVolumeTool(AudioDevice, Store), Blocking]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
         Store.SetToolEnabled(Blocking.Name, true);
         Executor = new ToolExecutor(registry, new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, Gate);
-        Host = new McpServerHost(Executor, new TokenAuthenticator(Store, TimeProvider.System), Audit, TimeProvider.System, "test");
+        Host = new McpServerHost(Executor, new TokenAuthenticator(Counted, Time), Audit, Time, "test");
     }
 
-    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null)
+    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null)
     {
-        var fixture = new ServerFixture();
+        var fixture = new ServerFixture(limits);
         await fixture.Host.StartAsync(options ?? new ServerEndpointOptions { Port = 0 }, TestContext.Current.CancellationToken);
         return fixture;
     }
@@ -101,10 +108,62 @@ public sealed class ServerFixture : IAsyncDisposable
     }
 }
 
+/// <summary>
+/// The system clock plus an offset that tests move forward. Tests finish far within one budget window (a minute), so
+/// a window rolls over only when a test advances the clock.
+/// </summary>
+public sealed class ManualTime : TimeProvider
+{
+    private TimeSpan _offset;
+
+    public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
+
+    public void Advance(TimeSpan by) => _offset += by;
+}
+
+/// <summary>
+/// Counts the authentication layer's database calls. <see cref="ForgetLastUse"/> hides the stored last-used time, so
+/// every request that reaches <see cref="TokenAuthenticator.RecordUse"/> writes and can be counted.
+/// </summary>
+public sealed class CountingStore(IAccessStore inner) : IAccessStore
+{
+    private int _lookups;
+    private int _uses;
+
+    public int Lookups => Volatile.Read(ref _lookups);
+    public int Uses => Volatile.Read(ref _uses);
+    public bool ForgetLastUse { get; set; }
+
+    /// <summary>When set, token lookups wait for it (to hold requests inside the authentication stage).</summary>
+    public SemaphoreSlim? LookupGate { get; set; }
+
+    public bool IsToolEnabled(string toolName) => inner.IsToolEnabled(toolName);
+    public ClientRecord? GetClient(string clientId) => inner.GetClient(clientId);
+    public bool IsClientToolAllowed(string clientId, string toolName) => inner.IsClientToolAllowed(clientId, toolName);
+
+    public (ClientRecord Client, string TokenHash)? FindClientByTokenHash(string tokenHash)
+    {
+        Interlocked.Increment(ref _lookups);
+        LookupGate?.Wait(TimeSpan.FromSeconds(10));
+        var found = inner.FindClientByTokenHash(tokenHash);
+        return found is { } f && ForgetLastUse ? (f.Client with { LastUsedAt = null }, f.TokenHash) : found;
+    }
+
+    public void RecordClientUse(string clientId, DateTimeOffset at)
+    {
+        Interlocked.Increment(ref _uses);
+        inner.RecordClientUse(clientId, at);
+    }
+}
+
 public sealed class FakeAudio : IAudioEndpoints
 {
     private readonly object _gate = new();
     private float _volume = 0.4f;
+    private int _writes;
+
+    /// <summary>Calls that changed the (fake) device.</summary>
+    public int Writes => Volatile.Read(ref _writes);
 
     public string? GetDefaultEndpointId(AudioDirection direction) => direction == AudioDirection.Output ? "spk" : null;
 
@@ -122,6 +181,7 @@ public sealed class FakeAudio : IAudioEndpoints
     {
         lock (_gate)
         {
+            _writes++;
             _volume = scalar;
         }
     }

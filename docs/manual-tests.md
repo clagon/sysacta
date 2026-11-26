@@ -39,6 +39,18 @@ $env:SYSACTA_HARDWARE_TESTS = "1"; dotnet test tests/Sysacta.Windows.Tests -c Re
 
 開発機の Windows 11 で Phase 0 のビルドを起動し、上記の項目を概略で確認して「大体大丈夫」との報告。トレイメニューの表示はスクリーンショットで確認済み。項目ごとの詳細な結果(特に M5 自動起動、M7 テーマ、M8 DPI、M12 CSV を Excel で開く、Claude Desktop / Codex での接続)は記録されていないため、各行の状況は個別の確認結果のみを反映している。問題が見つかった場合は Issue として記録する。
 
+## Phase 1A チェックリスト(SEC-05 / SEC-06)
+
+予算と保存量の上限は自動テスト(Mcp.Tests `PreAuthenticationBudgetTests` / `AuditCapacityTests`、Infrastructure.Tests `AuditCapacityTests`)で、低い上限と制御可能な時計を使って確認済み。実機では通常利用に影響しないことと、表示だけを確認する。**実際の利用環境に負荷をかける試験は行わない。**
+
+| # | 項目 | 手順 | 期待結果 | 状況 |
+|---|---|---|---|---|
+| P1 | 通常利用 | MCP クライアント(Claude Desktop / Codex 等)で普段どおり数十回の呼び出し | 429 にならない。ログ画面に「上限による削除はありません」 | 未確認 |
+| P2 | プロキシ経由 | Tailscale Serve 経由で 2 クライアントから通常利用 | どちらも成功(接続元予算 240 件/分を共有) | 未確認 |
+| P3 | ログ画面の表示 | ログ画面を開く | 保存量・上限・予約枠・削除件数・集約の説明が表示される。「記録の種類」で個別/集約を絞り込める。集約記録は結果欄に「×件数」 | 未確認(文言は App.Tests で確認。表示は Windows CI のスクリーンショット) |
+| P4 | 既存 DB のアップグレード | Phase 0 で使っていた `%LOCALAPPDATA%\Sysacta` のまま起動 | クライアント・権限・設定・既存ログが残る。`sysacta.db.v1.bak` が作られる | 未確認(Infrastructure.Tests で v1→v2 を確認) |
+| P5 | 異常終了後の起動 | 状態変更ツールの実行中にタスクマネージャーで終了 → 再起動 | 残った記録が「結果不明 / INTERRUPTED」になる | 未確認(App.Tests で確認、Windows CI) |
+
 ## リファレンスツール (audio)
 
 | # | 項目 | 手順 | 期待結果 | 状況 |

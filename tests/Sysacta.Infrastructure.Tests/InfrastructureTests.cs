@@ -144,7 +144,10 @@ public class AccessStoreTests
         var auth = new TokenAuthenticator(store, TimeProvider.System);
         var issued = store.IssueClient("Agent", null, ["audio_get_state"]);
 
-        Assert.True(auth.Authenticate("Bearer " + issued.Token).Succeeded);
+        var first = auth.Authenticate("Bearer " + issued.Token);
+        Assert.True(first.Succeeded);
+        Assert.Null(store.GetClient(issued.Client.Id)!.LastUsedAt); // authentication only reads (SEC-05)
+        auth.RecordUse(first.Client!);
         Assert.NotNull(store.GetClient(issued.Client.Id)!.LastUsedAt);
 
         var reissued = store.ReissueClient(issued.Client.Id);

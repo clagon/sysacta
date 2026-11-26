@@ -124,7 +124,7 @@ public partial class App : Application
         {
             try
             {
-                runtime.Audit.Purge(days, DateTimeOffset.UtcNow);
+                runtime.Audit.Maintain(days, DateTimeOffset.UtcNow); // retention, size limits, WAL (SEC-06)
             }
             catch (Exception)
             {
