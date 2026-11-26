@@ -276,6 +276,30 @@ public class AudioDefaultDeviceToolTests
     }
 
     [Fact]
+    public async Task Earlier_verified_role_drifting_during_later_write_is_reconciled_and_returns_partial()
+    {
+        _writer.OnWrite = (_, role) =>
+        {
+            if (role == AudioRole.Multimedia)
+            {
+                // External or OS-side change reverts Console while Multimedia is being written.
+                _audio.RoleDefaults[(AudioDirection.Output, AudioRole.Console)] = "spk";
+            }
+        };
+
+        var r = await Call(new { device = "spk2", direction = "output", role = "all" });
+
+        Assert.Equal(ToolStatus.Partial, r.Status);
+        Assert.Equal(ErrorCodes.VerificationFailed, r.Error!.Code);
+        var roles = r.Data!["roles"]!.AsArray();
+        Assert.Equal("failed", (string)roles[0]!["status"]!);
+        Assert.Equal("spk", (string)roles[0]!["current_device_id"]!);
+        Assert.Equal("changed", (string)roles[1]!["status"]!);
+        Assert.Equal("not_attempted", (string)roles[2]!["status"]!);
+        Assert.Equal(2, _writer.Writes.Count);
+    }
+
+    [Fact]
     public async Task Concurrent_all_and_single_role_calls_do_not_deadlock()
     {
         var t1 = Call(new { device = "spk2", direction = "output", role = "all" });

@@ -206,6 +206,23 @@ public sealed class AudioSetDefaultDeviceTool(
                 results[r] = new(r, prev, curr, true, AudioDefaultRoleStatus.Failed, writeError ?? ErrorCodes.VerificationFailed);
             }
 
+            var drifted = false;
+            foreach (var other in requested)
+            {
+                if (other == r || results[other].Status is not (AudioDefaultRoleStatus.Changed or AudioDefaultRoleStatus.Unchanged))
+                {
+                    continue;
+                }
+
+                var otherCurr = after[(args.Direction, other)];
+                if (otherCurr != id)
+                {
+                    var otherPrev = before[(args.Direction, other)];
+                    results[other] = new(other, otherPrev, otherCurr, otherCurr != otherPrev, AudioDefaultRoleStatus.Failed, results[other].ErrorCode ?? ErrorCodes.VerificationFailed);
+                    drifted = true;
+                }
+            }
+
             foreach (var (key, currentVal) in after)
             {
                 if (key.Item1 == args.Direction && requested.Contains(key.Item2))
@@ -226,6 +243,13 @@ public sealed class AudioSetDefaultDeviceTool(
             {
                 stopCode = ErrorCodes.VerificationFailed;
                 stopMessage = "An unrequested audio role or direction also changed.";
+                break;
+            }
+
+            if (drifted)
+            {
+                stopCode = ErrorCodes.VerificationFailed;
+                stopMessage = "A previously verified audio role changed away from the requested target.";
                 break;
             }
 

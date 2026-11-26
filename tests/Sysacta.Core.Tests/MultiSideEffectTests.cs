@@ -177,6 +177,44 @@ public class MultiSideEffectTests
     }
 
     [Fact]
+    public async Task Timeout_while_waiting_on_authorization_gate_prevents_second_write()
+    {
+        var (h, _, writer, caller) = Setup(TimeSpan.FromMilliseconds(200));
+        using var gateHeld = new ManualResetEventSlim();
+        using var releaseGate = new ManualResetEventSlim();
+        Task? updater = null;
+        writer.OnWrite = (_, role) =>
+        {
+            if (role == AudioRole.Console)
+            {
+                updater = Task.Run(() =>
+                {
+                    using var scope = h.Gate.BeginUpdate();
+                    gateHeld.Set();
+                    releaseGate.Wait(CancellationToken.None);
+                }, CancellationToken.None);
+                gateHeld.Wait(CancellationToken.None);
+            }
+        };
+
+        var r = await h.Executor.ExecuteAsync(caller, "audio_set_default_device", TestJson.Args(new { device = "spk2", direction = "output", role = "all" }), Ct);
+
+        Assert.Equal(ToolStatus.Unknown, r.Status);
+        Assert.Equal(ErrorCodes.Timeout, r.Error!.Code);
+
+        releaseGate.Set();
+        await updater!;
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (h.Executor.InFlight > 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10, Ct);
+        }
+
+        Assert.Equal(0, h.Executor.InFlight);
+        Assert.Single(writer.Writes); // Multimedia must not start after timeout while waiting on AuthorizationGate
+    }
+
+    [Fact]
     public async Task Partial_without_begin_side_effect_fails_safe_as_internal_error()
     {
         var tool = new UnstartedPartialTool();

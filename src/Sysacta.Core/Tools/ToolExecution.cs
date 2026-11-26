@@ -87,9 +87,19 @@ public sealed class ToolExecution
 
         return _gate.Evaluate(() =>
         {
+            if (Volatile.Read(ref _detached) != 0 || cancellationToken.IsCancellationRequested)
+            {
+                return new ToolError(ErrorCodes.Cancelled, "The operation was cancelled or timed out before the next change started.", false);
+            }
+
             if (_authorize() is { } refusal)
             {
                 return (refusal.Error ?? new ToolError(ErrorCodes.PermissionDenied, "Authorization was revoked.", false)) with { Retryable = false };
+            }
+
+            if (Volatile.Read(ref _detached) != 0 || cancellationToken.IsCancellationRequested)
+            {
+                return new ToolError(ErrorCodes.Cancelled, "The operation was cancelled or timed out before the next change started.", false);
             }
 
             return null;
