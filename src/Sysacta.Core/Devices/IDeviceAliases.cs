@@ -5,7 +5,12 @@ public interface IDeviceAliases
 {
     /// <summary>Returns the device id registered for <paramref name="alias"/> in <paramref name="category"/>, or null.</summary>
     string? Resolve(string category, string alias);
+
+    /// <summary>All aliases of the category, ordered by alias.</summary>
+    IReadOnlyList<DeviceAlias> List(string category);
 }
+
+public sealed record DeviceAlias(string Alias, string DeviceId);
 
 public static class DeviceAliasRules
 {

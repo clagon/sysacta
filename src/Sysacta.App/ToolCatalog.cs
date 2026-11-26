@@ -11,13 +11,18 @@ namespace Sysacta.App;
 /// </summary>
 internal static class ToolCatalog
 {
-    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases)
+    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio)
     {
-        var audio = new CoreAudioEndpoints();
+        var sessions = new CoreAudioSessions();
         return
         [
             new AudioGetStateTool(audio, aliases),
+            new AudioListDevicesTool(audio, aliases),
             new AudioSetVolumeTool(audio, aliases),
+            new AudioSetMuteTool(audio, aliases),
+            new AudioListSessionsTool(audio, aliases, sessions),
+            new AudioSetAppVolumeTool(audio, sessions),
+            new AudioSetAppMuteTool(audio, sessions),
         ];
     }
 }
