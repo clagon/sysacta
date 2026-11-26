@@ -7,9 +7,9 @@
 | 項目 | 状態 | 主なファイル |
 |---|---|---|
 | 技術調査 | 完了 | 本ファイル §1 |
-| `display_set_mode`（Core / Windows） | 実装・自動テスト済み。**実機でのモード変更は未実施**（利用者の承認なし）。CDS_TEST と読み取りは実機で確認 | `DisplayModeTools.cs`, `DisplayModeControl.cs` |
-| ローカル復旧（`display_restore_mode`、トレイメニュー、デバイス画面） | 実装・自動テスト済み。**実機での復旧操作は未実施** | `DisplayModeTools.cs`, `TrayIcon.cs`, `DevicesViewModel.cs` |
-| `display_set_power` / `display_set_input`（Core / Windows） | 実装・自動テスト済み。**実機での電源・入力の変更は未実施**（利用者の承認なし）。能力文字列と現在値の読み取りは実機で確認 | `DisplaySwitchTools.cs`, `Mccs.cs`, `DdcCiSwitchControl.cs` |
+| `display_set_mode`（Core / Windows） | 実装・自動テスト済み。**利用者の承認のもと DELL P2314H で実機確認**（変更・読み戻し・他画面の比較が `verified`） | `DisplayModeTools.cs`, `DisplayModeControl.cs` |
+| ローカル復旧（`display_restore_mode`、トレイメニュー、デバイス画面） | 実装・自動テスト済み。復旧ツールは実機で確認（executor 経由、`verified`）。**トレイ・デバイス画面のボタン操作そのものは実機未確認** | `DisplayModeTools.cs`, `TrayIcon.cs`, `DevicesViewModel.cs` |
+| `display_set_power` / `display_set_input`（Core / Windows） | 実装・自動テスト済み。**承認のもと P2314H で実機確認**: off は `verified`、**on はオフ中のモニターが DDC/CI に応答せず実行不能**（書き込みなし。電源ボタンで復帰）。入力切替は結果を正しく報告（§6） | `DisplaySwitchTools.cs`, `Mccs.cs`, `DdcCiSwitchControl.cs` |
 | `display_get_state` の `include_switching` | 実装・自動テスト済み。実機で読み取り確認 | `DisplayReadTools.cs` |
 | 3 ツールの初期無効・個別許可 | 実装・自動テスト済み（新規 DB・アップグレード・既存クライアント） | `ToolCatalog.cs`, `ToolsViewModel.cs` |
 
@@ -175,7 +175,27 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 
 - 同じ実行内でも、直後の `display_get_state` 相当の読み取りが成功・失敗の両方になった。1C-1 で成功したコントラストの読み取りもこの日は失敗した。別プロセスの DDC/CI 利用（PowerDisplay）との衝突が疑われる（Sysacta のゲートはプロセス内だけ）。Sysacta は推測せず `unavailable` を返しており、書き込み前の失敗では何も書かない。
 - P2314H は Windows ではアクティブだが VCP 0xD6 は 0x04（DPM off）を返し、入力は能力文字列にない 0x04 を返した。**入力名と物理端子の対応は一般化できない**ことの実例として、宣言外の現在値は `current_input_id: null` になる（自動テストで同じ形を確認）。
-- 未検証: 実際のモード・電源・入力の変更、変更後の通信消失・HPD 消失、非永続性（サインアウト後の復帰）、他の表示への影響、内蔵パネルのモード変更、複製・ドック・MST、MCCS 3.0 のモニター、PowerDisplay を止めた状態での能力文字列の安定性。2 台の結果は他の機種の対応を意味しない。
+### 承認された実機の書き込み確認（2026-11-26）
+
+利用者が対象（DELL P2314H、HDMI、副画面）・内容（モード変更と復旧、電源 off → on、入力切替と OSD での復帰）・復旧手段（トレイ/Windows 設定、電源ボタン、OSD）を明示承認した上で、PowerToys PowerDisplay を停止し、`ApprovedDisplaySwitchingTests`（本番のツールと executor を `Caller.LocalConsole` で実行）で 1 ステップずつ実施した。プライマリの S2422HG には書き込んでいない。
+
+| 手順 | 結果 |
+|---|---|
+| モード 1920×1080 60 Hz → 1280×720 60 Hz | `success` / `verified`、618 ms（ゲート・列挙・CDS_TEST・適用・読み戻しを含む）、`other_displays_changed: false`、`recovery_available: true` |
+| `display_restore_mode` | `success` / `verified`、516 ms、1920×1080 60 Hz に復帰、`recovery_available: false`、他画面の変化なし。監査は `target` だけ |
+| 電源 off | `success` / `verified`（`current_state: off`）、4728 ms（うち能力文字列約 4 秒）。画面が消えた |
+| 電源 on（2 回） | どちらも `error` / `OS_API_ERROR`（255 / 303 ms）。**オフ中のモニターが能力文字列の問い合わせに応答せず、書き込み前に停止**（何も書いていない）。利用者が電源ボタンで復帰させた |
+| 入力 DVI 1 → VGA 1 | `error` / `VERIFICATION_FAILED`、`changed: true`、`current_input_id: null`（信号のない入力に切り替わった後、宣言外の値を返した）。5248 ms |
+| 入力 → DVI 1（DDC/CI で切り戻し） | `success` / `verified`、4969 ms |
+
+わかったこと:
+
+- この機種は DPM off の間 DDC/CI（少なくとも能力文字列の問い合わせ）に応答しないため、**Sysacta から on に戻せない**。許可リストの根拠（能力文字列）なしに書き込む経路は作らない方針を維持し、ツール説明・注意文どおり物理ボタンでの復帰が必要。`on` が役に立つのは、オフ中も DDC/CI に応答する機種に限られる（未確認）。
+- オン時の現在値は電源 0x01・入力 0x03（DVI 1）で、§6 の最初の読み取りで得た 0x04 / 0x04 はモニターが省電力状態だったときの値と考えられる。HDMI ケーブルで接続しているのに MCCS では DVI 1 と報告され、**入力名と物理端子は一致しない**ことを確認した。
+- 信号のない入力に切り替えた後は宣言外の値が読める（`VERIFICATION_FAILED`、`changed: true` として正しく報告され、`accepted` や成功にはならない）。DDC/CI はその状態でも応答し、切り戻せた。
+- 能力文字列の取得は PowerDisplay 停止後は 3 回とも成功（約 4.1 秒）。同時に動かすと失敗が多かったことと整合する。
+
+- 未検証: トレイ・デバイス画面のボタンからの復旧操作、非永続性（サインアウト後の復帰）、他画面の配置が変わる構成（上下配置など）、HPD が消える機種、内蔵パネルのモード変更、複製・ドック・MST、MCCS 3.0 のモニター、S2422HG への書き込み。1 台の結果は他の機種の対応を意味しない。
 
 ## 7. 仕様・指示書との差分
 
@@ -201,7 +221,7 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 
 ## 9. 残存リスク
 
-- **実機の書き込みが未検証**: `ChangeDisplaySettingsExW`・`SetVCPFeature` による変更、その後の読み戻し・通信消失・配置への影響は自動テスト（フェイク）だけで確認している。利用者の明示承認（対象機器・変更内容・復旧手段）を得た上で [manual-tests.md](manual-tests.md) の DM / DP / DI 項目を実施するまで、動作保証済みとは案内しない。
+- **実機の書き込みは 1 台（DELL P2314H）だけで確認**: 他の機種・構成での動作は保証しない。この機種では電源 on が使えなかった（オフ中は DDC/CI に応答しない）。
 - 非永続性は文書上の挙動で、Windows 11 の表示設定データベース（CCD）での実挙動は未確認。
 - 別プロセスの DDC/CI 利用（PowerToys PowerDisplay、メーカーのユーティリティ）とは排他できない。衝突すると読み取りは `unavailable`、書き込み API の失敗は `unknown`、読み戻しの失敗は `accepted` になり得る。
 - DDC/CI の書き込みは失敗が返っても反映されている場合がある（`unknown` で報告するが、状態は確認できない）。

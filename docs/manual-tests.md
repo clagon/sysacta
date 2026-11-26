@@ -128,6 +128,14 @@ dotnet test tests/Sysacta.Windows.Tests -c Release --filter WindowsDisplaysTests
 
 **モード・電源・入力の実機変更は、対象モニター・具体的な変更内容・復旧手段を利用者が明示的に承認した場合のみ、手動で行う。** `SYSACTA_HARDWARE_TESTS=1` だけでは実行されない（書き込みの自動実機テストはない）。全画面の変更、プライマリ画面の変更、自動実行はしない。
 
+承認後の手順（1 ステップずつ。本番のツールと executor をローカルコンソールとして実行する）:
+
+```powershell
+$env:SYSACTA_HARDWARE_TESTS = "1"; $env:SYSACTA_HARDWARE_DISPLAY = "<承認された副画面の id>"
+$env:SYSACTA_HARDWARE_SWITCH = "mode"   # mode / power / on / input
+dotnet test tests/Sysacta.Windows.Tests -c Release --filter ApprovedDisplaySwitchingTests --logger "console;verbosity=detailed"
+```
+
 事前準備（承認時に確認する）:
 
 - モード: 対象は副画面。元のモード（解像度・リフレッシュ）を控える。トレイメニューの「直前の表示モード変更を元に戻す」が見えることと、Windows の「ディスプレイ」設定を別の画面で開けることを確認する。
@@ -138,17 +146,17 @@ dotnet test tests/Sysacta.Windows.Tests -c Release --filter WindowsDisplaysTests
 | # | 項目 | 手順 | 期待結果 | 状況 |
 |---|---|---|---|---|
 | DM1 | 読み取りと CDS_TEST | `Switching_capabilities_and_current_values_can_be_read`（書き込みなし） | 各画面の現在モードで CDS_TEST 成功 | 確認: DELL S2422HG / P2314H で成功（2026-11-26） |
-| DM2 | モード変更 | 承認後、副画面を一覧の別モードに `display_set_mode` | `verified`、`other_displays_changed: false`、画面が変わる | **未実施（承認なし）** |
-| DM3 | トレイから復旧 | DM2 の後、トレイメニューの「元に戻す」 | 元のモードに戻り、メニュー項目が消える | **未実施** |
+| DM2 | モード変更 | 承認後、副画面を一覧の別モードに `display_set_mode` | `verified`、`other_displays_changed: false`、画面が変わる | 確認: P2314H 1920×1080→1280×720 60 Hz、`verified`、618 ms、他画面の変化なし（承認あり, 2026-11-26） |
+| DM3 | トレイから復旧 | DM2 の後、トレイメニューの「元に戻す」 | 元のモードに戻り、メニュー項目が消える | 一部確認: トレイが呼ぶのと同じ `display_restore_mode` を executor 経由で実行し `verified`・516 ms（2026-11-26）。トレイのクリック操作そのものは未実施 |
 | DM4 | デバイス画面から復旧 | DM2 の後、デバイス画面の「元に戻す」 | 同上 | **未実施** |
 | DM5 | 非永続性 | DM2 の後、復旧せずにサインアウト/サインイン | 元のモードに戻る | **未実施** |
 | DM6 | 他の画面への影響 | 配置が上下・左右の 2 画面で DM2 | 他の画面の位置・モードが変わらない（変われば `partial`） | **未実施** |
 | DM7 | プライマリ・複製の拒否 | プライマリ / 複製表示を指定 | `NOT_SUPPORTED` / `AMBIGUOUS_TARGET`、変化なし | 未実施（フェイクで自動確認済み） |
 | DP1 | 能力と電源状態の読み取り | `display_get_state` + `include_switching: true` | `power.support: supported` と状態 | 一部確認: P2314H で D6(01 04 05)・現在 0x04 を取得。S2422HG は取得失敗（PowerDisplay 動作中, 2026-11-26） |
-| DP2 | 電源オフと通信消失 | 承認後、副画面を `off` | `verified` か `accepted`（`current_state: null`）。画面が消える | **未実施（承認なし）** |
-| DP3 | 電源オン | DP2 の後に `on` | 復帰するか、`DEVICE_DISCONNECTED` 等で失敗（物理ボタンで戻す） | **未実施** |
+| DP2 | 電源オフと通信消失 | 承認後、副画面を `off` | `verified` か `accepted`（`current_state: null`）。画面が消える | 確認: P2314H で `verified`（`current_state: off`）、画面が消えた（2026-11-26） |
+| DP3 | 電源オン | DP2 の後に `on` | 復帰するか、`DEVICE_DISCONNECTED` 等で失敗（物理ボタンで戻す） | 確認: P2314H は 2 回とも `OS_API_ERROR`（オフ中は能力文字列に応答せず、書き込み前に停止）。電源ボタンで復帰（2026-11-26） |
 | DI1 | 入力候補の読み取り | `include_switching: true` | 宣言された標準値だけが `inputs` に出る | 一部確認: P2314H で 01 03 0F を宣言、現在値は宣言外の 0x04（`current_input_id: null` になる形）を確認 |
-| DI2 | 入力切替と復帰 | 承認後、信号のある別入力へ → OSD で戻す | `verified` か `accepted`。名前と端子の対応を記録 | **未実施（承認なし）** |
+| DI2 | 入力切替と復帰 | 承認後、別入力へ → 戻す | `verified` / `accepted` / 正直な `VERIFICATION_FAILED`。名前と端子の対応を記録 | 確認: P2314H で DVI 1→VGA 1 は `VERIFICATION_FAILED`（`changed: true`、信号なしで宣言外の値）、DDC/CI で DVI 1 に戻して `verified`。HDMI 接続が MCCS では DVI 1（2026-11-26） |
 | DT1 | ツール画面 | 「すべて有効」と個別の切り替え、注意文 | Off の 3 ツールは一括では有効にならない、注意文が表示される | 未実施（App.Tests で自動確認） |
 | DT2 | 既存 DB のアップグレード | Phase 1C-1 の `%LOCALAPPDATA%\Sysacta` で起動 | 3 ツールは無効、既存クライアントに未付与。`display_restore_mode` はツール画面に出ない | 未実施（Mcp.Tests で自動確認済み） |
 

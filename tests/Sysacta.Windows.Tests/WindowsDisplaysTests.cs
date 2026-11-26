@@ -139,7 +139,7 @@ public class WindowsDisplaysTests(ITestOutputHelper output)
 
         foreach (var d in topology.Displays)
         {
-            output.WriteLine($"{d.Name} {d.Kind} {d.Connection} primary={d.IsPrimary} cloned={d.IsCloned} mode={d.CurrentMode}");
+            output.WriteLine($"{d.Name} {d.Id} {d.Kind} {d.Connection} primary={d.IsPrimary} cloned={d.IsCloned} mode={d.CurrentMode}");
             watch.Restart();
             try
             {
