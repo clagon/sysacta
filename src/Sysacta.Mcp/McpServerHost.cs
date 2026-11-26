@@ -186,7 +186,10 @@ public sealed class McpServerHost(ToolExecutor executor, TokenAuthenticator auth
             await app.DisposeAsync().ConfigureAwait(false);
             // Budgets and counters belong to this run of the host and own no timers (SEC-11); only the counted
             // rejections need writing before they are discarded.
-            guards?.FlushAggregates(force: true);
+            if (guards is not null)
+            {
+                await guards.CompleteAsync().ConfigureAwait(false);
+            }
         }
     }
 

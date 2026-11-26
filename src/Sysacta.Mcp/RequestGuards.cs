@@ -51,6 +51,9 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
     private readonly Dictionary<string, (AuditOutcome Outcome, long Count)> _aggregates = new(StringComparer.Ordinal);
     private DateTimeOffset? _aggregateStart;
 
+    // Background writes of counted rejections, chained so they run one at a time and can be awaited on stop.
+    private Task _aggregateWrites = Task.CompletedTask;
+
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
         var remote = NormalizeAddress(context.Connection.RemoteIpAddress);
@@ -211,13 +214,27 @@ internal sealed partial class RequestGuards(ServerEndpointOptions options, Token
     {
         if (TakeDueAggregates(force: false) is { } due)
         {
-            _ = Task.Run(() => WriteAggregates(due));
+            lock (_aggregateLock)
+            {
+                _aggregateWrites = _aggregateWrites.ContinueWith(_ => WriteAggregates(due), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+            }
         }
     }
 
-    internal void FlushAggregates(bool force)
+    /// <summary>
+    /// When the host stops: waits for background writes already started (their counters are already taken), then
+    /// writes whatever is still counted, so a normal shutdown loses no aggregated record.
+    /// </summary>
+    internal async Task CompleteAsync()
     {
-        if (TakeDueAggregates(force) is { } due)
+        Task pending;
+        lock (_aggregateLock)
+        {
+            pending = _aggregateWrites;
+        }
+
+        await pending.ConfigureAwait(false); // WriteAggregates never throws
+        if (TakeDueAggregates(force: true) is { } due)
         {
             WriteAggregates(due);
         }

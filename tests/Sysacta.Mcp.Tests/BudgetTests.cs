@@ -196,6 +196,43 @@ public class PreAuthenticationBudgetTests
         Assert.Contains("aggregate_count", csv.ToString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Stopping_the_host_waits_for_aggregated_records_being_written()
+    {
+        await using var f = await ServerFixture.StartAsync(new ServerEndpointOptions { Port = 0, RequestsPerMinutePerAddress = 1 });
+        using var http = f.Http(UnknownToken);
+        await SendAsync(http, 3); // 1 processed, 2 counted
+
+        // A valid client whose request writes nothing itself (its last-used time is recent).
+        var issued = f.Issue("audio_get_state");
+        using var valid = f.Http(issued.Token);
+        using (var c = f.Database.Open())
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "UPDATE clients SET last_used_at = $t WHERE id = $id";
+            cmd.Parameters.AddWithValue("$t", f.Time.GetUtcNow().AddMinutes(2).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$id", issued.Client.Id);
+            cmd.ExecuteNonQuery();
+        }
+
+        // Hold the database's write lock, so the background write of the counted rejections has to wait.
+        var blocker = f.Database.Open();
+        var lockTx = blocker.BeginTransaction();
+        f.Time.Advance(TimeSpan.FromSeconds(61));
+        Assert.Equal([HttpStatusCode.OK], await SendAsync(valid, 1)); // starts the background write
+
+        var stop = f.Host.StopAsync();
+        await Task.Delay(300, Ct);
+        Assert.False(stop.IsCompleted); // waiting for the write in progress
+        lockTx.Rollback();
+        lockTx.Dispose();
+        blocker.Dispose();
+        await stop;
+
+        var aggregated = Assert.Single(f.Audit.Query(new AuditQuery(Aggregated: true)));
+        Assert.Equal(2, aggregated.AggregateCount);
+    }
+
     [Theory]
     [InlineData("::ffff:192.0.2.7", "192.0.2.7")]
     [InlineData("fe80::1%3", "fe80::1")]
