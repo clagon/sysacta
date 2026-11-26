@@ -137,7 +137,7 @@ public sealed class AudioSetDefaultDeviceTool(
 
         foreach (var r in requested)
         {
-            if (results[r].Status == AudioDefaultRoleStatus.Unchanged)
+            if (results[r].Status is AudioDefaultRoleStatus.Unchanged or AudioDefaultRoleStatus.Changed)
             {
                 continue;
             }
@@ -209,15 +209,35 @@ public sealed class AudioSetDefaultDeviceTool(
             var drifted = false;
             foreach (var other in requested)
             {
-                if (other == r || results[other].Status is not (AudioDefaultRoleStatus.Changed or AudioDefaultRoleStatus.Unchanged))
+                if (other == r)
                 {
                     continue;
                 }
 
+                var otherPrev = before[(args.Direction, other)];
                 var otherCurr = after[(args.Direction, other)];
-                if (otherCurr != id)
+                if (results[other].Status == AudioDefaultRoleStatus.NotAttempted)
                 {
-                    var otherPrev = before[(args.Direction, other)];
+                    if (otherCurr != otherPrev)
+                    {
+                        if (otherCurr == id)
+                        {
+                            // Coupled by an earlier write to the requested target.
+                            results[other] = new(other, otherPrev, otherCurr, true, AudioDefaultRoleStatus.Changed, null);
+                        }
+                        else
+                        {
+                            // Changed to an unexpected device before we attempted it.
+                            results[other] = new(other, otherPrev, otherCurr, true, AudioDefaultRoleStatus.Failed, ErrorCodes.VerificationFailed);
+                            drifted = true;
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (results[other].Status is AudioDefaultRoleStatus.Changed or AudioDefaultRoleStatus.Unchanged && otherCurr != id)
+                {
                     results[other] = new(other, otherPrev, otherCurr, otherCurr != otherPrev, AudioDefaultRoleStatus.Failed, results[other].ErrorCode ?? ErrorCodes.VerificationFailed);
                     drifted = true;
                 }

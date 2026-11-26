@@ -20,12 +20,14 @@ public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewMod
     /// </summary>
     public override async Task RefreshAsync()
     {
-        var states = await Task.Run(() => runtime.Registry.All.ToDictionary(t => t.Name, t => runtime.Access.IsToolEnabled(t.Name)));
+        var states = await Task.Run(() => runtime.Registry.All.ToDictionary(
+            t => t.Name,
+            t => (Enabled: runtime.Access.IsToolEnabled(t.Name), Availability: t.GetAvailability())));
         if (Categories.Count > 0)
         {
             foreach (var item in Categories.SelectMany(c => c.Items))
             {
-                item.ApplyStoredValue(states[item.Name]);
+                item.ApplyStoredValue(states[item.Name].Enabled);
             }
 
             return;
@@ -33,7 +35,11 @@ public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewMod
 
         foreach (var group in runtime.Registry.All.GroupBy(t => t.Descriptor.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
-            var items = group.OrderBy(t => t.Name, StringComparer.Ordinal).Select(t => new ToolItem(this, t, states[t.Name]));
+            var items = group.OrderBy(t => t.Name, StringComparer.Ordinal).Select(t =>
+            {
+                var state = states[t.Name];
+                return new ToolItem(this, t, state.Enabled, state.Availability);
+            });
             Categories.Add(new ToolCategoryGroup(CategoryLabel(group.Key), [.. items]));
         }
     }
@@ -102,7 +108,7 @@ public sealed partial class ToolItem : ObservableObject
     private readonly ToolsViewModel _owner;
     private readonly LatestValueSaver<bool> _saver;
 
-    public ToolItem(ToolsViewModel owner, SysactaTool tool, bool enabled)
+    public ToolItem(ToolsViewModel owner, SysactaTool tool, bool enabled, ToolAvailability? precomputedAvailability = null)
     {
         _owner = owner;
         _isEnabled = enabled;
@@ -117,7 +123,7 @@ public sealed partial class ToolItem : ObservableObject
             DefaultPolicy.Off => "既定で無効・注意が必要な操作",
             _ => "実験的・非公開APIを使用",
         };
-        var availability = tool.GetAvailability();
+        var availability = precomputedAvailability ?? tool.GetAvailability();
         IsAvailable = availability.IsAvailable;
         AvailabilityText = availability.IsAvailable ? "" : $"この環境では利用できません: {availability.Reason}";
         CanTest = tool.Descriptor.ReadOnly && availability.IsAvailable;

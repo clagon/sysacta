@@ -300,6 +300,31 @@ public class AudioDefaultDeviceToolTests
     }
 
     [Fact]
+    public async Task Not_yet_attempted_role_changed_by_failed_earlier_write_returns_partial_with_data()
+    {
+        // Console write leaves Console unchanged (Failed), but couples Multimedia to spk2 before stopping.
+        _writer.Ignore.Add(AudioRole.Console);
+        _writer.OnWrite = (_, role) =>
+        {
+            if (role == AudioRole.Console)
+            {
+                _audio.RoleDefaults[(AudioDirection.Output, AudioRole.Multimedia)] = "spk2";
+            }
+        };
+
+        var r = await Call(new { device = "spk2", direction = "output", role = "all" });
+
+        Assert.Equal(ToolStatus.Partial, r.Status);
+        Assert.Equal(ErrorCodes.VerificationFailed, r.Error!.Code);
+        var roles = r.Data!["roles"]!.AsArray();
+        Assert.Equal("failed", (string)roles[0]!["status"]!);
+        Assert.Equal("changed", (string)roles[1]!["status"]!);
+        Assert.Equal("spk2", (string)roles[1]!["current_device_id"]!);
+        Assert.Equal("not_attempted", (string)roles[2]!["status"]!);
+        Assert.Single(_writer.Writes);
+    }
+
+    [Fact]
     public async Task Concurrent_all_and_single_role_calls_do_not_deadlock()
     {
         var t1 = Call(new { device = "spk2", direction = "output", role = "all" });
