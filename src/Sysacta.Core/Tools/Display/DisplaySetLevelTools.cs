@@ -137,6 +137,12 @@ public abstract class DisplaySetLevelTool<TArgs>(IDisplays displays, IDeviceAlia
             {
                 using var control = displays.Open(results[i].DeviceId, Feature, cancellationToken);
                 var before = control.Read().Validated();
+                if (!all)
+                {
+                    // Open can wait a long time for the adapter, and reads are slow: check the default target again.
+                    DisplayTarget.EnsureStillPrimary(displays.GetTopology(), args.Target, results[i].DeviceId);
+                }
+
                 var target = before.NativeFor(args.Level);
                 var known = results[i] with
                 {

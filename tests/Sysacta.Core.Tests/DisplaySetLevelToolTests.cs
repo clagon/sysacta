@@ -482,6 +482,41 @@ public class DisplaySetLevelToolTests
     }
 
     [Theory]
+    [InlineData("open", null, "TARGET_CHANGED")] // while waiting for the adapter
+    [InlineData("read", null, "TARGET_CHANGED")]
+    [InlineData("open", "display-a", null)] // an explicitly named display is still the target
+    public async Task A_primary_change_after_opening_the_display_stops_a_default_targeted_write(string during, string? device, string? code)
+    {
+        var (h, displays, caller) = Setup();
+        var moved = false;
+        void MovePrimary(string _)
+        {
+            if (!moved)
+            {
+                moved = true;
+                displays.Replace("display-a", d => d with { IsPrimary = false });
+                displays.Replace("display-b", d => d with { IsPrimary = true });
+            }
+        }
+
+        if (during == "open")
+        {
+            displays.OnOpen = MovePrimary;
+        }
+        else
+        {
+            displays.OnRead = MovePrimary;
+        }
+
+        var r = await Set(h, caller, 30, device);
+
+        Assert.Equal(code, r.Error?.Code);
+        Assert.Equal(code is null ? 1 : 0, displays.Writes.Count);
+        Assert.Equal(code is not null, r.Error?.Retryable ?? false);
+        Assert.Equal(0, displays.OpenControls);
+    }
+
+    [Theory]
     [InlineData("primary", "TARGET_CHANGED")]
     [InlineData("disconnect", "DEVICE_DISCONNECTED")]
     public async Task A_topology_change_while_waiting_changes_nothing(string change, string code)
