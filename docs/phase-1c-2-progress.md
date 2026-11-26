@@ -160,7 +160,7 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 | WSL2 (Linux) `dotnet build Sysacta.sln -c Release` | 警告 0・エラー 0 |
 | WSL2 `dotnet test Sysacta.sln -c Release` | Core 428 / Mcp 91 / Infrastructure 50 成功、Windows.Tests 27 成功・15 スキップ（Windows 専用）。App.Tests は対象外 |
 | 開発機 Windows 11 (build 26300) `dotnet.exe test`（`SYSACTA_HARDWARE_TESTS` 未設定、書き込みなし） | Core 428 / Mcp 91 / Infrastructure 50 / Windows 36 成功・6 スキップ（状態変更）。App 27 成功・1 スキップ・**1 失敗**: `Concurrent_start_and_settings_save_end_consistent` が起動中の別の Sysacta が使うポート 8765 に衝突（1C-1 と同じ環境要因。ポートが空いていた回は成功）。途中、新しいトレイのテストが既存のトレイのテストと並列に通知領域アイコンを作り testhost が異常終了したため、同じクラスに移して順次実行にした。新しい MCP テストの WAL 走査の競合（SQLite が `-wal` を削除）も修正（既存の `RejectionAuditTests` にも同じ断続的失敗があるが変更していない） |
-| Windows CI (windows-latest) | PR 作成後に記録 |
+| Windows CI (windows-latest, run 45790574770, PR #11 のコミット `55faacf` 時点) | build / test / smoke すべて成功。Core 428 / Mcp 91 / Infrastructure 50 / App 29 成功（開発機でポート衝突したテストも成功）/ Windows 33 成功・9 スキップ。ランナー上の読み取りテストは物理モニターの検証ではない |
 
 追加した主な自動テスト: `DisplayModeToolTests`（35 件: 検証・no-op・プライマリ/複製/仮想/不明の拒否、待機中にプライマリになった場合、厳格な引数、他機器・未列挙の `mode_id`、回転・スケーリング、現在モード不明、CDS_TEST 失敗、適用失敗で不変・別モード・読めない、他の表示の変化、準備中の失効・無効化、ネイティブ呼び出しのハングとロック保持、復旧の成功・無許可で動くこと・MCP から呼べないこと・記録なし・古い記録・別機器・既に元のモード・元のモードが消えた・同じ表示との排他）、`MccsTests` / `DisplaySwitchToolTests`（69 件: 能力文字列の正常/不正/上限、MCCS 3.0・未宣言・部分宣言の拒否、許可リスト、`input_id`、`include_switching` の既定と各失敗理由、電源・入力の検証・no-op・accepted・unknown・不一致・証拠なしの拒否・厳格な引数・他機器/未宣言/消えた入力・メーカー固有値・準備中の失効/無効化/期限切れ・ハング）、`DisplaySwitchingServerTests`（5 件: 新規/アップグレード DB で無効・未付与、無効/未許可で表示を開かない、復旧ツールが MCP の一覧に出ず呼べない、出力スキーマと isError、合成秘密が DB/WAL/CSV/応答に残らない）、`DisplayRecoveryUiTests`（App: 復旧文言、「すべて有効」が Off ツールを含まない、トレイの復旧項目の表示追従）、Windows.Tests（定数・オフセット、読み取り専用の実機テスト）。
 
