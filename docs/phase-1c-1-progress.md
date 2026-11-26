@@ -114,7 +114,7 @@ P/Invoke の x64 構造体サイズ（PATH_INFO 72 / MODE_INFO 64 / TARGET_DEVIC
 | WSL2 `dotnet test -c Release` | Core 304 / Mcp 86 / Infrastructure 50 成功、Windows.Tests 21 成功・14 スキップ（Windows 専用）。App.Tests は対象外 |
 | 開発機 Windows 11 (build 26300) `dotnet.exe test`（`SYSACTA_HARDWARE_TESTS` 未設定） | Core 304 / Mcp 86 / Infrastructure 50 / Windows 29 成功・6 スキップ（状態変更）。App 19 成功・1 スキップ・**1 失敗**: `Concurrent_start_and_settings_save_end_consistent` が、起動中の別の Sysacta が使うポート 8765 に衝突した（本変更と無関係の環境要因） |
 | 画面画像（`SYSACTA_SCREENSHOT_DIR`） | `devices-display-light/dark.png` を目視確認（100% 相当）。切れ・重なりなし |
-| Windows CI（build / test / smoke） | PR のチェックを参照 |
+| Windows CI (windows-latest, run 45763080666, コミット時点の PR #9) | build / test / smoke すべて成功。Core 304 / Mcp 86 / Infrastructure 50 / App 21 / Windows 26 成功・9 スキップ。開発機で失敗したポート衝突のテストも成功。ディスプレイの読み取りテストはランナー上でスキップされず成功（物理モニターの検証ではない） |
 
 ## 5. 機種別の確認状況（読み取りのみ）
 
