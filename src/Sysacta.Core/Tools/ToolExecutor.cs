@@ -170,6 +170,9 @@ public sealed partial class ToolExecutor
                 var d = _policy.Evaluate(caller, tool);
                 return d == AccessDecision.Allowed ? null : AccessPolicy.ToResult(d, tool);
             }, _gate);
+            // Cancellation competes atomically with the start point, even before the waiting caller resumes.
+            // The registration lives with the linked token source until the actual work has finished.
+            _ = token.UnsafeRegister(static state => { _ = ((ToolExecution)state!).TryAbandon(); }, execution);
             var work = Task.Run(() => tool.RunAsync(args, execution, token), CancellationToken.None);
             try
             {
