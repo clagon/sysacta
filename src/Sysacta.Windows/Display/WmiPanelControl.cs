@@ -12,6 +12,7 @@ namespace Sysacta.Windows.Display;
 internal sealed class WmiPanelControl(string instanceId, IDisposable release) : IDisplayControl
 {
     private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(5);
+    private readonly List<IDisposable> _owned = [];
     private bool _disposed;
 
     public DisplayControlMethod Method => DisplayControlMethod.Wmi;
@@ -33,25 +34,36 @@ internal sealed class WmiPanelControl(string instanceId, IDisposable release) : 
         });
     }
 
-    public void Write(long native)
+    public Action PrepareWrite(long native)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var value = checked((byte)native);
-        _ = Guard(() =>
+        var (panel, parameters) = Guard(() =>
         {
-            using var panel = Find("WmiMonitorBrightnessMethods");
-            using var parameters = panel.GetMethodParameters("WmiSetBrightness");
-            parameters["Timeout"] = 0u; // apply now
-            parameters["Brightness"] = value;
-            using var result = panel.InvokeMethod("WmiSetBrightness", parameters, new InvokeMethodOptions { Timeout = QueryTimeout });
-            if (result?.Properties.Cast<PropertyData>().FirstOrDefault(p => p.Name == "ReturnValue")?.Value is { } code
-                && Convert.ToUInt32(code, System.Globalization.CultureInfo.InvariantCulture) != 0)
-            {
-                throw new ToolFailureException(ErrorCodes.OsApiError, "Windows could not set the panel brightness.");
-            }
-
-            return 0;
+            var methods = Find("WmiMonitorBrightnessMethods");
+            _owned.Add(methods);
+            var input = methods.GetMethodParameters("WmiSetBrightness");
+            _owned.Add(input);
+            input["Timeout"] = 0u; // apply now
+            input["Brightness"] = value;
+            return (methods, input);
         });
+
+        return () =>
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _ = Guard(() =>
+            {
+                using var result = panel.InvokeMethod("WmiSetBrightness", parameters, new InvokeMethodOptions { Timeout = QueryTimeout });
+                if (result?.Properties.Cast<PropertyData>().FirstOrDefault(p => p.Name == "ReturnValue")?.Value is { } code
+                    && Convert.ToUInt32(code, System.Globalization.CultureInfo.InvariantCulture) != 0)
+                {
+                    throw new ToolFailureException(ErrorCodes.OsApiError, "Windows could not set the panel brightness.");
+                }
+
+                return 0;
+            });
+        };
     }
 
     public void Dispose()
@@ -59,6 +71,7 @@ internal sealed class WmiPanelControl(string instanceId, IDisposable release) : 
         if (!_disposed)
         {
             _disposed = true;
+            _owned.ForEach(o => o.Dispose());
             release.Dispose();
         }
     }

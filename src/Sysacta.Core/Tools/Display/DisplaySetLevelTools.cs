@@ -95,36 +95,40 @@ public abstract class DisplaySetLevelTool<TArgs>(IDisplays displays, IDeviceAlia
             return ValueTask.FromResult(new ToolTarget([DisplayTarget.DeviceKey(id)], id));
         }
 
-        // The list is fixed here: displays connected later are never added.
-        var keys = topology.Displays.Select(d => DisplayTarget.DeviceKey(d.Id)).Distinct(StringComparer.Ordinal).ToArray();
-        return keys.Length switch
+        // The batch is fixed here: displays connected (or becoming identifiable) later never join it or affect it.
+        var batch = topology.Displays.DistinctBy(d => d.Id, StringComparer.Ordinal).OrderBy(d => d.Id, StringComparer.Ordinal).ToArray();
+        return batch.Length switch
         {
             0 => throw new ToolFailureException(ErrorCodes.TargetNotFound, "There is no display that can be identified."),
             > MaxBatch => throw new ToolFailureException(ErrorCodes.InvalidArgument, $"'all' supports at most {MaxBatch} displays; specify one display."),
-            _ => ValueTask.FromResult(new ToolTarget(keys, DisplayTarget.All)),
+            _ => ValueTask.FromResult<ToolTarget>(new BatchTarget(
+                [.. batch.Select(d => DisplayTarget.DeviceKey(d.Id))], batch, topology.UnidentifiedCount)),
         };
     }
 
+    /// <summary>What 'all' resolved to: the displays to change and how many could not be identified at that moment.</summary>
+    private sealed record BatchTarget(IReadOnlyList<string> Keys, IReadOnlyList<DisplayInfo> Displays, int Unidentified)
+        : ToolTarget(Keys, DisplayTarget.All);
+
     protected override async Task<ToolOutcome<DisplaySetLevelData>> ExecuteAsync(TArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
-        var all = IsAll(args);
-        var topology = displays.GetTopology();
-        string[] ids;
-        if (all)
+        var batch = execution.Target as BatchTarget;
+        var all = batch is not null;
+        IReadOnlyList<DisplayInfo> targets;
+        if (batch is not null)
         {
-            var prefix = DisplayTarget.DeviceKey("");
-            ids = [.. execution.Target.LockKeys.Select(k => k[prefix.Length..]).Order(StringComparer.Ordinal)];
+            targets = batch.Displays;
         }
         else
         {
+            var topology = displays.GetTopology();
             DisplayTarget.EnsureStillPrimary(topology, args.Target, execution.TargetId!);
-            ids = [DisplayTarget.Current(topology, execution.TargetId!).Id];
+            targets = [DisplayTarget.Current(topology, execution.TargetId!)];
         }
 
-        var results = ids.Select(id => new DisplayLevelResult(
-            id, topology.Displays.FirstOrDefault(d => d.Id == id)?.Name ?? "(disconnected)", DisplayChangeStatus.NotAttempted,
-            null, null, null, false, null, null)).ToArray();
-        var unidentified = all ? topology.UnidentifiedCount : 0;
+        var results = targets.Select(d => new DisplayLevelResult(
+            d.Id, d.Name, DisplayChangeStatus.NotAttempted, null, null, null, false, null, null)).ToArray();
+        var unidentified = batch?.Unidentified ?? 0;
         DisplaySetLevelData Snapshot() => new(args.Level, [.. results], unidentified);
 
         ToolError? failure = null; // the first reason a display did not reach the target
@@ -137,20 +141,22 @@ public abstract class DisplaySetLevelTool<TArgs>(IDisplays displays, IDeviceAlia
             {
                 using var control = displays.Open(results[i].DeviceId, Feature, cancellationToken);
                 var before = control.Read().Validated();
+                var target = before.NativeFor(args.Level);
+                // Everything slow that changes nothing happens before the start point of the change.
+                var write = before.Current == target ? null : control.PrepareWrite(target);
                 if (!all)
                 {
-                    // Open can wait a long time for the adapter, and reads are slow: check the default target again.
+                    // Open can wait a long time for the adapter, and reads and preparation are slow: check the default target again.
                     DisplayTarget.EnsureStillPrimary(displays.GetTopology(), args.Target, results[i].DeviceId);
                 }
 
-                var target = before.NativeFor(args.Level);
                 var known = results[i] with
                 {
                     EffectiveLevel = before.ToLevel(target),
                     PreviousLevel = before.ToLevel(before.Current),
                     NativeRange = new(before.Min, before.Max),
                 };
-                if (before.Current == target)
+                if (write is null)
                 {
                     results[i] = known with { Status = DisplayChangeStatus.Unchanged, CurrentLevel = known.PreviousLevel };
                 }
@@ -174,7 +180,7 @@ public abstract class DisplaySetLevelTool<TArgs>(IDisplays displays, IDeviceAlia
 
                     try
                     {
-                        control.Write(target);
+                        write();
                         var after = await ReadBackAsync(control, target, cancellationToken).ConfigureAwait(false);
                         var matched = after.Current == target;
                         results[i] = known with

@@ -482,6 +482,151 @@ public class DisplaySetLevelToolTests
     }
 
     [Theory]
+    [InlineData("revoke")]
+    [InlineData("reissue")]
+    [InlineData("grant")]
+    [InlineData("global")]
+    [InlineData("expire")]
+    public async Task Permission_change_while_preparing_a_write_stops_that_write(string change)
+    {
+        foreach (var (during, expected) in new[]
+        {
+            ("display-a", new[] { "not_attempted", "not_attempted" }), // the first write
+            ("display-b", new[] { "changed", "not_attempted" }), // a later write
+        })
+        {
+            var (h, displays, caller) = Setup();
+            displays.OnPrepare = id =>
+            {
+                if (id == during)
+                {
+                    h.Update(() => ApplyChange(h, change));
+                }
+            };
+
+            var r = await Set(h, caller, 30, "all");
+
+            Assert.Contains(r.Error!.Code, new[] { ErrorCodes.PermissionDenied, ErrorCodes.ToolDisabled });
+            Assert.Equal(during == "display-a" ? 0 : 1, displays.Writes.Count);
+            Assert.Equal(0, displays.OpenControls);
+            if (during == "display-b")
+            {
+                Assert.Equal(ToolStatus.Partial, r.Status);
+                Assert.Equal(expected, Statuses(r));
+            }
+            else
+            {
+                Assert.Equal(AuditOutcome.Denied, h.Audit.Final(r.RequestId).Outcome);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("display-a", false)]
+    [InlineData("display-a", true)]
+    [InlineData("display-b", false)]
+    [InlineData("display-b", true)]
+    public async Task A_timeout_or_cancel_while_preparing_a_write_never_writes_it(string during, bool cancel)
+    {
+        var (h, displays, caller) = Setup(cancel ? null : TimeSpan.FromMilliseconds(500));
+        using var release = new ManualResetEventSlim();
+        using var preparing = new ManualResetEventSlim();
+        displays.OnPrepare = id =>
+        {
+            if (id == during)
+            {
+                preparing.Set();
+                release.Wait(CancellationToken.None); // a slow lookup that ignores cancellation
+            }
+        };
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+
+        var call = Set(h, caller, 30, "all", ct: cts.Token);
+        preparing.Wait(Ct);
+        if (cancel)
+        {
+            await cts.CancelAsync();
+        }
+
+        var r = await call;
+        release.Set();
+        await Drain(h);
+
+        Assert.Equal(cancel ? ErrorCodes.Cancelled : ErrorCodes.Timeout, r.Error!.Code);
+        Assert.Equal(0, displays.OpenControls);
+        if (during == "display-a")
+        {
+            Assert.Equal(ToolStatus.Error, r.Status); // nothing had started
+            Assert.Empty(displays.Writes);
+        }
+        else
+        {
+            Assert.Equal(ToolStatus.Unknown, r.Status);
+            Assert.Equal(["changed", "not_attempted"], Statuses(r));
+            Assert.Equal("display-a", Assert.Single(displays.Writes).Id);
+        }
+    }
+
+    [Fact]
+    public async Task A_failed_preparation_changes_nothing_and_the_batch_continues()
+    {
+        var (h, displays, caller) = Setup();
+        displays.OnPrepare = id =>
+        {
+            if (id == "display-a")
+            {
+                throw new ToolFailureException(ErrorCodes.OsApiError, "fixed");
+            }
+        };
+
+        var r = await Set(h, caller, 30, "all");
+
+        Assert.Equal(ToolStatus.Partial, r.Status);
+        Assert.Equal(["failed", "changed"], Statuses(r));
+        Assert.Equal("display-b", Assert.Single(displays.Writes).Id);
+    }
+
+    [Fact]
+    public async Task A_display_that_becomes_identifiable_while_waiting_still_counts_as_unidentified()
+    {
+        var (h, displays, caller) = Setup();
+        displays.Unidentified = 1;
+        h.Audit.OnWrite = e =>
+        {
+            if (e.Outcome == AuditOutcome.Pending) // after the batch was resolved, before it runs
+            {
+                displays.Unidentified = 0;
+                displays.Add("display-late", "late");
+            }
+        };
+
+        var r = await Set(h, caller, 30, "all");
+
+        Assert.Equal(ToolStatus.Partial, r.Status);
+        Assert.Equal(1, (int)r.Data!["unidentified_displays"]!);
+        Assert.Equal(["display-a", "display-b"], displays.Writes.Select(w => w.Id));
+    }
+
+    [Fact]
+    public async Task An_unidentified_display_connected_after_resolution_does_not_affect_the_batch()
+    {
+        var (h, displays, caller) = Setup();
+        h.Audit.OnWrite = e =>
+        {
+            if (e.Outcome == AuditOutcome.Pending)
+            {
+                displays.Unidentified = 1;
+            }
+        };
+
+        var r = await Set(h, caller, 30, "all");
+
+        Assert.True(r.IsSuccess);
+        Assert.Equal(0, (int)r.Data!["unidentified_displays"]!);
+    }
+
+    [Theory]
+    [InlineData("prepare", null, "TARGET_CHANGED")]
     [InlineData("open", null, "TARGET_CHANGED")] // while waiting for the adapter
     [InlineData("read", null, "TARGET_CHANGED")]
     [InlineData("open", "display-a", null)] // an explicitly named display is still the target
@@ -503,9 +648,13 @@ public class DisplaySetLevelToolTests
         {
             displays.OnOpen = MovePrimary;
         }
-        else
+        else if (during == "read")
         {
             displays.OnRead = MovePrimary;
+        }
+        else
+        {
+            displays.OnPrepare = MovePrimary;
         }
 
         var r = await Set(h, caller, 30, device);

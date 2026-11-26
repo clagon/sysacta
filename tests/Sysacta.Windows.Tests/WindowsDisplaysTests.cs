@@ -139,6 +139,8 @@ public class WindowsDisplaysTests(ITestOutputHelper output)
         using var control = new WmiPanelControl(@"DISPLAY\NONE000\0&0&0&UID0", new MemoryStream());
 
         var ex = Assert.Throws<ToolFailureException>(() => control.Read());
+        // Preparing a write only looks the panel up, so it fails the same way without changing anything.
+        Assert.Equal(ex.Code, Assert.Throws<ToolFailureException>(() => control.PrepareWrite(50)).Code);
 
         output.WriteLine($"WMI without a matching panel: {ex.Code}");
         Assert.Contains(ex.Code, new[] { ErrorCodes.NotSupported, ErrorCodes.AdminRequired, ErrorCodes.OsApiError });
@@ -205,13 +207,13 @@ public class WindowsDisplaysTests(ITestOutputHelper output)
         output.WriteLine($"{id} {feature}: {before.Current} -> {target} -> {before.Current}");
         try
         {
-            control.Write(target);
+            control.PrepareWrite(target)();
             Thread.Sleep(500);
             Assert.Equal(target, control.Read().Current);
         }
         finally
         {
-            control.Write(before.Current);
+            control.PrepareWrite(before.Current)();
         }
 
         Thread.Sleep(500);

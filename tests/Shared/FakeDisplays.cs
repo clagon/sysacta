@@ -57,6 +57,9 @@ public sealed class FakeDisplays : IDisplays
     public Action<string>? OnOpen { get; set; }
     public Action<string>? OnRead { get; set; }
 
+    /// <summary>Runs inside the preparation of a write (nothing is changed yet).</summary>
+    public Action<string>? OnPrepare { get; set; }
+
     /// <summary>Runs inside the native write, before it is applied.</summary>
     public Action<string>? OnWrite { get; set; }
 
@@ -127,7 +130,14 @@ public sealed class FakeDisplays : IDisplays
             return new LevelRange(level.Min, level.Max, level.Current, level.Allowed);
         }
 
-        public void Write(long native)
+        public Action PrepareWrite(long native)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            owner.OnPrepare?.Invoke(info.Id);
+            return () => Write(native);
+        }
+
+        private void Write(long native)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             owner.OnWrite?.Invoke(info.Id);

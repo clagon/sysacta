@@ -95,8 +95,13 @@ public interface IDisplayControl : IDisposable
     /// <summary>Reads the current value and range from the device.</summary>
     LevelRange Read();
 
-    /// <summary>Writes a native value. A failure does not prove the device is unchanged.</summary>
-    void Write(long native);
+    /// <summary>
+    /// Does everything needed to write <paramref name="native"/> that does not change the device (lookups, parameters)
+    /// and returns the write. The returned action performs only the native call that changes the device, so that
+    /// authorization can be checked immediately before it. A failure of that action does not prove the device is
+    /// unchanged. Valid until this control is disposed.
+    /// </summary>
+    Action PrepareWrite(long native);
 }
 
 /// <summary>

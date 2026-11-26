@@ -88,15 +88,19 @@ internal sealed class DdcCiControl : IDisplayControl
         throw Failure(error);
     }
 
-    public void Write(long native)
+    public Action PrepareWrite(long native)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var value = checked((uint)native);
-        var ok = _feature == DisplayFeature.Brightness ? SetMonitorBrightness(_handle, value) : SetMonitorContrast(_handle, value);
-        if (!ok)
+        return () =>
         {
-            throw Failure(Marshal.GetLastPInvokeError());
-        }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var ok = _feature == DisplayFeature.Brightness ? SetMonitorBrightness(_handle, value) : SetMonitorContrast(_handle, value);
+            if (!ok)
+            {
+                throw Failure(Marshal.GetLastPInvokeError());
+            }
+        };
     }
 
     public void Dispose()

@@ -53,7 +53,7 @@ P/Invoke の x64 構造体サイズ（PATH_INFO 72 / MODE_INFO 64 / TARGET_DEVIC
 - 読み取り（get_state と管理画面）と書き込みの調停は、`WindowsDisplays` の**プロセス全体で 1 つのゲート**（開く → 読む → 書く → 読み戻す → 閉じる、まで保持）。共用バスを確実に識別できないため保守的に直列化する。
 - ロックの順序は常に「executor のリソースロック → 実行スロット → アダプターのゲート」。ゲートを持つ側がリソースロックを取ることはないのでデッドロックしない。ゲート待ちは呼び出しのキャンセル/タイムアウトで打ち切る。
 - ゲートを開いた後に同じ ID を再解決し、ハンドル取得後にも source 名が同じ target のままか確認する。
-- `BeginSideEffect` / `BeginNextSideEffect` はゲート取得と読み取りの後、ネイティブ書き込みの直前に呼ぶ（ゲート待ちの間の失効も反映される）。
+- `BeginSideEffect` / `BeginNextSideEffect` はゲート取得・読み取り・書き込み準備（`IDisplayControl.PrepareWrite`。WMI のインスタンス検索とパラメーター作成）の後、ネイティブ書き込みの直前に呼ぶ（準備中の失効・タイムアウトも反映される）。戻り値の操作は `SetMonitorBrightness` / `SetMonitorContrast` / `InvokeMethod` だけを行う。
 - ネイティブ呼び出しが返らない場合、executor がロック・スロット・ハンドル・ゲートを終了まで保持する。その間の他の DDC/CI 呼び出しはタイムアウトする（何も変更しない）。サーバーの停止・再起動では解放されず、解放されるのは呼び出しの終了かプロセス終了。
 
 ### 値と検証
@@ -65,7 +65,7 @@ P/Invoke の x64 構造体サイズ（PATH_INFO 72 / MODE_INFO 64 / TARGET_DEVIC
 
 ### 一括（`device: "all"`）と結果
 
-- 対象は解決時の全アクティブ表示（ID で重複排除、最大 8。超過は開始前に `INVALID_ARGUMENT`、0 件は `TARGET_NOT_FOUND`）。後から接続した機器は加えない。
+- 対象は解決時の全アクティブ表示（ID で重複排除、最大 8。超過は開始前に `INVALID_ARGUMENT`、0 件は `TARGET_NOT_FOUND`）。対象と未識別台数は解決時の値を `ToolTarget` の派生レコードで保持する。後から接続した機器・識別できるようになった機器は対象にも判定にも加えない（`unidentified_displays` も解決時の値）。
 - 単一指定と同じ実行経路。順に 1 台ずつ処理する。
 - **続行するのは対象の状態が分かっている失敗だけ**: 書き込み前の失敗（非対応・曖昧・切断・読み取り失敗・範囲不正）と、読み戻せた上での不一致。**中止するのは**書き込み後の結果不明、後続書き込みの認可拒否、キャンセル、タイムアウト。
 - 集計: 結果不明が 1 つでもあれば `unknown`。全対象が `changed`/`unchanged`（かつ未識別 0）なら `success`/`verified`。`changed` が 1 つ以上あり未達があれば `partial`。それ以外は `error`（不一致で値だけ動いた場合は `devices[].changed = true` で分かる）。
@@ -84,6 +84,7 @@ P/Invoke の x64 構造体サイズ（PATH_INFO 72 / MODE_INFO 64 / TARGET_DEVIC
 ### 共通基盤の変更（最小限）
 
 - `ToolOutcome.Error<TData>(data, code, message)` を追加し、executor は対象別の結果を持つ `error` をそのまま返す（監査は `error`）。`partial` / `unknown` が開始済みを要求する規則は変えていない。
+- `ToolTarget` の `sealed` を外し、ツールが解決結果（一括の対象など）を型付きで持てるようにした。
 - 管理コンソールの「動作確認」は、必須引数のあるツール（`display_list_modes`）では無効にする（引数なしで実行するため）。
 - 認証・認可・監査・要求予算・オーディオの JSON 契約は変更していない。
 
