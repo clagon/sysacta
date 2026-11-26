@@ -58,7 +58,10 @@
         <ui:NavigationViewItem Content="クライアント" TargetPageType="{x:Type views:ClientsPage}">
           <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="KeyMultiple24" /></ui:NavigationViewItem.Icon>
         </ui:NavigationViewItem>
-        <!-- Phase 1/2 pages (デバイス, アプリ) are added here when their features exist. No placeholder pages. -->
+        <ui:NavigationViewItem Content="デバイス" TargetPageType="{x:Type views:DevicesPage}">
+          <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Speaker224" /></ui:NavigationViewItem.Icon>
+        </ui:NavigationViewItem>
+        <!-- Phase 2 pages (アプリ) are added here when their features exist. No placeholder pages. -->
         <ui:NavigationViewItem Content="監査ログ" TargetPageType="{x:Type views:LogsPage}">
           <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="DocumentBulletList24" /></ui:NavigationViewItem.Icon>
         </ui:NavigationViewItem>

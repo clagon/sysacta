@@ -38,6 +38,20 @@ public abstract partial class PageViewModel : ObservableObject
 
     protected void ClearMessage() => HasMessage = false;
 
+    /// <summary>Confirmation dialog for destructive or hard-to-notice changes.</summary>
+    protected static async Task<bool> ConfirmAsync(string title, string message, string action)
+    {
+        var box = new Wpf.Ui.Controls.MessageBox
+        {
+            Title = title,
+            Content = message,
+            PrimaryButtonText = action,
+            PrimaryButtonAppearance = ControlAppearance.Primary,
+            CloseButtonText = "キャンセル",
+        };
+        return await box.ShowDialogAsync() == Wpf.Ui.Controls.MessageBoxResult.Primary;
+    }
+
     /// <summary>
     /// Runs <paramref name="work"/> with the busy flag set and converts failures into an error message.
     /// Returns false when it failed.

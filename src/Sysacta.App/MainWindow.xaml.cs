@@ -29,6 +29,7 @@ public partial class MainWindow
             new ConnectionPage(new ConnectionViewModel(runtime)),
             new ToolsPage(new ToolsViewModel(runtime)),
             new ClientsPage(new ClientsViewModel(runtime)),
+            new DevicesPage(new DevicesViewModel(runtime)),
             new LogsPage(new LogsViewModel(runtime)),
             new GeneralPage(new GeneralViewModel(runtime, () => this)));
         Navigation.SetServiceProvider(_pages);

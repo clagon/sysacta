@@ -65,6 +65,12 @@ public class PageScreenshots
 
         yield return ("clients", new ClientsPage(clients));
 
+        var devices = new DevicesViewModel(null!);
+        devices.Show(SampleDevices(), [new("desk", "{0.0.0.00000000}.{speakers}"), new("old-headset", "{0.0.0.00000000}.{gone}")]);
+        devices.Selected = devices.Devices[0];
+        devices.SelectedAlias = "desk";
+        yield return ("devices", new DevicesPage(devices));
+
         var logs = new LogsViewModel(null!) { RetentionDays = 30, HasEvents = true, ResultSummary = "46 件" };
         foreach (var e in SampleEvents(now))
         {
@@ -74,6 +80,15 @@ public class PageScreenshots
         yield return ("logs", new LogsPage(logs));
         yield return ("general", new GeneralPage(new GeneralViewModel(null!, () => null!)));
     }
+
+    private static AudioDeviceListData SampleDevices() => new(
+        [
+            new("{0.0.0.00000000}.{speakers}", "スピーカー (とても長いオーディオデバイス名の表示確認用 High Definition Audio)", AudioDirection.Output, AudioDeviceState.Active, true, [AudioRole.Console, AudioRole.Multimedia], 40, false, ["desk"], ["audio_get_state", "audio_set_volume", "audio_set_mute", "audio_list_sessions"], null),
+            new("{0.0.1.00000000}.{mic}", "マイク", AudioDirection.Input, AudioDeviceState.Unplugged, false, [], null, null, [], ["audio_get_state"], null),
+        ],
+        2,
+        0,
+        false);
 
     private static IEnumerable<AuditEvent> SampleEvents(DateTimeOffset now) =>
         Enumerable.Range(0, 8).Select(i => new AuditEvent
