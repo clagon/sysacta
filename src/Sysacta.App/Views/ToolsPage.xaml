@@ -38,6 +38,7 @@
                               <TextBlock FontFamily="Cascadia Mono, Consolas" Style="{StaticResource Body}" FontWeight="SemiBold" Text="{Binding Name}" />
                               <TextBlock Margin="0,2,0,0" Style="{StaticResource Caption}" Text="{Binding Description}" />
                               <TextBlock Margin="0,4,0,0" Style="{StaticResource Caption}" Text="{Binding PolicyLabel}" />
+                              <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource SystemFillColorCautionBrush}" FontSize="12" Text="注意: 非公開の Windows API を使用します。将来の Windows 更新で動作しなくなる可能性があり、通話・会議・録音に影響します（実機未検証）。" TextWrapping="Wrap" Visibility="{Binding IsExperimental, Converter={StaticResource BoolToVisibility}}" />
                               <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource SystemFillColorCautionBrush}" FontSize="12" Text="{Binding AvailabilityText}" TextWrapping="Wrap" Visibility="{Binding IsAvailable, Converter={StaticResource InverseBoolToVisibility}}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
