@@ -7,6 +7,8 @@
 | `audio_get_state` | 読み取り専用 | `src/Sysacta.Core/Tools/Audio/AudioGetStateTool.cs` |
 | `audio_set_volume` | 状態変更(検証あり) | `src/Sysacta.Core/Tools/Audio/AudioSetVolumeTool.cs` |
 | 対象デバイスの解決 | 共通処理 | `src/Sysacta.Core/Tools/Audio/AudioTarget.cs` |
+| 実体が入れ替わり得る対象(音声セッション) | 不透明 ID・再照合・同じ実体への書き込み | `src/Sysacta.Core/Tools/Audio/AudioSessions.cs` |
+| ツールと管理画面で同じ一覧を出す | 共通処理 | `src/Sysacta.Core/Tools/Audio/AudioDeviceCatalog.cs` |
 | OS アダプター契約 | インターフェース | `src/Sysacta.Core/Tools/Audio/IAudioEndpoints.cs` |
 | OS アダプター実装 | Windows (NAudio/COM) | `src/Sysacta.Windows/Audio/CoreAudioEndpoints.cs` |
 | 単体テスト(フェイク) | Core.Tests | `tests/Sysacta.Core.Tests/AudioToolTests.cs` |
@@ -92,10 +94,12 @@ public sealed class DisplaySetBrightnessTool(IDisplays displays, IDeviceAliases 
     protected override ValueTask<ToolTarget> ResolveTargetAsync(DisplaySetBrightnessArgs args, CancellationToken ct)
         => /* ID/別名/既定 → 具体的なID。ロックキーは "display:device:{id}" */;
 
-    protected override Task<ToolOutcome<DisplaySetBrightnessData>> ExecuteAsync(DisplaySetBrightnessArgs args, ToolTarget target, CancellationToken ct)
+    protected override Task<ToolOutcome<DisplaySetBrightnessData>> ExecuteAsync(DisplaySetBrightnessArgs args, ToolExecution execution, CancellationToken ct)
     {
+        // 解決済みの対象は execution.TargetId
         // 1. 変更前の値を読む  2. 既に目標値なら no-op (Changed=false, Verified)
-        // 3. ct.ThrowIfCancellationRequested() → 変更  4. 読み戻して一致すれば Verified、違えば VERIFICATION_FAILED
+        // 3. ct.ThrowIfCancellationRequested() → execution.BeginSideEffect() → 変更
+        // 4. 読み戻して一致すれば Verified、違えば VERIFICATION_FAILED
         // 変更後の処理(読み戻しなど)が失敗したら ToolOutcomeUnknownException を投げる(status=unknown になる)
     }
 }

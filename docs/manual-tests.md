@@ -64,6 +64,27 @@ $env:SYSACTA_HARDWARE_TESTS = "1"; dotnet test tests/Sysacta.Windows.Tests -c Re
 | A7 | 同時呼び出し | 同じデバイスへの set_volume を並列に 20 回 | すべて verified、値が交錯しない | 未実施(フェイクで自動確認済み) |
 | A8 | 外部からの変更 | set 直後に Windows の音量ミキサーで変更 | VERIFICATION_FAILED になり得る(外部変更は排他できない) | 未実施 |
 
+## Phase 1B チェックリスト(オーディオ)
+
+状態を変える項目は、通話・会議・録音中でない機器で、手動で行い、元の値に戻す。
+
+自動テストでの実機確認(2026-11-26、開発機の Windows 11、.NET 10.0.15、Windows の一時フォルダーに出力をコピーして `dotnet.exe` で実行): Core 185 / Infrastructure 50 / Mcp 74 / App 17 / Windows 9 件成功。Windows.Tests の状態変更 3 件(`SYSACTA_HARDWARE_TESTS=1`)は**未実施**。列挙は 46 エンドポイント(失敗 0)、既定出力のセッションは 12 件(失敗 0)。WSL のパス(UNC)から直接実行すると Mcp / App のテストは出力なしで停止した(原因未調査)。
+
+| # | 項目 | 手順 | 期待結果 | 状況 |
+|---|---|---|---|---|
+| B1 | デバイス列挙 | `audio_list_devices` を direction=all/output/input で実行し、Windows の「サウンド」設定と比較 | 名称・状態・既定が一致。非接続は volume/muted が null | アダプターの列挙と既定 3 役割の整合のみ確認済み(Windows.Tests)。設定画面との目視比較は未確認 |
+| B2 | 役割の区別 | 通信の既定デバイスを別の機器にして列挙 | `default_roles` が console/multimedia と communications で分かれる | 未確認 |
+| B3 | デバイスのミュート | `audio_set_mute` を出力と入力で true → false | `verified`、音量は不変、Windows の表示も変わる | 未確認(`Set_mute_changes_and_restores_the_real_device` 未実施) |
+| B4 | セッション列挙 | 2 つ以上のアプリで再生して `audio_list_sessions` | 音量ミキサーと対応する名前・音量・ミュート。パスやウィンドウ内容がない | 列挙・1 件を開いて読み取り・名前にパスがないことは確認済み。音量ミキサーとの目視比較は未確認 |
+| B5 | アプリ別音量・ミュート | 対象アプリの session_id に `audio_set_app_volume` / `audio_set_app_mute` | そのセッションだけが変わり、デバイス音量と他アプリは不変 | 未確認(`System_sounds_session_volume_and_mute_change_and_restore` 未実施) |
+| B6 | セッションの再生成 | アプリを再起動して古い session_id を使う | TARGET_NOT_FOUND。新しいセッションは変わらない | 未確認(フェイクで自動確認済み) |
+| B7 | 同じアプリの複数セッション | ブラウザーなど複数セッションを持つアプリで列挙・変更 | 別々の session_id。指定した 1 件だけ変わる | 未確認(フェイクで自動確認済み。実機の列挙で ID の重複がないことは確認) |
+| B8 | 切断 | USB/Bluetooth 機器を外して、その別名で `audio_set_mute`、その機器のセッション ID で変更 | DEVICE_DISCONNECTED / TARGET_NOT_FOUND。別の機器は変わらない | 未確認 |
+| B9 | デバイス画面 | 別名の追加・変更・削除・再紐付け、再読み込み、機器を外した状態の表示、キーボード操作 | 確認ダイアログが出て反映される。外した機器は状態で分かる | 未確認(XAML・画面画像・追加操作は App.Tests。確認ダイアログとキーボード操作は未確認) |
+| B10 | デバイス画面の表示 | ライト/ダーク、125〜175% の DPI、最小ウィンドウ幅 | 切れ・重なりがない | 100% 相当の画面画像(ライト/ダーク)のみ確認 |
+| B11 | 既存 DB のアップグレード | Phase 1A の `%LOCALAPPDATA%\Sysacta` で起動 | 新しい 5 ツールは無効、既存クライアントに未付与 | 未確認(Mcp.Tests で自動確認済み) |
+| B12 | 実クライアント接続 | Claude Desktop / Codex から 5 ツールを呼び出す | スキーマが受理され、結果が読める | 未確認 |
+
 ## 2026-11-25 の開発環境での制約
 
 開発機 (Windows 11 + WSL2) では以下の理由でアプリ本体と DB を使うテストを Windows 上で実行できませんでした。CI (GitHub Actions `windows-latest`) で自動テストを実行してください。
