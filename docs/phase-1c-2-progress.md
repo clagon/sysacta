@@ -8,7 +8,7 @@
 |---|---|---|
 | 技術調査 | 完了 | 本ファイル §1 |
 | `display_set_mode`（Core / Windows） | 実装・自動テスト済み。**利用者の承認のもと DELL P2314H で実機確認**（変更・読み戻し・他画面の比較が `verified`） | `DisplayModeTools.cs`, `DisplayModeControl.cs` |
-| ローカル復旧（`display_restore_mode`、トレイメニュー、デバイス画面） | 実装・自動テスト済み。復旧ツールは実機で確認（executor 経由、`verified`）。**トレイ・デバイス画面のボタン操作そのものは実機未確認** | `DisplayModeTools.cs`, `TrayIcon.cs`, `DevicesViewModel.cs` |
+| ローカル復旧（`display_restore_mode`、トレイメニュー、デバイス画面） | 実装・自動テスト済み。**実際のアプリでトレイメニューとデバイス画面のボタンから復旧できることを利用者が確認**。MCP からは `Unknown tool`（-32602）で拒否されることも確認 | `DisplayModeTools.cs`, `TrayIcon.cs`, `DevicesViewModel.cs` |
 | `display_set_power` / `display_set_input`（Core / Windows） | 実装・自動テスト済み。**承認のもと P2314H で実機確認**: off は `verified`、**on はオフ中のモニターが DDC/CI に応答せず実行不能**（書き込みなし。電源ボタンで復帰）。入力切替は結果を正しく報告（§6） | `DisplaySwitchTools.cs`, `Mccs.cs`, `DdcCiSwitchControl.cs` |
 | `display_get_state` の `include_switching` | 実装・自動テスト済み。実機で読み取り確認 | `DisplayReadTools.cs` |
 | 3 ツールの初期無効・個別許可 | 実装・自動テスト済み（新規 DB・アップグレード・既存クライアント） | `ToolCatalog.cs`, `ToolsViewModel.cs` |
@@ -195,7 +195,17 @@ P/Invoke: `DEVMODEW` に `dmDriverExtra`（offset 70）と `dmFields`（offset 7
 - 信号のない入力に切り替えた後は宣言外の値が読める（`VERIFICATION_FAILED`、`changed: true` として正しく報告され、`accepted` や成功にはならない）。DDC/CI はその状態でも応答し、切り戻せた。
 - 能力文字列の取得は PowerDisplay 停止後は 3 回とも成功（約 4.1 秒）。同時に動かすと失敗が多かったことと整合する。
 
-- 未検証: トレイ・デバイス画面のボタンからの復旧操作、非永続性（サインアウト後の復帰）、他画面の配置が変わる構成（上下配置など）、HPD が消える機種、内蔵パネルのモード変更、複製・ドック・MST、MCCS 3.0 のモニター、S2422HG への書き込み。1 台の結果は他の機種の対応を意味しない。
+### 実アプリでの復旧ボタンの確認（2026-11-26、利用者の承認と操作）
+
+新しいビルドの Sysacta.exe を利用者の通常のデータ（`%LOCALAPPDATA%\Sysacta`、既存 DB）で起動した。
+
+- アップグレード: 3 ツールは無効（`enabled = 0`）で追加された。利用者がツール画面で個別に有効化し、クライアントを発行した。
+- MCP（実際の HTTP、Bearer トークン）: `tools/list` に `display_restore_mode` は出ない。`display_set_mode` で P2314H を 1280×720 に変更して `verified`、`recovery_available: true`。MCP から `display_restore_mode` を呼ぶとプロトコルエラー `-32602 Unknown tool`。
+- トレイメニューの「直前の表示モード変更を元に戻す」: 利用者がクリックし、1920×1080 に戻り、通知が出て項目が消えた（次の変更の `previous_mode` が 1920×1080 であることでも確認）。
+- デバイス画面の「元に戻す」: もう一度 1280×720 にした後に利用者がクリックし、1920×1080 に戻り、成功の通知が出て欄が消えた。最後に MCP の `display_list_modes` で現在モード 1920×1080 60 Hz を確認。
+- 確認用のトークンのファイルは削除し、クライアントの失効を利用者に依頼した。
+
+- 未検証: 非永続性（サインアウト後の復帰）、他画面の配置が変わる構成（上下配置など）、HPD が消える機種、内蔵パネルのモード変更、複製・ドック・MST、MCCS 3.0 のモニター、S2422HG への書き込み。1 台の結果は他の機種の対応を意味しない。
 
 ## 7. 仕様・指示書との差分
 
