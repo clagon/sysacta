@@ -43,6 +43,7 @@ public sealed class AudioSetVolumeTool(IAudioEndpoints endpoints, IDeviceAliases
     protected override Task<ToolOutcome<AudioSetVolumeData>> ExecuteAsync(AudioSetVolumeArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
         var id = execution.TargetId!;
+        AudioTarget.EnsureStillDefault(endpoints, args.Device, args.Direction, id);
         var before = endpoints.GetEndpoint(id);
         if (before.State != AudioDeviceState.Active || before.VolumeScalar is not { } previousScalar)
         {

@@ -25,6 +25,7 @@ public sealed class ServerFixture : IAsyncDisposable
     public McpServerHost Host { get; }
     public FakeAudioEndpoints AudioDevice { get; } = new();
     public FakeAudioSessions Sessions { get; } = new();
+    public FakeDefaultEndpointWriter DefaultWriter { get; }
     public BlockingTool Blocking { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time). The executor and the store use the system clock.</summary>
@@ -42,6 +43,7 @@ public sealed class ServerFixture : IAsyncDisposable
         Counted = new CountingStore(Store);
         Audit = new AuditLog(Database, limits);
         AudioDevice.Devices["spk"] = AudioDevice.Devices["spk"] with { VolumeScalar = 0.4f };
+        DefaultWriter = new FakeDefaultEndpointWriter(AudioDevice);
         var registry = new ToolRegistry(
         [
             new AudioGetStateTool(AudioDevice, Store),
@@ -51,6 +53,7 @@ public sealed class ServerFixture : IAsyncDisposable
             new AudioListSessionsTool(AudioDevice, Store, Sessions),
             new AudioSetAppVolumeTool(AudioDevice, Sessions),
             new AudioSetAppMuteTool(AudioDevice, Sessions),
+            new AudioSetDefaultDeviceTool(AudioDevice, Store, DefaultWriter),
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");

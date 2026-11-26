@@ -4,7 +4,7 @@ A native Windows control MCP server for AI agents.
 
 Sysacta is a Windows 11 desktop utility that exposes structured system-management tools through the Model Context Protocol (MCP). It is designed for local and self-hosted personal AI agents without granting arbitrary shell or GUI access.
 
-> **Status:** The foundation (Phase 0 and 1A: MCP server, per-client Bearer tokens and permissions, bounded audit log, WPF management console and tray icon) and the standard audio tools (Phase 1B, with a device/alias page) are implemented. Changing the default audio device and everything else under "Planned features" is not implemented. State-changing audio tools have only partly been verified on real hardware (see [docs/manual-tests.md](docs/manual-tests.md)). There are no release builds yet; build from source. See [docs/phase-1b-progress.md](docs/phase-1b-progress.md) for verification results and known limitations.
+> **Status:** The foundation (Phase 0 and 1A: MCP server, per-client Bearer tokens and permissions, bounded audit log, WPF management console and tray icon), the standard audio tools (Phase 1B, with a device/alias page), and the experimental default audio device tool (`audio_set_default_device`, Phase 1B-EXP, disabled by default and **not yet verified on real hardware**) are implemented. Everything else under "Planned features" is not implemented. State-changing audio tools have only partly been verified on real hardware (see [docs/manual-tests.md](docs/manual-tests.md)). There are no release builds yet; build from source. See [docs/phase-1b-progress.md](docs/phase-1b-progress.md) and [docs/phase-1b-exp-progress.md](docs/phase-1b-exp-progress.md) for verification results and known limitations.
 
 ## Currently available
 
@@ -17,14 +17,14 @@ Sysacta is a Windows 11 desktop utility that exposes structured system-managemen
 | `audio_list_sessions` | Per-app playback sessions of an output device | Enabled |
 | `audio_set_app_volume` | Sets the volume of one app session (by `session_id`) and verifies it | Enabled |
 | `audio_set_app_mute` | Mutes or unmutes one app session and verifies it | Enabled |
+| `audio_set_default_device` | **Experimental** (undocumented Windows COM API, unverified on real hardware): sets the default audio device by direction and role (`console` / `multimedia` / `communications` / `all`) | Disabled (Experimental) |
 
-"Enabled" applies to new installations. When an existing installation is upgraded, newly added tools start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console.
+"Enabled" applies to new installations. Experimental tools and newly added tools on upgrade start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console.
 
 ## Planned features
 
 | Category | Capabilities |
 | --- | --- |
-| Audio | Changing the default audio device (experimental) |
 | Display | Brightness, contrast, display settings and supported DDC/CI controls |
 | Media | Playback control and media session information |
 | Power | Lock, sleep, shutdown, restart and power plans |

@@ -38,6 +38,7 @@ public sealed class AudioSetMuteTool(IAudioEndpoints endpoints, IDeviceAliases a
     protected override Task<ToolOutcome<AudioSetMuteData>> ExecuteAsync(AudioSetMuteArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
         var id = execution.TargetId!;
+        AudioTarget.EnsureStillDefault(endpoints, args.Device, args.Direction, id);
         var before = endpoints.GetEndpoint(id);
         if (before.State != AudioDeviceState.Active || before.IsMuted is not { } previous)
         {

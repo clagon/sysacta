@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Sysacta.Core.Security;
 
 namespace Sysacta.Core.Tools;
@@ -15,6 +16,8 @@ public sealed class ToolExecution
     private readonly Func<ToolResult?> _authorize;
     private readonly AuthorizationGate _gate;
     private int _state;
+    private int _detached;
+    private JsonNode? _progress;
 
     internal ToolExecution(ToolTarget target, Func<ToolResult?> authorize, AuthorizationGate gate)
     {
@@ -64,7 +67,52 @@ public sealed class ToolExecution
         });
     }
 
+    /// <summary>
+    /// Re-checks cancellation, executor detachment (timeout/cancel), and authorization immediately before a subsequent
+    /// OS write in a multi-step tool. Must be called only after <see cref="BeginSideEffect"/>.
+    /// When this returns a non-null <see cref="ToolError"/>, the caller must NOT perform the next write and must report
+    /// any already-applied changes (typically as <see cref="ToolStatus.Partial"/>) without rolling back.
+    /// </summary>
+    public ToolError? BeginNextSideEffect(CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _state) != Started)
+        {
+            throw new InvalidOperationException("BeginSideEffect must be called before BeginNextSideEffect.");
+        }
+
+        if (Volatile.Read(ref _detached) != 0 || cancellationToken.IsCancellationRequested)
+        {
+            return new ToolError(ErrorCodes.Cancelled, "The operation was cancelled or timed out before the next change started.", false);
+        }
+
+        return _gate.Evaluate(() =>
+        {
+            if (Volatile.Read(ref _detached) != 0 || cancellationToken.IsCancellationRequested)
+            {
+                return new ToolError(ErrorCodes.Cancelled, "The operation was cancelled or timed out before the next change started.", false);
+            }
+
+            if (_authorize() is { } refusal)
+            {
+                return (refusal.Error ?? new ToolError(ErrorCodes.PermissionDenied, "Authorization was revoked.", false)) with { Retryable = false };
+            }
+
+            if (Volatile.Read(ref _detached) != 0 || cancellationToken.IsCancellationRequested)
+            {
+                return new ToolError(ErrorCodes.Cancelled, "The operation was cancelled or timed out before the next change started.", false);
+            }
+
+            return null;
+        });
+    }
+
     internal bool HasStarted => Volatile.Read(ref _state) == Started;
+
+    internal JsonNode? Progress => Volatile.Read(ref _progress);
+
+    internal void SetProgress(JsonNode? data) => Volatile.Write(ref _progress, data);
+
+    internal void Detach() => Interlocked.Exchange(ref _detached, 1);
 
     /// <summary>
     /// Called by the executor on timeout/cancellation. Returns true if the side effect had not started; it then can no

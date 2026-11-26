@@ -111,12 +111,12 @@ public sealed class DisplaySetBrightnessTool(IDisplays displays, IDeviceAliases 
 - 省略可能な引数は「省略」で表す。明示的な `null` と、公開した綴り以外の列挙値(`"Output"`、`"output, input"` など)は検証で拒否される。
 - OS に渡す識別子(デバイス ID・別名など)には `[NoControlCharacters]` を付ける(検証で拒否され、監査にも残らない)。
 - 状態変更ツールの排他キーと実行対象には、入力の文字列ではなく OS が返した正規の ID を使う(参考: `AudioTarget.Resolve`)。`ToolTarget.TargetId` は監査ログに `target` として記録されるので、OS や登録情報から得た識別子だけを入れる。
-- **状態変更ツールは、最初の OS 書き込みの直前に `execution.BeginSideEffect()` を必ず呼ぶ。** ここで最終の認可が行われ(直前に完了した失効や権限変更で拒否される)、以降のタイムアウトは `unknown`、それより前なら「何も変更していない」になる。読み取りや検証、no-op の判定はその前に済ませる。呼んだ後に入れてよいのは OS への書き込みと読み戻しだけ。
+- **状態変更ツールは、最初の OS 書き込みの直前に `execution.BeginSideEffect()` を必ず呼ぶ。** ここで最終の認可が行われ(直前に完了した失効や権限変更で拒否される)、以降のタイムアウトは `unknown`、それより前なら「何も変更していない」になる。読み取りや検証、no-op の判定はその前に済ませる。呼んだ後に入れてよいのは OS への書き込みと読み戻しだけ。複数の OS 書き込みを順に行うツールは、2 回目以降の各書き込み直前に `execution.BeginNextSideEffect(cancellationToken)` を呼び、拒否やキャンセルが返ったら残りの書き込みを中止して、適用済みの結果を `ToolOutcome.Partial`（途中の進捗保存には `ReportProgress(execution, data)`）で返す（無断でロールバックしない）。
 - `AuditedArguments` には数値・真偽値・列挙値の引数だけを書く(文字列はツール登録時にエラー)。
 - null 許容(`string?` / `int?`)は配列形式の `type` にならないよう自動変換される: 引数では null を含めない単一の型(省略可能な引数は「省略」で表す)、結果では `anyOf: [{type}, {type: "null"}]`。一部の MCP クライアント(単一 `type` の方言)で拒否されないため。
 - 値は絶対値で受け取る(相対値・トグルを避ける)。`all` などの一括指定は spec §8 で許可されたものだけ。
 - 対象の解決は `ResolveTargetAsync` で行い、別名が解決できない・機器が見つからない場合に別の機器へフォールバックしない(`TARGET_NOT_FOUND`)。
-- ロックキーは `"<category>:device:<id>"`。既定デバイスを対象にした場合は `"<category>:default:<role>"` も含める(参考: `AudioTarget.Resolve`)。
+- ロックキーは `"<category>:device:<id>"`。既定デバイスを対象にした場合は `"<category>:default:<direction>:<role>"`（例: `audio:default:output:multimedia`）も含める(参考: `AudioTarget.Resolve`)。複数の役割ロックを取る場合は `ResourceLocks` にまとめて渡し、辞書順取得でデッドロックを防ぐ。既定を対象にした変更ツールは、ロック取得後に `AudioTarget.EnsureStillDefault` 等で現在も既定であることを再確認する。
 - 結果データに秘密・個人ファイル・コマンドライン・環境変数を含めない。
 - 時間がかかる/応答しない可能性がある OS 呼び出しはキャンセル不能でもよい。executor がタイムアウト時に `status: unknown` を返し、処理が終わるまでロックを保持する。
 
@@ -142,6 +142,7 @@ public sealed class DisplaySetBrightnessTool(IDisplays displays, IDeviceAliases 
 
 ```json
 {"status":"success","verification":"verified","data":{...},"request_id":"..."}
+{"status":"partial","verification":"verified","data":{...},"error":{"code":"OS_API_ERROR","message":"...","retryable":false},"request_id":"..."}
 {"status":"error","error":{"code":"DEVICE_DISCONNECTED","message":"...","retryable":false},"request_id":"..."}
 {"status":"unknown","verification":"unknown","error":{"code":"TIMEOUT","message":"...","retryable":false},"request_id":"..."}
 ```
@@ -155,6 +156,7 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 | PERMISSION_DENIED | クライアントに未許可、失効・期限切れ | executor |
 | NOT_SUPPORTED / ADMIN_REQUIRED | この環境で恒常的に利用不可 | `GetAvailability()` |
 | TARGET_NOT_FOUND / AMBIGUOUS_TARGET | 対象が解決できない | ツール (`ResolveTargetAsync`) |
+| TARGET_CHANGED | ロック待機中に既定デバイスが切り替わった(副作用なし・再試行可) | ツール (`EnsureStillDefault`) |
 | DEVICE_DISCONNECTED / NO_ACTIVE_SESSION | 一時的に操作できない | ツール/アダプター |
 | BUSY | 待機キューが満杯(再試行可) | executor |
 | TIMEOUT / CANCELLED | 実行前なら retryable、実行中なら status=unknown | executor |

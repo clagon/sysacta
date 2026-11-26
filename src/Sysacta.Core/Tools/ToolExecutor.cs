@@ -172,8 +172,43 @@ public sealed partial class ToolExecutor
             var work = Task.Run(() => tool.RunAsync(args, execution, token), CancellationToken.None);
             try
             {
-                var (data, verification) = await work.WaitAsync(token).ConfigureAwait(false);
-                return call.Finish(AuditOutcome.Success, new ToolResult { Status = ToolStatus.Success, Verification = verification, Data = data });
+                var run = await work.WaitAsync(token).ConfigureAwait(false);
+                if (run.Status == ToolStatus.Success)
+                {
+                    return call.Finish(AuditOutcome.Success, new ToolResult { Status = ToolStatus.Success, Verification = run.Verification, Data = run.Data });
+                }
+
+                if (!execution.HasStarted)
+                {
+                    // Fail safe: a partial or unknown outcome cannot be reported without a started side effect.
+                    return call.Finish(AuditOutcome.Error, ToolResult.Fail(ErrorCodes.InternalError, "An internal error occurred."));
+                }
+
+                if (run.Status == ToolStatus.Partial)
+                {
+                    var err = (run.Error ?? new ToolError(ErrorCodes.VerificationFailed, "The operation partially succeeded.", false)) with { Retryable = false };
+                    return call.Finish(AuditOutcome.Partial, new ToolResult
+                    {
+                        Status = ToolStatus.Partial,
+                        Verification = run.Verification,
+                        Data = run.Data,
+                        Error = err,
+                    });
+                }
+
+                if (run.Status == ToolStatus.Unknown)
+                {
+                    var err = (run.Error ?? new ToolError(ErrorCodes.InternalError, "Whether the change was applied is unknown.", false)) with { Retryable = false };
+                    return call.Finish(AuditOutcome.Unknown, new ToolResult
+                    {
+                        Status = ToolStatus.Unknown,
+                        Verification = Verification.Unknown,
+                        Data = run.Data,
+                        Error = err,
+                    });
+                }
+
+                return call.Finish(AuditOutcome.Error, ToolResult.Fail(ErrorCodes.InternalError, "An internal error occurred."));
             }
             catch (SideEffectRefusedException ex)
             {
@@ -202,16 +237,24 @@ public sealed partial class ToolExecutor
                     : (ErrorCodes.Timeout, "The operation did not complete within the time limit.");
 
                 // Before the start point the change can be ruled out: abandoning makes BeginSideEffect refuse to start.
-                return tool.Descriptor.ReadOnly || execution.TryAbandon()
-                    ? call.Finish(AuditOutcome.Error, ToolResult.Fail(code, message + " Nothing was changed.", retryable: true))
-                    : call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(code, message + " Whether the change was applied is unknown."));
+                if (tool.Descriptor.ReadOnly || execution.TryAbandon())
+                {
+                    return call.Finish(AuditOutcome.Error, ToolResult.Fail(code, message + " Nothing was changed.", retryable: true));
+                }
+
+                execution.Detach();
+                return call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(code, message + " Whether the change was applied is unknown.") with { Data = execution.Progress });
             }
             catch (Exception)
             {
                 // Never return raw exception text. After the start point a failed change may have partially happened.
-                return tool.Descriptor.ReadOnly || execution.TryAbandon()
-                    ? call.Finish(AuditOutcome.Error, ToolResult.Fail(ErrorCodes.InternalError, "An internal error occurred."))
-                    : call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(ErrorCodes.InternalError, "An internal error occurred. Whether the change was applied is unknown."));
+                if (tool.Descriptor.ReadOnly || execution.TryAbandon())
+                {
+                    return call.Finish(AuditOutcome.Error, ToolResult.Fail(ErrorCodes.InternalError, "An internal error occurred."));
+                }
+
+                execution.Detach();
+                return call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(ErrorCodes.InternalError, "An internal error occurred. Whether the change was applied is unknown.") with { Data = execution.Progress });
             }
         }
         finally
