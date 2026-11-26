@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- UI smoke tests: load App.xaml resources, every page and the main window on an STA thread. Windows only. -->
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>

@@ -2,6 +2,7 @@ using Sysacta.Core.Devices;
 using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
+using Sysacta.Core.Tools.Media;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Experimental.Audio;
 
@@ -13,7 +14,7 @@ namespace Sysacta.App;
 /// </summary>
 internal static class ToolCatalog
 {
-    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery)
+    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery, IMediaSessions media)
     {
         var sessions = new CoreAudioSessions();
         var defaultEndpoints = new PolicyConfigDefaultEndpoints();
@@ -35,6 +36,14 @@ internal static class ToolCatalog
             new DisplaySetModeTool(displays, aliases, recovery),
             new DisplaySetPowerTool(displays, aliases),
             new DisplaySetInputTool(displays, aliases),
+            new MediaListSessionsTool(media),
+            new MediaGetStateTool(media),
+            new MediaPlayTool(media),
+            new MediaPauseTool(media),
+            new MediaStopTool(media),
+            new MediaNextTrackTool(media),
+            new MediaPreviousTrackTool(media),
+            new MediaSeekTool(media),
             // Local console only (tray menu / device page); never listed or callable over MCP.
             new DisplayRestoreModeTool(displays, recovery),
         ];

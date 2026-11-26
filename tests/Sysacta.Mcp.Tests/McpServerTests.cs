@@ -88,6 +88,7 @@ public class AuthenticationTests
 
         SqliteConnection.ClearAllPools();
         var secret = Encoding.UTF8.GetBytes(issued.Token[4..20]);
+        using var liveDatabase = f.Database.Open(); // Keep SQLite from removing WAL during inspection.
         foreach (var file in Directory.GetFiles(Path.GetDirectoryName(f.Database.Path)!))
         {
             Assert.Equal(-1, File.ReadAllBytes(file).AsSpan().IndexOf(secret));
@@ -557,6 +558,7 @@ public class RejectionAuditTests
         AssertAbsent(json.ToArray(), "JSON export");
 
         // Database, WAL and any other file next to it, read while the host still runs (WAL not yet checkpointed).
+        using var liveDatabase = f.Database.Open(); // Keep SQLite from removing WAL during inspection.
         foreach (var file in Directory.GetFiles(Path.GetDirectoryName(f.Database.Path)!))
         {
             using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

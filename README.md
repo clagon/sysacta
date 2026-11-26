@@ -4,7 +4,7 @@ A native Windows control MCP server for AI agents.
 
 Sysacta is a Windows 11 desktop utility that exposes structured system-management tools through the Model Context Protocol (MCP). It is designed for local and self-hosted personal AI agents without granting arbitrary shell or GUI access.
 
-> **Status:** The foundation (Phase 0 and 1A: MCP server, per-client Bearer tokens and permissions, bounded audit log, WPF management console and tray icon), the standard audio tools (Phase 1B, with a device/alias page), and the experimental default audio device tool (`audio_set_default_device`, Phase 1B-EXP, disabled by default and **not yet verified on real hardware**) are implemented, as are the basic display tools (Phase 1C-1: list, state, brightness, contrast, mode listing) and the display mode, power and input tools (Phase 1C-2, all disabled by default). Display **reads** were verified on two external monitors; **changing brightness or contrast has not been verified on real hardware; mode, power and input changes were verified on one monitor only (DELL P2314H), where turning the monitor back on from Sysacta did not work**, and internal panels are untested (see [docs/phase-1c-1-progress.md](docs/phase-1c-1-progress.md) and [docs/phase-1c-2-progress.md](docs/phase-1c-2-progress.md)). Everything else under "Planned features" is not implemented. State-changing audio tools have only partly been verified on real hardware (see [docs/manual-tests.md](docs/manual-tests.md)). There are no release builds yet; build from source. See [docs/phase-1b-progress.md](docs/phase-1b-progress.md) and [docs/phase-1b-exp-progress.md](docs/phase-1b-exp-progress.md) for verification results and known limitations.
+> **Status:** The foundation (Phase 0 and 1A: MCP server, per-client Bearer tokens and permissions, bounded audit log, WPF management console and tray icon), the standard audio tools (Phase 1B, with a device/alias page), and the experimental default audio device tool (`audio_set_default_device`, Phase 1B-EXP, disabled by default and **not yet verified on real hardware**) are implemented, as are the basic display tools (Phase 1C-1: list, state, brightness, contrast, mode listing) and the display mode, power and input tools (Phase 1C-2, all disabled by default). Display **reads** were verified on two external monitors; **changing brightness or contrast has not been verified on real hardware; mode, power and input changes were verified on one monitor only (DELL P2314H), where turning the monitor back on from Sysacta did not work**, and internal panels are untested (see [docs/phase-1c-1-progress.md](docs/phase-1c-1-progress.md) and [docs/phase-1c-2-progress.md](docs/phase-1c-2-progress.md)). Phase 1D media tools are present but **read-only behavior has limited Windows verification; media control is not yet verified**; current-session matching is unavailable when GSMTC exposes a different COM identity, and session lifetime requires further validation (see [docs/phase-1d-progress.md](docs/phase-1d-progress.md)). Everything else under "Planned features" is not implemented. State-changing audio tools have only partly been verified on real hardware (see [docs/manual-tests.md](docs/manual-tests.md)). There are no release builds yet; build from source. See [docs/phase-1b-progress.md](docs/phase-1b-progress.md) and [docs/phase-1b-exp-progress.md](docs/phase-1b-exp-progress.md) for verification results and known limitations.
 
 ## Currently available
 
@@ -26,6 +26,11 @@ Sysacta is a Windows 11 desktop utility that exposes structured system-managemen
 | `display_set_mode` | Applies a listed mode to one non-primary display after Windows' test; not saved; restorable locally from the tray menu or the Devices page | Disabled |
 | `display_set_power` | Turns one external monitor on or into its power-saving off state over DDC/CI (MCCS 0xD6, values 0x01/0x04 only) | Disabled |
 | `display_set_input` | Switches one external monitor to an input it declares with a standard MCCS 2.x meaning (0x60) | Disabled |
+| `media_list_sessions` | Lists system media sessions and supported operations | Enabled |
+| `media_get_state` | Reads state, metadata and timeline for one media session | Enabled |
+| `media_play` / `media_pause` / `media_stop` | Request an explicit playback state | Enabled |
+| `media_next_track` / `media_previous_track` | Request one track skip | Enabled |
+| `media_seek` | Request an absolute position within the reported seek range | Enabled |
 
 "Enabled" applies to new installations. Experimental tools and newly added tools on upgrade start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console. Display support depends on the monitor, cable, dock and the monitor's DDC/CI setting; mirrored displays cannot be adjusted over DDC/CI. `display_get_state` with `include_switching: true` reports the power state and the `input_id` values (the capabilities query can take several seconds). A monitor that is switched off or to an input without a signal may stop answering, so Sysacta cannot always switch it back: make sure the monitor's power button and menu are within reach before enabling these tools.
 
@@ -60,7 +65,7 @@ Requirements: Windows 11 x64 and the [.NET 10 SDK](https://dotnet.microsoft.com/
 ```powershell
 dotnet build Sysacta.sln -c Release
 dotnet test Sysacta.sln -c Release
-src\Sysacta.App\bin\Release\net10.0-windows\Sysacta.exe
+src\Sysacta.App\bin\Release\net10.0-windows10.0.19041.0\Sysacta.exe
 ```
 
 On first start Sysacta opens the management console, starts the MCP server on `http://127.0.0.1:8765/mcp` and keeps running in the notification area when the window is closed (use the tray menu → 終了 to exit). Data (settings, token hashes, audit log) is stored in `%LOCALAPPDATA%\Sysacta`.
@@ -106,7 +111,7 @@ For contributors (and coding agents): [AGENTS.md](AGENTS.md) (rules), [docs/tool
 ## Roadmap
 
 - [x] Phase 0 — MCP server, authentication, authorization, settings UI and audit logs (see [progress](docs/phase-0-progress.md) for items verified only by automated tests)
-- [ ] Phase 1 — Audio (standard tools done; default-device change pending), display (done except changes on the primary display; writes not yet verified on hardware), media, power, system monitoring and notifications
+- [ ] Phase 1 — Audio (standard tools done; default-device change pending), display (done except changes on the primary display; writes not yet verified on hardware), media (implementation under verification), power, system monitoring and notifications
 - [ ] Phase 2 — Apps and processes, networking and Bluetooth
 - [ ] Phase 3 — Testing, security review and Windows distribution
 

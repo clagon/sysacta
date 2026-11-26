@@ -249,6 +249,10 @@ public sealed partial class ToolExecutor
                 }
 
                 execution.Detach();
+                if (execution.AcceptedProgress is { } accepted)
+                {
+                    return call.Finish(AuditOutcome.Success, new ToolResult { Status = ToolStatus.Success, Verification = Verification.Accepted, Data = accepted });
+                }
                 return call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(code, message + " Whether the change was applied is unknown.") with { Data = execution.Progress });
             }
             catch (Exception)

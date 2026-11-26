@@ -173,3 +173,8 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 | AUDIT_UNAVAILABLE | 監査ログに書けないため状態変更を拒否 | executor |
 | INTERNAL_ERROR | 想定外の例外(詳細は返さない) | executor |
 | UNKNOWN_TOOL | 存在しないツール(MCP ではプロトコルエラー -32602) | executor |
+
+
+### メディア（Phase 1D 実装中）
+
+メディア操作は `Sysacta.Core/Tools/Media/` の共通フローを通す。対象解決後にセッション単位で排他し、一覧変更・現在セッション・操作可否・シーク範囲を再確認する。WinRT 書き込みは準備用デリゲートの作成時ではなく、`BeginSideEffect` の直後に開始する。操作の受理は状態変化の証明ではない。COM 同一性および Windows 実機での動作は未検証であり、[進捗](phase-1d-progress.md)を参照する。

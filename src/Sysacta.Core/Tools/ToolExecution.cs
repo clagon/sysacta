@@ -18,6 +18,7 @@ public sealed class ToolExecution
     private int _state;
     private int _detached;
     private JsonNode? _progress;
+    private JsonNode? _acceptedProgress;
 
     internal ToolExecution(ToolTarget target, Func<ToolResult?> authorize, AuthorizationGate gate)
     {
@@ -80,6 +81,11 @@ public sealed class ToolExecution
             throw new InvalidOperationException("BeginSideEffect must be called before BeginNextSideEffect.");
         }
 
+        if (Volatile.Read(ref _acceptedProgress) is not null)
+        {
+            throw new InvalidOperationException("No further writes are allowed after reporting acceptance.");
+        }
+
         if (Volatile.Read(ref _detached) != 0 || cancellationToken.IsCancellationRequested)
         {
             return new ToolError(ErrorCodes.Cancelled, "The operation was cancelled or timed out before the next change started.", false);
@@ -111,6 +117,18 @@ public sealed class ToolExecution
     internal JsonNode? Progress => Volatile.Read(ref _progress);
 
     internal void SetProgress(JsonNode? data) => Volatile.Write(ref _progress, data);
+
+    internal JsonNode? AcceptedProgress => Volatile.Read(ref _acceptedProgress);
+
+    internal void SetAcceptedProgress(JsonNode data)
+    {
+        if (!HasStarted)
+        {
+            throw new InvalidOperationException("A request can be accepted only after its side effect starts.");
+        }
+        Volatile.Write(ref _progress, data);
+        Volatile.Write(ref _acceptedProgress, data);
+    }
 
     internal void Detach() => Interlocked.Exchange(ref _detached, 1);
 
