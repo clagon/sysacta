@@ -10,7 +10,7 @@
 | `audio_list_sessions` / `audio_set_app_volume` / `audio_set_app_mute` | 実装済み | `AudioSessions.cs`, `IAudioSessions.cs`, `src/Sysacta.Windows/Audio/CoreAudioSessions.cs` |
 | デバイス管理画面(列挙・別名の登録/変更/削除/再紐付け) | 実装済み | `src/Sysacta.App/Views/DevicesPage.xaml`, `ViewModels/DevicesViewModel.cs` |
 | 実機での状態変更(ミュート・アプリ別音量/ミュート) | **一部確認**(アダプター層。出力のミュート、システム音セッション) | [manual-tests.md](manual-tests.md) B3, B5 |
-| Phase 1B-EXP(`audio_set_default_device`) | **未着手** | — |
+| Phase 1B-EXP(`audio_set_default_device`) | **別 PR で対応中** | [phase-1b-exp-progress.md](phase-1b-exp-progress.md) |
 
 ## JSON 契約
 

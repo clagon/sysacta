@@ -85,6 +85,17 @@ $env:SYSACTA_HARDWARE_TESTS = "1"; dotnet test tests/Sysacta.Windows.Tests -c Re
 | B11 | 既存 DB のアップグレード | Phase 1A の `%LOCALAPPDATA%\Sysacta` で起動 | 新しい 5 ツールは無効、既存クライアントに未付与 | 未確認(Mcp.Tests で自動確認済み) |
 | B12 | 実クライアント接続 | Claude Desktop / Codex から 5 ツールを呼び出す | スキーマが受理され、結果が読める | 未確認 |
 
+## Phase 1B-EXP チェックリスト（既定オーディオデバイス変更・Experimental）
+
+**既定デバイスの変更は会議・通話・録音や音声入出力に影響するため、利用者の明示承認なしに自動・手動を問わず実行しないこと。**
+
+| # | 項目 | 手順 | 期待結果 | 状況 |
+|---|---|---|---|---|
+| E1 | 能力判定と初期無効 | Windows 11 x64 実機で起動し、ツール画面を確認 | `audio_set_default_device` が初期無効で表示され、実験的・未検証の注意文が出る。`PolicyConfigDefaultEndpointsTests.Availability_and_open_dispose_without_writes_leave_defaults_unchanged` が成功 | 未実施 |
+| E2 | 役割別の変更と復元 | 利用者の承認後、一時的に別デバイスへ `console` / `multimedia` / `communications` を個別に変更し、元の値に戻す | 各役割が独立して（または OS 仕様通り連動して）切り替わり、読み戻しと一致する。連動が起きた場合は `unrequested_changes` と `partial` が報告される | 未実施 |
+| E3 | `all` 変更と復元 | 利用者の承認後、`role=all` で出力・入力を切り替え、元の 3 役割へ戻す | 3 役割すべてが `verified` となり、既定対象の `audio_set_volume` / `audio_set_mute` が新しい既定に追従する | 未実施 |
+| E4 | 通話・会議中の影響確認 | 影響のない検証環境で再生・録音中の切替挙動を確認 | 意図しない機器変更やハングが起きない | 未実施 |
+
 ## 2026-11-25 の開発環境での制約
 
 開発機 (Windows 11 + WSL2) では以下の理由でアプリ本体と DB を使うテストを Windows 上で実行できませんでした。CI (GitHub Actions `windows-latest`) で自動テストを実行してください。

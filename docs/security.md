@@ -8,7 +8,7 @@
 |---|---|---|
 | ネットワーク → HTTP | Host / Origin / Authorization ヘッダー、本文、転送ヘッダー | `src/Sysacta.Mcp/RequestGuards.cs`, `McpServerHost.Build` |
 | MCP クライアント → ツール | ツール名、引数、tools/list のキャッシュ、annotations | `src/Sysacta.Core/Tools/ToolExecutor.cs`, `ToolJson.cs`, `Security/Access.cs` |
-| ツール → OS | (OS の応答は検証して返す) | 各アダプター (`src/Sysacta.Windows/`) |
+| ツール → OS | (OS の応答は検証して返す) | 各アダプター (`src/Sysacta.Windows/`、非公開 API は `Experimental/` に隔離) |
 | ローカルユーザー → 管理コンソール | — 信頼する(同一ユーザー) | UI のみが設定・権限・クライアントを変更できる |
 
 同じ Windows ユーザーで動作する他のプロセスや管理者は、設定DB・監査ログを改変できます(サンドボックスではない。spec §6, §11)。
@@ -138,6 +138,8 @@
 - 開始点(`BeginSideEffect`)の後に完了した権限変更は、すでに始まった OS 操作には適用されない(spec §6)。開始点から実際のネイティブ呼び出しまでの間は、ツールのコードで数命令のみ。
 - 開始点の宣言はツールの責務。状態変更ツールが `BeginSideEffect()` を呼ばずに書き込むと、開始点での再認可と「開始前なら何も変更していない」の判定が働かない(executor の早めの再認可だけになる)。docs/tools.md と AGENTS.md で必須とし、参考実装と Core.Tests の境界テストで示している。
 - 権限変更の書き込みは、開始点の評価中(DB の読み取りが混雑で待つ場合は最大で SQLite の待ち時間)だけ待たされる。
+- 複数回の OS 書き込みを行うツール(`audio_set_default_device` の `role=all` など)では、2 回目以降の各書き込み直前に `ToolExecution.BeginNextSideEffect` でキャンセル・タイムアウトによる切り離し・最新の認可を再確認し、拒否された場合は残りの書き込みを止めて `partial` を返す。既に行われた変更は巻き戻さない。
+- `audio_set_default_device` は非公開 COM インターフェース(`IPolicyConfig`)を使用するため `DefaultPolicy.Experimental`(新規・アップグレードとも初期無効)とし、`Sysacta.Windows/Experimental/` に隔離して Windows 11 x64 の QI プローブで能力判定を行う。将来の Windows 更新で動作しなくなる、または ABI 変化でプロセスが異常終了するリスクが残る。
 - 要求予算は接続元アドレス単位。リバースプロキシ(Tailscale Serve など)経由ではすべての正規クライアントが `127.0.0.1` を共有するため、接続元予算 240 件/分を分け合う(クライアント別の上限 60 件/分なら4クライアント分)。同じプロキシの後ろにいる攻撃者は、正規クライアントの取り分を使い切れる(同一接続元での公平性はない)。クライアントが多い場合は `ServerEndpointOptions.RequestsPerMinutePerAddress` を上げる(設定 UI はない。コード上の既定値)。全体予算 600 件/分を超えると、どの接続元も 429 になる。
 - IPv6 では 1 アドレス単位で数えるため、/64 を持つ攻撃者はアドレスを変えて接続元予算を分散できる(全体予算と表の上限 600 件は守られる)。
 - 監査ログは容量上限に達すると古い記録から削除する(リングバッファ)。認証済みクライアントが長時間大量に呼び出すと、古いツールの記録も押し出される。削除した件数と最終時刻はログ画面に表示する。
