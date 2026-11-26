@@ -135,7 +135,7 @@
 | 環境 | 結果 |
 |---|---|
 | Linux (WSL2) `dotnet build Sysacta.sln -c Release --no-restore` | 警告 0 / エラー 0 |
-| Linux `dotnet test Sysacta.sln -c Release --no-build` | Core 221 / Infrastructure 50 / Mcp 78 成功、Windows 5 成功・9 スキップ。App.Tests は対象外 |
+| Linux `dotnet test Sysacta.sln -c Release --no-build` | Core 221 / Infrastructure 50 / Mcp 78 成功、Windows 6 成功・9 スキップ。App.Tests は対象外 |
 | ミューテーション確認（実施後に復元済み） | ① `BeginSideEffect()` 除去 → `MultiSideEffectTests` 7 件失敗、② `BeginNextSideEffect` 無効化 → `MultiSideEffectTests` 7 件失敗、③ ロックキー変更 → `Default_targeted_volume_queued_behind_default_change` 失敗 |
 | Windows 実機での既定デバイス変更 | **未検証**（利用者の明示承認なしに変更テストを実行しない方針のため） |
 | Windows CI (`windows-latest`, [PR #7](https://github.com/clagon/sysacta/pull/7), run `45754482058`, commit `5e08d0e`) | ビルド・スモークテスト成功。Core 218 / Infrastructure 50 / Mcp 78 / App 17 成功、Windows 7 成功・7 スキップ（`PolicyConfigDefaultEndpointsTests.Availability_and_open_dispose_without_writes_leave_defaults_unchanged` を含む読み取り・能力判定テストが成功、実機変更テストと音声デバイス依存テストはスキップ） |

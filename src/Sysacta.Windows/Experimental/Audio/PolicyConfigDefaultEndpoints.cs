@@ -28,42 +28,103 @@ public sealed class PolicyConfigDefaultEndpoints : IAudioDefaultEndpointWriter
     private const int ENotFound = unchecked((int)0x80070490);
     private const int EInvalidArg = unchecked((int)0x80070057);
     private const int DeviceInvalidated = unchecked((int)0x88890004);
+    private static readonly TimeSpan DefaultProbeWaitTimeout = TimeSpan.FromMilliseconds(200);
 
     private readonly object _availabilityLock = new();
+    private readonly Func<(ToolAvailability Availability, bool Cacheable)> _probe;
+    private readonly TimeSpan _probeWaitTimeout;
+    private readonly bool _skipPlatformCheck;
     private ToolAvailability? _cachedAvailability;
+    private Task<(ToolAvailability Availability, bool Cacheable)>? _probeTask;
+    private int _probeTimedOut;
+
+    public PolicyConfigDefaultEndpoints()
+        : this(ProbeAvailability, DefaultProbeWaitTimeout, skipPlatformCheck: false)
+    {
+    }
+
+    internal PolicyConfigDefaultEndpoints(
+        Func<(ToolAvailability Availability, bool Cacheable)> probe,
+        TimeSpan probeWaitTimeout,
+        bool skipPlatformCheck = true)
+    {
+        _probe = probe;
+        _probeWaitTimeout = probeWaitTimeout;
+        _skipPlatformCheck = skipPlatformCheck;
+    }
 
     public ToolAvailability GetAvailability()
     {
-        lock (_availabilityLock)
+        if (Volatile.Read(ref _cachedAvailability) is { } cached)
         {
-            if (_cachedAvailability is not null)
-            {
-                return _cachedAvailability;
-            }
+            return cached;
+        }
 
+        if (!_skipPlatformCheck)
+        {
             if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
             {
-                _cachedAvailability = ToolAvailability.Unavailable(ErrorCodes.NotSupported, "Requires Windows 11.");
-                return _cachedAvailability;
+                var unsupported = ToolAvailability.Unavailable(ErrorCodes.NotSupported, "Requires Windows 11.");
+                Volatile.Write(ref _cachedAvailability, unsupported);
+                return unsupported;
             }
 
             if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
             {
-                _cachedAvailability = ToolAvailability.Unavailable(ErrorCodes.NotSupported, "Only x64 is supported.");
-                return _cachedAvailability;
+                var unsupported = ToolAvailability.Unavailable(ErrorCodes.NotSupported, "Only x64 is supported.");
+                Volatile.Write(ref _cachedAvailability, unsupported);
+                return unsupported;
+            }
+        }
+
+        Task<(ToolAvailability Availability, bool Cacheable)> task;
+        lock (_availabilityLock)
+        {
+            if (_cachedAvailability is { } alreadyCached)
+            {
+                return alreadyCached;
             }
 
-            var (availability, cacheable) = Thread.CurrentThread.GetApartmentState() == ApartmentState.MTA
-                ? ProbeAvailability()
-                : Task.Run(ProbeAvailability).GetAwaiter().GetResult();
+            task = _probeTask ??= Task.Run(_probe);
+        }
 
+        if (!task.IsCompleted)
+        {
+            if (Volatile.Read(ref _probeTimedOut) != 0 || !task.Wait(_probeWaitTimeout))
+            {
+                Volatile.Write(ref _probeTimedOut, 1);
+                return ToolAvailability.Unavailable(ErrorCodes.NotSupported, "The Windows audio policy interface is not ready.");
+            }
+        }
+
+        Volatile.Write(ref _probeTimedOut, 0);
+        if (!task.IsCompletedSuccessfully)
+        {
+            lock (_availabilityLock)
+            {
+                if (ReferenceEquals(_probeTask, task))
+                {
+                    _probeTask = null;
+                }
+            }
+
+            return ToolAvailability.Available;
+        }
+
+        var (availability, cacheable) = task.Result;
+        lock (_availabilityLock)
+        {
             if (cacheable)
             {
-                _cachedAvailability = availability;
+                Volatile.Write(ref _cachedAvailability, availability);
             }
-
-            return availability;
+            else if (ReferenceEquals(_probeTask, task))
+            {
+                _probeTask = null;
+            }
         }
+
+        return availability;
     }
 
     public IAudioDefaultEndpointChange Open()

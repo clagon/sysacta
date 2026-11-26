@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Experimental.Audio;
@@ -7,6 +9,50 @@ namespace Sysacta.Windows.Tests;
 [Collection("real audio device")]
 public class PolicyConfigDefaultEndpointsTests
 {
+    [Fact]
+    public void Stalled_capability_probe_is_bounded_shared_and_caches_once_completed()
+    {
+        using var release = new ManualResetEventSlim();
+        var calls = 0;
+        var writer = new PolicyConfigDefaultEndpoints(
+            () =>
+            {
+                Interlocked.Increment(ref calls);
+                release.Wait(CancellationToken.None);
+                return (ToolAvailability.Available, true);
+            },
+            TimeSpan.FromMilliseconds(50));
+
+        var sw = Stopwatch.StartNew();
+        var first = writer.GetAvailability();
+        var second = writer.GetAvailability();
+        sw.Stop();
+
+        Assert.False(first.IsAvailable);
+        Assert.False(second.IsAvailable);
+        Assert.Equal(1, Volatile.Read(ref calls));
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2));
+
+        release.Set();
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        ToolAvailability after;
+        do
+        {
+            after = writer.GetAvailability();
+            if (after.IsAvailable)
+            {
+                break;
+            }
+
+            Thread.Sleep(10);
+        }
+        while (DateTime.UtcNow < deadline);
+
+        Assert.True(after.IsAvailable);
+        Assert.True(writer.GetAvailability().IsAvailable);
+        Assert.Equal(1, Volatile.Read(ref calls));
+    }
+
     private static Dictionary<(AudioDirection, AudioRole), string?> ReadAll(CoreAudioEndpoints audio)
     {
         var map = new Dictionary<(AudioDirection, AudioRole), string?>(6);
