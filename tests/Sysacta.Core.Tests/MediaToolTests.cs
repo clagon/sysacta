@@ -256,6 +256,26 @@ public class MediaToolTests
     }
 
     [Fact]
+    public async Task Track_change_after_last_read_prevents_seek_even_when_timeline_is_identical()
+    {
+        _media.State = _media.State with { MediaRevision = 1 };
+        _media.OnPrepare = () => _media.State = _media.State with { MediaRevision = 2 };
+        var result = await Call("media_seek", new { position_ms = 1000 });
+        Assert.Equal(ErrorCodes.TargetChanged, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
+    public async Task Track_change_between_metadata_samples_prevents_seek()
+    {
+        _media.State = _media.State with { MediaRevision = 1 };
+        _media.OnRead = n => { if (n == 2) _media.State = _media.State with { MediaRevision = 2 }; };
+        var result = await Call("media_seek", new { position_ms = 1000 });
+        Assert.Equal(ErrorCodes.TargetChanged, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
     public async Task Playback_state_changed_during_final_preparation_prevents_the_native_call()
     {
         _media.OnPrepare = () => _media.State = _media.State with { PlaybackStatus = MediaPlaybackStatus.Stopped };
@@ -285,6 +305,7 @@ public class MediaToolTests
         Assert.DoesNotContain("metadata_fingerprint", schema, StringComparison.Ordinal);
         Assert.DoesNotContain("min_seek_ticks", schema, StringComparison.Ordinal);
         Assert.DoesNotContain("max_seek_ticks", schema, StringComparison.Ordinal);
+        Assert.DoesNotContain("media_revision", schema, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -477,7 +498,7 @@ public class MediaToolTests
             if (!State.Controls.Supports(operation))
                 throw new ToolFailureException(ErrorCodes.NotSupported, "Operation no longer supported.");
             if (State.PlaybackStatus != expected.PlaybackStatus ||
-                (operation == MediaOperation.Seek && (State.MinSeekTicks != expected.MinSeekTicks || State.MaxSeekTicks != expected.MaxSeekTicks)))
+                (operation == MediaOperation.Seek && (State.MediaRevision != expected.MediaRevision || State.MinSeekTicks != expected.MinSeekTicks || State.MaxSeekTicks != expected.MaxSeekTicks)))
                 throw new ToolFailureException(ErrorCodes.TargetChanged, "State changed.");
             var lifetime = TrackPreparedLifetime ? new object() : null;
             if (lifetime is not null) PreparedLifetime = new WeakReference(lifetime);

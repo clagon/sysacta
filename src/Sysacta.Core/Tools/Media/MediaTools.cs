@@ -78,7 +78,7 @@ public abstract class MediaChangeTool<TArgs>(IMediaSessions sessions) : SysactaT
         // Metadata and seek bounds are sampled twice; a changed item/range must not receive an old request.
         var ready = await sessions.ReadAsync(id, current, cancellationToken).ConfigureAwait(false);
         Validate(ready, position);
-        if (Operation == MediaOperation.Seek && (before.MetadataFingerprint != ready.MetadataFingerprint || before.Title != ready.Title || before.Artist != ready.Artist ||
+        if (Operation == MediaOperation.Seek && (before.MediaRevision != ready.MediaRevision || before.MetadataFingerprint != ready.MetadataFingerprint || before.Title != ready.Title || before.Artist != ready.Artist ||
             before.StartMs != ready.StartMs || before.EndMs != ready.EndMs || before.MinSeekMs != ready.MinSeekMs || before.MaxSeekMs != ready.MaxSeekMs))
         {
             throw new ToolFailureException(ErrorCodes.TargetChanged, "The media item or seek range changed before the operation.");

@@ -19,8 +19,18 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
     private long _generation;
     private long _reconciledGeneration;
     private bool _disposed;
+    private bool _eventTrackingFailed;
 
-    private sealed record Entry(string Id, nint Identity, GlobalSystemMediaTransportControlsSession Session);
+    private sealed class Entry(string id, nint identity, GlobalSystemMediaTransportControlsSession session)
+    {
+        private long _mediaRevision;
+        public string Id { get; } = id;
+        public nint Identity { get; } = identity;
+        public GlobalSystemMediaTransportControlsSession Session { get; } = session;
+        public long MediaRevision => Volatile.Read(ref _mediaRevision);
+        public void OnMediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args) =>
+            Interlocked.Increment(ref _mediaRevision);
+    }
     private sealed record Snapshot(IReadOnlyList<Entry> Entries, nint Current, bool CurrentAmbiguous, long Generation);
 
     public async Task<MediaSessionList> ListAsync(CancellationToken cancellationToken)
@@ -77,6 +87,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         var initial = Capture(manager);
         var entry = Find(initial, sessionId, requireCurrent);
+        var mediaRevision = entry.MediaRevision;
         string? title = null;
         string? artist = null;
         string? fingerprint = null;
@@ -98,7 +109,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         var latest = Capture(manager);
         var same = Find(latest, sessionId, requireCurrent);
-        if (same.Identity != entry.Identity || latest.Generation != initial.Generation)
+        if (same.Identity != entry.Identity || latest.Generation != initial.Generation || same.MediaRevision != mediaRevision)
         {
             throw new ToolFailureException(ErrorCodes.TargetChanged, "The media session changed during the read.");
         }
@@ -106,10 +117,11 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         var playback = same.Session.GetPlaybackInfo();
         var timeline = same.Session.GetTimelineProperties();
         EnsureGeneration(latest.Generation);
+        EnsureMediaRevision(same, mediaRevision);
         return new(sessionId, IsCurrent(latest, same), Status(playback.PlaybackStatus), Controls(playback.Controls),
             title, artist, Milliseconds(timeline.Position), Milliseconds(timeline.StartTime), Milliseconds(timeline.EndTime),
             MinMilliseconds(timeline.MinSeekTime), Milliseconds(timeline.MaxSeekTime), timeline.LastUpdatedTime, fingerprint, timeline.Position.Ticks,
-            timeline.MinSeekTime.Ticks, timeline.MaxSeekTime.Ticks);
+            timeline.MinSeekTime.Ticks, timeline.MaxSeekTime.Ticks, mediaRevision);
     }
 
     public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks, MediaState expected)
@@ -117,6 +129,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            EnsureEventTracking();
             var generation = Volatile.Read(ref _generation);
             if (generation != _reconciledGeneration)
             {
@@ -136,6 +149,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
             }
             if (operation == MediaOperation.Seek)
             {
+                EnsureMediaRevision(entry, expected.MediaRevision);
                 var timeline = entry.Session.GetTimelineProperties();
                 if (expected.MinSeekTicks != timeline.MinSeekTime.Ticks || expected.MaxSeekTicks != timeline.MaxSeekTime.Ticks ||
                     expected.StartMs != Milliseconds(timeline.StartTime) || expected.EndMs != Milliseconds(timeline.EndTime) ||
@@ -168,6 +182,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
             }
 
             EnsureGeneration(generation);
+            if (operation == MediaOperation.Seek) EnsureMediaRevision(entry, expected.MediaRevision);
             // Calling the WinRT method starts the operation; no task or native call is created during preparation.
             return operation switch
             {
@@ -222,11 +237,13 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            EnsureEventTracking();
             var generation = Volatile.Read(ref _generation);
             if (generation != _reconciledGeneration)
             {
                 ClearEntries();
                 _reconciledGeneration = generation;
+                EnsureEventTracking();
             }
 
             var sessions = manager.GetSessions();
@@ -252,7 +269,16 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
                     if (!_entries.TryGetValue(identity, out var entry))
                     {
                         entry = new("m_" + Guid.NewGuid().ToString("N"), identity, session);
-                        _entries.Add(identity, entry);
+                        try
+                        {
+                            session.MediaPropertiesChanged += entry.OnMediaPropertiesChanged;
+                            _entries.Add(identity, entry);
+                        }
+                        catch
+                        {
+                            ReleaseEntry(entry);
+                            throw;
+                        }
                     }
                     else
                     {
@@ -263,8 +289,9 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
 
                 foreach (var stale in _entries.Keys.Where(key => !seen.Contains(key)).ToList())
                 {
-                    Marshal.Release(stale);
+                    var removed = _entries[stale];
                     _entries.Remove(stale);
+                    ReleaseEntry(removed);
                 }
 
                 var current = manager.GetCurrentSession();
@@ -308,6 +335,14 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
             throw new ToolFailureException(ErrorCodes.TargetChanged, "The current media session changed.");
         }
         return entry;
+    }
+
+    private static void EnsureMediaRevision(Entry entry, long? expected)
+    {
+        if (expected is null || entry.MediaRevision != expected)
+        {
+            throw new ToolFailureException(ErrorCodes.TargetChanged, "The media item changed before the operation.");
+        }
     }
 
     private void EnsureGeneration(long generation)
@@ -369,9 +404,34 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
     [GeneratedRegex(@"(?i)(?:(?:^|\s)[a-z]:|\b(?:file|mailto|data|javascript|http|https|ftp|smb):)", RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveText();
 
+    private void EnsureEventTracking()
+    {
+        if (_eventTrackingFailed)
+        {
+            throw new ToolFailureException(ErrorCodes.OsApiError, "Media session change tracking is unavailable.");
+        }
+    }
+
+    private void ReleaseEntry(Entry entry)
+    {
+        try
+        {
+            entry.Session.MediaPropertiesChanged -= entry.OnMediaPropertiesChanged;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Stop accepting new sessions if a subscription may still be held by the OS.
+            _eventTrackingFailed = true;
+        }
+        finally
+        {
+            Marshal.Release(entry.Identity);
+        }
+    }
+
     private void ClearEntries()
     {
-        foreach (var identity in _entries.Keys) Marshal.Release(identity);
+        foreach (var entry in _entries.Values) ReleaseEntry(entry);
         _entries.Clear();
     }
 
@@ -381,8 +441,14 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         {
             if (_disposed) return;
             _disposed = true;
-            if (_manager is not null) _manager.SessionsChanged -= OnSessionsChanged;
-            ClearEntries();
+            try
+            {
+                if (_manager is not null) _manager.SessionsChanged -= OnSessionsChanged;
+            }
+            finally
+            {
+                ClearEntries();
+            }
         }
     }
 }

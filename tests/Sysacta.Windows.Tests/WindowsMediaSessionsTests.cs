@@ -116,4 +116,27 @@ public class WindowsMediaSessionsTests
         Assert.Skip("No session exposes a suitable operation for this read-only test.");
     }
 
+    [Fact]
+    public async Task A_media_properties_event_invalidates_prepared_seek_without_changing_media()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows.");
+        using var sessions = new WindowsMediaSessions();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var list = await sessions.ListAsync(timeout.Token);
+        foreach (var item in list.Sessions)
+        {
+            var state = await sessions.ReadAsync(item.SessionId, false, timeout.Token);
+            if (!state.Controls.Seek || state.MinSeekTicks is not { } min || state.MaxSeekTicks <= min) continue;
+            var field = typeof(WindowsMediaSessions).GetField("_entries", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var entries = Assert.IsAssignableFrom<System.Collections.IDictionary>(field.GetValue(sessions));
+            var entry = Assert.Single(entries.Values.Cast<object>(), value =>
+                (string)value.GetType().GetProperty("Id")!.GetValue(value)! == item.SessionId);
+            entry.GetType().GetMethod("OnMediaPropertiesChanged")!.Invoke(entry, [null, null]);
+            var failure = Assert.Throws<ToolFailureException>(() => sessions.Prepare(item.SessionId, false, MediaOperation.Seek, min, state));
+            Assert.Equal(ErrorCodes.TargetChanged, failure.Code);
+            return;
+        }
+        Assert.Skip("No session exposes a seek range for this read-only test.");
+    }
+
 }

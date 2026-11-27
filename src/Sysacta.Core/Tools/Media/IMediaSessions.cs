@@ -32,7 +32,8 @@ public sealed record MediaState(
     [property: System.Text.Json.Serialization.JsonIgnore] string? MetadataFingerprint = null,
     [property: System.Text.Json.Serialization.JsonIgnore] long? PositionTicks = null,
     [property: System.Text.Json.Serialization.JsonIgnore] long? MinSeekTicks = null,
-    [property: System.Text.Json.Serialization.JsonIgnore] long? MaxSeekTicks = null);
+    [property: System.Text.Json.Serialization.JsonIgnore] long? MaxSeekTicks = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] long? MediaRevision = null);
 
 public sealed record MediaSessionEntry(string SessionId,
     [property: System.ComponentModel.Description("Whether this is the system current session; null when it cannot be matched safely.")] bool? IsCurrent,
