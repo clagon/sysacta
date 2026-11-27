@@ -45,4 +45,26 @@ public class WindowsMediaSessionsTests
         Assert.Equal(list.Sessions.Count, list.Sessions.Select(s => s.SessionId).Distinct(StringComparer.Ordinal).Count());
         foreach (var entry in list.Sessions) Assert.Matches("^m_[0-9a-f]{32}$", entry.SessionId);
     }
+    [Fact]
+    public async Task Concurrent_read_only_initialization_is_bounded_and_disposal_refuses_new_work()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows.");
+        using var sessions = new WindowsMediaSessions();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Sysacta.Core.Tools.Media.MediaSessionList[] lists;
+        try
+        {
+            lists = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => sessions.ListAsync(timeout.Token)));
+        }
+        catch (Sysacta.Core.Tools.ToolFailureException ex) when (ex.Code == Sysacta.Core.Tools.ErrorCodes.TargetChanged)
+        {
+            Assert.Skip("The actual session list changed during this read-only test.");
+            return;
+        }
+        Assert.Equal(8, lists.Length);
+        Assert.All(lists, list => Assert.True(list.Sessions.Count <= 64));
+        sessions.Dispose();
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => sessions.ListAsync(CancellationToken.None));
+    }
+
 }
