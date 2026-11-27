@@ -247,6 +247,34 @@ public class MediaToolTests
     }
 
     [Fact]
+    public async Task Capability_lost_during_final_preparation_prevents_the_native_call()
+    {
+        _media.OnPrepare = () => _media.State = _media.State with { Controls = _media.State.Controls with { Play = false } };
+        var result = await Call("media_play", new { });
+        Assert.Equal(ErrorCodes.NotSupported, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
+    public async Task Playback_state_changed_during_final_preparation_prevents_the_native_call()
+    {
+        _media.OnPrepare = () => _media.State = _media.State with { PlaybackStatus = MediaPlaybackStatus.Stopped };
+        var result = await Call("media_play", new { });
+        Assert.Equal(ErrorCodes.TargetChanged, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
+    public async Task Seek_range_changed_during_final_preparation_prevents_the_native_call()
+    {
+        _media.OnPrepare = () => _media.State = _media.State with { MaxSeekTicks = 4000 * TimeSpan.TicksPerMillisecond };
+        _media.State = _media.State with { MinSeekTicks = 0, MaxSeekTicks = 5000 * TimeSpan.TicksPerMillisecond };
+        var result = await Call("media_seek", new { position_ms = 1000 });
+        Assert.Equal(ErrorCodes.TargetChanged, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
     public async Task Metadata_fingerprint_is_never_serialized()
     {
         _media.State = _media.State with { MetadataFingerprint = "private-fingerprint" };
@@ -255,6 +283,8 @@ public class MediaToolTests
         Assert.DoesNotContain("private-fingerprint", result.Data!.ToJsonString(), StringComparison.Ordinal);
         var schema = _h.Executor.Registry.Find("media_get_state")!.OutputSchema.ToString();
         Assert.DoesNotContain("metadata_fingerprint", schema, StringComparison.Ordinal);
+        Assert.DoesNotContain("min_seek_ticks", schema, StringComparison.Ordinal);
+        Assert.DoesNotContain("max_seek_ticks", schema, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -437,13 +467,18 @@ public class MediaToolTests
             }
             return State with { IsCurrent = CurrentId == sessionId };
         }
-        public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks)
+        public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks, MediaState expected)
         {
             OnPrepare?.Invoke();
             if (requireCurrent && CurrentId != sessionId)
             {
                 throw new ToolFailureException(ErrorCodes.TargetChanged, "Current session changed.");
             }
+            if (!State.Controls.Supports(operation))
+                throw new ToolFailureException(ErrorCodes.NotSupported, "Operation no longer supported.");
+            if (State.PlaybackStatus != expected.PlaybackStatus ||
+                (operation == MediaOperation.Seek && (State.MinSeekTicks != expected.MinSeekTicks || State.MaxSeekTicks != expected.MaxSeekTicks)))
+                throw new ToolFailureException(ErrorCodes.TargetChanged, "State changed.");
             var lifetime = TrackPreparedLifetime ? new object() : null;
             if (lifetime is not null) PreparedLifetime = new WeakReference(lifetime);
             return () =>

@@ -108,10 +108,11 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         EnsureGeneration(latest.Generation);
         return new(sessionId, IsCurrent(latest, same), Status(playback.PlaybackStatus), Controls(playback.Controls),
             title, artist, Milliseconds(timeline.Position), Milliseconds(timeline.StartTime), Milliseconds(timeline.EndTime),
-            MinMilliseconds(timeline.MinSeekTime), Milliseconds(timeline.MaxSeekTime), timeline.LastUpdatedTime, fingerprint, timeline.Position.Ticks);
+            MinMilliseconds(timeline.MinSeekTime), Milliseconds(timeline.MaxSeekTime), timeline.LastUpdatedTime, fingerprint, timeline.Position.Ticks,
+            timeline.MinSeekTime.Ticks, timeline.MaxSeekTime.Ticks);
     }
 
-    public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks)
+    public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks, MediaState expected)
     {
         lock (_gate)
         {
@@ -124,6 +125,26 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
 
             var entry = _entries.Values.FirstOrDefault(e => e.Id == sessionId)
                 ?? throw new ToolFailureException(ErrorCodes.TargetNotFound, "The media session is no longer available.");
+            var playback = entry.Session.GetPlaybackInfo();
+            if (!Controls(playback.Controls).Supports(operation))
+            {
+                throw new ToolFailureException(ErrorCodes.NotSupported, "The media session no longer supports this operation.");
+            }
+            if (Status(playback.PlaybackStatus) != expected.PlaybackStatus)
+            {
+                throw new ToolFailureException(ErrorCodes.TargetChanged, "The media playback state changed before the operation.");
+            }
+            if (operation == MediaOperation.Seek)
+            {
+                var timeline = entry.Session.GetTimelineProperties();
+                if (expected.MinSeekTicks != timeline.MinSeekTime.Ticks || expected.MaxSeekTicks != timeline.MaxSeekTime.Ticks ||
+                    expected.StartMs != Milliseconds(timeline.StartTime) || expected.EndMs != Milliseconds(timeline.EndTime) ||
+                    positionTicks is null || positionTicks < timeline.MinSeekTime.Ticks || positionTicks > timeline.MaxSeekTime.Ticks)
+                {
+                    throw new ToolFailureException(ErrorCodes.TargetChanged, "The media item or seek range changed before the operation.");
+                }
+            }
+
             if (requireCurrent)
             {
                 var current = _manager?.GetCurrentSession();

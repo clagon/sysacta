@@ -30,7 +30,9 @@ public sealed record MediaState(
     long? StartMs, long? EndMs, long? MinSeekMs, long? MaxSeekMs,
     [property: System.ComponentModel.Description("UTC time of the operating system timeline observation.")] DateTimeOffset? LastUpdatedTime,
     [property: System.Text.Json.Serialization.JsonIgnore] string? MetadataFingerprint = null,
-    [property: System.Text.Json.Serialization.JsonIgnore] long? PositionTicks = null);
+    [property: System.Text.Json.Serialization.JsonIgnore] long? PositionTicks = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] long? MinSeekTicks = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] long? MaxSeekTicks = null);
 
 public sealed record MediaSessionEntry(string SessionId,
     [property: System.ComponentModel.Description("Whether this is the system current session; null when it cannot be matched safely.")] bool? IsCurrent,
@@ -51,5 +53,5 @@ public interface IMediaSessions
     Task<MediaSessionList> ListAsync(CancellationToken cancellationToken);
     Task<MediaSessionTarget> ResolveAsync(string? sessionId, CancellationToken cancellationToken);
     Task<MediaState> ReadAsync(string sessionId, bool requireCurrent, CancellationToken cancellationToken);
-    Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks);
+    Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks, MediaState expected);
 }

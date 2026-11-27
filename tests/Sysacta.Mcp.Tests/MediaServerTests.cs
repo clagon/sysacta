@@ -14,7 +14,7 @@ public sealed class FakeMediaSessions : IMediaSessions
     public Task<MediaSessionTarget> ResolveAsync(string? sessionId, CancellationToken cancellationToken) => Task.FromResult(new MediaSessionTarget(Id, "one"));
     public Task<MediaState> ReadAsync(string sessionId, bool requireCurrent, CancellationToken cancellationToken) => Task.FromResult(
         new MediaState(Id, true, MediaPlaybackStatus.Paused, new(true, true, true, true, true, true), "secret title", "secret artist", 100, 0, 1000, 0, 1000, null));
-    public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks) => () =>
+    public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks, MediaState expected) => () =>
     {
         Interlocked.Increment(ref _writes);
         return Task.FromResult(true);
