@@ -292,6 +292,28 @@ public class MediaToolTests
     }
 
     [Fact]
+    public async Task Different_session_lock_keys_allow_independent_operations()
+    {
+        var native = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _media.NativeResult = native.Task;
+        var first = Call("media_next_track", new { session_id = FakeMedia.Id });
+        await _media.Started.Task.WaitAsync(Ct);
+        var second = Call("media_previous_track", new { session_id = FakeMedia.OtherId });
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (Volatile.Read(ref _media.Starts) < 2 && DateTime.UtcNow < deadline) await Task.Delay(10, Ct);
+        try
+        {
+            Assert.Equal(2, _media.Starts);
+        }
+        finally
+        {
+            native.TrySetResult(true);
+        }
+        Assert.True((await first).IsSuccess);
+        Assert.True((await second).IsSuccess);
+    }
+
+    [Fact]
     public async Task Prepared_session_is_kept_alive_until_native_operation_finishes()
     {
         var native = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
