@@ -114,7 +114,8 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_generation != _reconciledGeneration)
+            var generation = Volatile.Read(ref _generation);
+            if (generation != _reconciledGeneration)
             {
                 throw new ToolFailureException(ErrorCodes.TargetChanged, "The media session changed before the operation.");
             }
@@ -132,7 +133,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
                 var identity = Identity(current);
                 try
                 {
-                    if (identity != entry.Identity || _generation != _reconciledGeneration)
+                    if (identity != entry.Identity || Volatile.Read(ref _generation) != generation)
                     {
                         throw new ToolFailureException(ErrorCodes.TargetChanged, "The current media session changed.");
                     }
@@ -143,6 +144,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
                 }
             }
 
+            EnsureGeneration(generation);
             // Calling the WinRT method starts the operation; no task or native call is created during preparation.
             return operation switch
             {
