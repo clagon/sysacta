@@ -60,6 +60,26 @@ public class MediaServerTests
         Assert.Equal(0, f.Media.Writes);
     }
 
+    [Theory]
+    [InlineData("media_play")]
+    [InlineData("media_pause")]
+    [InlineData("media_stop")]
+    [InlineData("media_next_track")]
+    [InlineData("media_previous_track")]
+    [InlineData("media_seek")]
+    public async Task Globally_disabled_tools_do_not_reach_media(string name)
+    {
+        await using var f = await ServerFixture.StartAsync(includeMedia: true);
+        var token = f.Issue(name).Token;
+        f.Store.SetToolEnabled(name, false);
+        await using var client = await f.ClientAsync(token);
+        var result = await client.CallToolAsync(name, name == "media_seek" ? new Dictionary<string, object?> { ["position_ms"] = 500 } : [], cancellationToken: Ct);
+        var body = Assert.IsType<JsonElement>(result.StructuredContent);
+        Assert.True(result.IsError);
+        Assert.Equal(ErrorCodes.ToolDisabled, body.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(0, f.Media.Writes);
+    }
+
     [Fact]
     public async Task New_install_enables_media_but_upgrade_does_not_grant_existing_clients()
     {

@@ -84,9 +84,11 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         {
             // Do not abandon the native operation: the executor retains its admission slot until it finishes.
             var properties = await entry.Session.TryGetMediaPropertiesAsync().AsTask().ConfigureAwait(false);
-            title = SafeText(properties?.Title);
-            artist = SafeText(properties?.Artist);
-            fingerprint = Fingerprint(properties?.Title, properties?.Artist);
+            var rawTitle = properties?.Title;
+            var rawArtist = properties?.Artist;
+            title = SafeText(rawTitle);
+            artist = SafeText(rawArtist);
+            fingerprint = Fingerprint(rawTitle, rawArtist);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

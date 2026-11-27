@@ -162,7 +162,7 @@ public abstract class MediaChangeTool<TArgs>(IMediaSessions sessions) : SysactaT
             return;
         }
 
-        if (state.MinSeekMs is not { } min || state.MaxSeekMs is not { } max || min < 0 || max <= min)
+        if (state.MinSeekMs is not { } min || state.MaxSeekMs is not { } max || max < 0 || max <= min)
         {
             throw new ToolFailureException(ErrorCodes.NotSupported, "The media session has no verifiable seek range.");
         }

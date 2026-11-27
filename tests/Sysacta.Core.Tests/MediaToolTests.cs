@@ -48,6 +48,30 @@ public class MediaToolTests
     }
 
     [Fact]
+    public async Task Empty_list_and_missing_current_are_distinct_from_expired_explicit_id()
+    {
+        _media.HasSession = false;
+        var list = await Call("media_list_sessions", new { });
+        Assert.True(list.IsSuccess);
+        Assert.Equal(Verification.NotApplicable, list.Verification);
+        Assert.Empty(list.Data!["sessions"]!.AsArray());
+        var current = await Call("media_get_state", new { });
+        Assert.Equal(ErrorCodes.NoActiveSession, current.Error?.Code);
+        var expired = await Call("media_play", new { session_id = FakeMedia.Id });
+        Assert.Equal(ErrorCodes.TargetNotFound, expired.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
+    public async Task Ambiguous_current_session_never_falls_back_to_an_explicit_target()
+    {
+        _media.AmbiguousCurrent = true;
+        var result = await Call("media_play", new { });
+        Assert.Equal(ErrorCodes.AmbiguousTarget, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
     public async Task Current_session_switch_during_preparation_refuses_to_write()
     {
         _media.OnRead = n => { if (n == 2) _media.CurrentId = FakeMedia.OtherId; };
@@ -64,6 +88,53 @@ public class MediaToolTests
         Assert.True(result.IsSuccess);
         Assert.Equal(Verification.Verified, result.Verification);
         Assert.Equal(FakeMedia.Id, _media.StartedId);
+    }
+
+    [Theory]
+    [InlineData("media_play", MediaPlaybackStatus.Paused, MediaPlaybackStatus.Playing)]
+    [InlineData("media_pause", MediaPlaybackStatus.Playing, MediaPlaybackStatus.Paused)]
+    [InlineData("media_stop", MediaPlaybackStatus.Playing, MediaPlaybackStatus.Stopped)]
+    public async Task Explicit_playback_requests_are_verified_only_after_matching_readback(
+        string tool, MediaPlaybackStatus before, MediaPlaybackStatus after)
+    {
+        _media.State = _media.State with { PlaybackStatus = before };
+        _media.OnStart = () => _media.State = _media.State with { PlaybackStatus = after };
+        var result = await Call(tool, new { });
+        Assert.True(result.IsSuccess);
+        Assert.Equal(Verification.Verified, result.Verification);
+        Assert.True((bool)result.Data!["changed"]!);
+        Assert.Equal(1, _media.Starts);
+    }
+
+    [Theory]
+    [InlineData("media_play")]
+    [InlineData("media_pause")]
+    [InlineData("media_stop")]
+    [InlineData("media_next_track")]
+    [InlineData("media_previous_track")]
+    [InlineData("media_seek")]
+    public async Task Disabled_operation_is_rejected_before_any_native_request(string tool)
+    {
+        _media.State = _media.State with { PlaybackStatus = MediaPlaybackStatus.Opened, Controls = new(false, false, false, false, false, false) };
+        var args = tool == "media_seek" ? (object)new { position_ms = 1000 } : new { };
+        var result = await Call(tool, args);
+        Assert.Equal(ErrorCodes.NotSupported, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"position_ms\":null}")]
+    [InlineData("{\"position_ms\":\"500\"}")]
+    [InlineData("{\"position_ms\":1.5}")]
+    [InlineData("{\"position_ms\":500,\"session_id\":null}")]
+    [InlineData("{\"position_ms\":500,\"extra\":true}")]
+    [InlineData("{\"position_ms\":500,\"position_ms\":500}")]
+    public async Task Seek_rejects_invalid_json_before_any_native_request(string json)
+    {
+        var result = await _h.Executor.ExecuteAsync(_caller, "media_seek", TestJson.Raw(json), Ct);
+        Assert.Equal(ErrorCodes.InvalidArgument, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
     }
 
     [Fact]
@@ -105,6 +176,17 @@ public class MediaToolTests
         Assert.Equal(ToolStatus.Unknown, result.Status);
         Assert.False(result.Error!.Retryable);
         Assert.DoesNotContain("secret", result.Error.Message, StringComparison.Ordinal);
+        Assert.Equal(1, _media.Starts);
+    }
+
+    [Fact]
+    public async Task Negative_range_start_does_not_exclude_a_valid_nonnegative_position()
+    {
+        _media.State = _media.State with { MinSeekMs = -1000, MaxSeekMs = 5000 };
+        var result = await Call("media_seek", new { position_ms = 0 });
+        Assert.True(result.IsSuccess);
+        Assert.Equal(Verification.Accepted, result.Verification);
+        Assert.Equal(0, _media.Ticks);
         Assert.Equal(1, _media.Starts);
     }
 
@@ -291,6 +373,8 @@ public class MediaToolTests
         public const string Id = "m_00000000000000000000000000000001";
         public const string OtherId = "m_00000000000000000000000000000002";
         public string CurrentId = Id;
+        public bool HasSession = true;
+        public bool AmbiguousCurrent;
         public string? LockKeyOverride;
         public MediaState State = new(Id, true, MediaPlaybackStatus.Paused, new(true, true, true, true, true, true), "old", "artist", 500, 0, 5000, 0, 5000, null);
         public int Reads;
@@ -308,7 +392,14 @@ public class MediaToolTests
         public TaskCompletionSource<bool> ReadbackStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<bool> Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<MediaSessionList> ListAsync(CancellationToken cancellationToken) => Task.FromResult(new MediaSessionList([], 0, 0, false));
-        public Task<MediaSessionTarget> ResolveAsync(string? sessionId, CancellationToken cancellationToken) => Task.FromResult(new MediaSessionTarget(sessionId ?? CurrentId, LockKeyOverride ?? sessionId ?? CurrentId));
+        public Task<MediaSessionTarget> ResolveAsync(string? sessionId, CancellationToken cancellationToken)
+        {
+            if (sessionId is null && AmbiguousCurrent)
+                throw new ToolFailureException(ErrorCodes.AmbiguousTarget, "Current session is ambiguous.");
+            if (!HasSession)
+                throw new ToolFailureException(sessionId is null ? ErrorCodes.NoActiveSession : ErrorCodes.TargetNotFound, "Session is unavailable.");
+            return Task.FromResult(new MediaSessionTarget(sessionId ?? CurrentId, LockKeyOverride ?? sessionId ?? CurrentId));
+        }
         public async Task<MediaState> ReadAsync(string sessionId, bool requireCurrent, CancellationToken cancellationToken)
         {
             var read = ++Reads;
