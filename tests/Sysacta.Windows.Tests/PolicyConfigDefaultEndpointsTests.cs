@@ -30,6 +30,8 @@ public class PolicyConfigDefaultEndpointsTests
 
         Assert.False(first.IsAvailable);
         Assert.False(second.IsAvailable);
+        // A busy runner may schedule the shared worker only after both timed waits have returned.
+        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref calls) > 0, TimeSpan.FromSeconds(5)));
         Assert.Equal(1, Volatile.Read(ref calls));
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2));
 
