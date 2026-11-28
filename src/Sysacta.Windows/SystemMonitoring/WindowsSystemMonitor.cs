@@ -38,7 +38,9 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
 
     public StatusReading SampleStatus(TimeSpan interval, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var adapters = Adapters();
+        cancellationToken.ThrowIfCancellationRequested();
         var pdh = _pdh.TryEnter();
         try
         {
@@ -53,6 +55,8 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
             // Rate counters need two collections; the first value of a rate counter is never used.
             var first = query?.Collect() ?? refused;
             var startedAt = DateTimeOffset.UtcNow;
+            // Instance names present at the first collection: an invalid value later is "new" only if its name is absent.
+            var firstEngines = first == 0 && engines.Status == 0 ? InstanceNames(engines.Counter, SystemStatus.MaxEngineInstances) : null;
             var tick0 = Environment.TickCount64;
             QueryUnbiasedInterruptTime(out var unbiased0);
             cancellationToken.WaitHandle.WaitOne(interval);
@@ -78,7 +82,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
             var engineArray = ReadArray(engines, second, SystemStatus.MaxEngineInstances, PdhFmtDouble | PdhFmtNoCap100);
             var engineSamples = engineArray.Reason is { } engineReason
                 ? Observed.Missing<IReadOnlyList<CounterSample>>(engineReason)
-                : Observed.Ok<IReadOnlyList<CounterSample>>(engineArray.Items!.Select(i => new CounterSample(i.Name, i.Value)).ToList());
+                : Observed.Ok<IReadOnlyList<CounterSample>>(engineArray.Items!.Select(i => new CounterSample(i.Name, i.Value, firstEngines?.Contains(i.Name))).ToList());
 
             var (total, available) = Memory();
             var logical = GetActiveProcessorCount(AllProcessorGroups);
@@ -103,13 +107,15 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
         }
     }
 
-    public HardwareReading ReadHardware()
+    public HardwareReading ReadHardware(CancellationToken cancellationToken)
     {
         var failures = new Dictionary<HardwarePart, UnavailableReason>();
         var deadline = Environment.TickCount64 + (long)WmiBudget.TotalMilliseconds;
 
         string? caption = null;
+        cancellationToken.ThrowIfCancellationRequested();
         Wmi("SELECT Caption FROM Win32_OperatingSystem", o => caption ??= o["Caption"] as string, HardwarePart.OsProductName, failures, deadline);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var processors = new List<ProcessorReading>();
         if (!Wmi("SELECT Name, Manufacturer, NumberOfCores, NumberOfLogicalProcessors FROM Win32_Processor",
@@ -120,6 +126,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
         }
 
         string? manufacturer = null, model = null;
+        cancellationToken.ThrowIfCancellationRequested();
         Wmi("SELECT Manufacturer, Model FROM Win32_ComputerSystem", o =>
         {
             manufacturer ??= o["Manufacturer"] as string;
@@ -129,6 +136,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
 
         int? ubr = null;
         string? displayVersion = null;
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             using var key = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64).OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
@@ -144,6 +152,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
         if (packages is null) failures[HardwarePart.ProcessorTopology] = UnavailableReason.Unavailable;
         var logical = GetActiveProcessorCount(AllProcessorGroups);
         ulong? installed = GetPhysicallyInstalledSystemMemory(out var kb) ? kb : null;
+        cancellationToken.ThrowIfCancellationRequested();
         var adapters = Adapters();
         if (adapters.Reason is { } gpuFailure) failures[HardwarePart.Gpus] = gpuFailure;
         var version = Environment.OSVersion.Version;
@@ -174,8 +183,9 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
             failures);
     }
 
-    public TemperatureReading ReadTemperatures()
+    public TemperatureReading ReadTemperatures(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var adapters = Adapters();
         Observed<IReadOnlyList<GpuTemperatureReading>> gpus;
         if (adapters.Reason is { } r)
@@ -189,7 +199,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
             {
                 gpus = d3dkmt is null
                     ? Observed.Missing<IReadOnlyList<GpuTemperatureReading>>(UnavailableReason.Timeout)
-                    : Observed.Ok<IReadOnlyList<GpuTemperatureReading>>(adapters.Value!.Where(a => !a.Software).SelectMany(GpuTemperatures).ToList());
+                    : Observed.Ok<IReadOnlyList<GpuTemperatureReading>>(adapters.Value!.Where(a => !a.Software).SelectMany(a => GpuTemperatures(a, cancellationToken)).ToList());
             }
             finally
             {
@@ -198,6 +208,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
         }
 
         var gpusAt = DateTimeOffset.UtcNow;
+        cancellationToken.ThrowIfCancellationRequested();
         var pdh = _pdh.TryEnter();
         try
         {
@@ -225,8 +236,9 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
         }
     }
 
-    public StorageReading ReadStorage()
+    public StorageReading ReadStorage(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var guard = _storage.TryEnter()
             ?? throw new ToolFailureException(ErrorCodes.Timeout, "An earlier storage read has not finished.", retryable: true);
         // Never show the "insert a disk" / critical error dialog for this thread; restored before returning.
@@ -239,7 +251,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
                 throw new ToolFailureException(ErrorCodes.OsApiError, "The drive list could not be read.", retryable: true);
             }
 
-            var (drives, excluded) = SelectDrives(mask, GetDriveTypeW, DosTarget, DiskSpace);
+            var (drives, excluded) = SelectDrives(mask, GetDriveTypeW, DosTarget, DiskSpace, cancellationToken);
             return new StorageReading(DateTimeOffset.UtcNow, drives, excluded);
         }
         finally
@@ -256,13 +268,14 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
     /// unknown drives never reach <paramref name="dosTarget"/> or <paramref name="space"/>. A drive whose device is a
     /// <c>\??\</c> path is a SUBST folder of another volume and is left out (it would duplicate that volume).
     /// </summary>
-    internal static (List<DriveReading> Fixed, int Excluded) SelectDrives(uint mask, Func<string, uint> driveType, Func<char, string?> dosTarget, Func<char, DriveReading> space)
+    internal static (List<DriveReading> Fixed, int Excluded) SelectDrives(uint mask, Func<string, uint> driveType, Func<char, string?> dosTarget, Func<char, DriveReading> space, CancellationToken cancellationToken)
     {
         var drives = new List<DriveReading>();
         var excluded = 0;
         for (var i = 0; i < 26; i++)
         {
             if ((mask & (1u << i)) == 0) continue;
+            cancellationToken.ThrowIfCancellationRequested();
             var letter = (char)('A' + i);
             if (driveType($"{letter}:\\") != DriveFixed)
             {
@@ -270,6 +283,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
                 continue;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             var target = dosTarget(letter);
             if (target is null)
             {
@@ -281,6 +295,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
             }
             else
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 drives.Add(space(letter));
             }
         }
@@ -369,8 +384,9 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
     /// D3DKMT_ADAPTER_PERFDATA of each physical adapter: open from LUID, count physical adapters (1 when the count cannot be
     /// read), one query per physical adapter, close.
     /// </summary>
-    internal static IReadOnlyList<GpuTemperatureReading> GpuTemperatures(GpuAdapterReading adapter)
+    internal static IReadOnlyList<GpuTemperatureReading> GpuTemperatures(GpuAdapterReading adapter, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var open = new D3dkmtOpenAdapterFromLuid { AdapterLuidLowPart = (uint)adapter.Luid, AdapterLuidHighPart = (int)(uint)(adapter.Luid >> 32) };
         var status = D3DKMTOpenAdapterFromLuid(ref open);
         if (status != 0) return [new(adapter.Luid, 0, adapter.Description, null, NtReason(status))];
@@ -382,6 +398,7 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
             var result = new List<GpuTemperatureReading>();
             for (var phys = 0; phys < Math.Clamp(count, 1, MaxPhysicalAdapters); phys++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 Marshal.StructureToPtr(new D3dkmtAdapterPerfData { PhysicalAdapterIndex = (uint)phys }, buffer, false);
                 status = Query(open.Adapter, KmtqaitypeAdapterPerfData, buffer, Marshal.SizeOf<D3dkmtAdapterPerfData>());
                 result.Add(status != 0
@@ -493,6 +510,43 @@ public sealed class WindowsSystemMonitor : ISystemMonitor
         }
 
         return new(null, UnavailableReason.Unavailable);
+    }
+
+    /// <summary>
+    /// Instance names of a wildcard counter from its raw values (available after one collection, unlike formatted rates).
+    /// null when they cannot be read or exceed the limit: then no invalid value can be shown to be a new instance.
+    /// </summary>
+    private static HashSet<string>? InstanceNames(IntPtr counter, int maxItems)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            uint size = 0;
+            var status = PdhGetRawCounterArrayW(counter, ref size, out var count, IntPtr.Zero);
+            if (status == PdhNoData || (status == 0 && count == 0)) return new(StringComparer.Ordinal);
+            if (status != PdhMoreData || count > maxItems || size > 16 * 1024 * 1024) return null;
+
+            var buffer = Marshal.AllocHGlobal((nint)size);
+            try
+            {
+                status = PdhGetRawCounterArrayW(counter, ref size, out count, buffer);
+                if (status == PdhMoreData) continue;
+                if (status != 0 || count > maxItems) return null;
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                var itemSize = Marshal.SizeOf<PdhRawCounterItem>();
+                for (var i = 0; i < count; i++)
+                {
+                    if (Marshal.PtrToStringUni(Marshal.ReadIntPtr(buffer + (i * itemSize))) is { } name) names.Add(name);
+                }
+
+                return names;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        return null;
     }
 
     private static bool IsValid(uint cstatus) => cstatus is PdhCstatusValidData or PdhCstatusNewData;

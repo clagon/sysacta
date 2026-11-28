@@ -42,7 +42,7 @@ public sealed record GpuStatus(
     string? BusiestEngineType,
     IReadOnlyList<GpuEngineStatus> Engines,
     bool EnginesTruncated,
-    [property: Description("Process instances left out of the engine sums because they first appeared during the window (no rate yet). Processes that ended during the window are not visible and not counted either, so values can be slightly low.")] int ExcludedNewInstances,
+    [property: Description("Process instances left out of the engine sums because their name was not present at the first collection (they appeared during the window and have no rate yet). Processes that ended during the window are not visible either, so values can be slightly low. An instance that existed but has no valid value makes its engine null instead.")] int ExcludedNewInstances,
     [property: Description("Dedicated GPU memory in use by all processes (GPU Adapter Memory\\Dedicated Usage), bytes.")] long? DedicatedMemoryUsedBytes,
     [property: Description("Shared system memory in use by the GPU (GPU Adapter Memory\\Shared Usage), bytes.")] long? SharedMemoryUsedBytes,
     UnavailableReason? MemoryUsageReason,
@@ -149,7 +149,14 @@ public static partial class SystemStatus
 
     private sealed record EngineKey(ulong Luid, int Phys, int Engine);
 
-    private sealed record ParsedEngine(ulong Pid, EngineKey Key, string Type, double? Value);
+    private sealed record ParsedEngine(ulong Pid, EngineKey Key, string Type, double? Value, bool? InFirstSample)
+    {
+        /// <summary>Appeared during the window, so it has no rate yet: left out of the sum and counted.</summary>
+        public bool IsNew => Value is null && InFirstSample == false;
+
+        /// <summary>No valid value although it existed (or that cannot be known): the sum would be incomplete.</summary>
+        public bool Failed => Value is null && InFirstSample != false;
+    }
 
     /// <summary>
     /// GPU utilization. Each process instance of an engine is summed into that engine (instances of the same process are
@@ -216,7 +223,7 @@ public static partial class SystemStatus
                 busiest,
                 engines,
                 enginesTruncated,
-                mine.Count(p => p.Value is null),
+                mine.Count(p => p.IsNew),
                 dedicated,
                 shared,
                 memReason,
@@ -244,9 +251,14 @@ public static partial class SystemStatus
             UnavailableReason? reason = null;
             if (types.Count != 1 || group.GroupBy(i => i.Pid).Any(AmbiguousDuplicate))
             {
-                // One engine with two types, or the same process listed twice with the same non-zero value (one counter
-                // reported twice, or two counters that happen to match): summing could double count.
+                // One engine with two types, or the same process listed more than once with a non-zero value: nothing
+                // proves the instances are independent, so summing could double count.
                 reason = UnavailableReason.InvalidData;
+            }
+            else if (group.Any(i => i.Failed))
+            {
+                // An instance that existed has no valid value: leaving it out would understate the engine.
+                reason = UnavailableReason.Unavailable;
             }
             else
             {
@@ -261,7 +273,7 @@ public static partial class SystemStatus
                 }
                 else
                 {
-                    // Instances that appeared after the first collection have no valid rate yet and are left out.
+                    // Only instances that appeared after the first collection (no rate yet) are left out.
                     value = Percent(valid.Sum(i => i.Value!.Value));
                     reason = value is null ? UnavailableReason.InvalidData : null;
                 }
@@ -293,14 +305,15 @@ public static partial class SystemStatus
     }
 
     /// <summary>
-    /// A process can have several instances with the same name for one engine (seen for the Hyper-V VM worker, vmwp, with
-    /// GPU paravirtualization). All zero: no effect either way. Different values: they are different counters and add up.
-    /// The same non-zero value: indistinguishable from one counter reported twice.
+    /// A process can have several instances with the same name (or a PDH "#n" suffix) for one engine; seen for the Hyper-V
+    /// VM worker, vmwp, with GPU paravirtualization. Neither PDH nor the GPU Engine counter set documents whether such
+    /// instances are independent, so they are accepted only when every valid value is 0 (summing or picking one then gives
+    /// the same result). Any non-zero value makes the engine ambiguous.
     /// </summary>
     private static bool AmbiguousDuplicate(IGrouping<ulong, ParsedEngine> sameProcess)
     {
         var values = sameProcess.Where(i => i.Value is not null).Select(i => i.Value!.Value).ToList();
-        return values.Count > 1 && values.Any(v => v != 0) && values.Distinct().Count() < values.Count;
+        return values.Count > 1 && values.Any(v => v != 0);
     }
 
     private static Dictionary<ulong, (long?, long?, UnavailableReason?)> GpuMemory(IReadOnlyList<GpuMemorySample> samples, out bool invalid)
@@ -371,7 +384,7 @@ public static partial class SystemStatus
 
         var phys = Int(m.Groups[4].Value);
         var engine = Int(m.Groups[5].Value);
-        return phys < 0 || engine < 0 ? null : new ParsedEngine(pid, new EngineKey(Luid(m.Groups[2].Value, m.Groups[3].Value), phys, engine), m.Groups[6].Value, s.Value);
+        return phys < 0 || engine < 0 ? null : new ParsedEngine(pid, new EngineKey(Luid(m.Groups[2].Value, m.Groups[3].Value), phys, engine), m.Groups[6].Value, s.Value, s.InFirstSample);
     }
 
     private static string? EngineType(string raw) => EngineTypeText().IsMatch(raw) ? raw : null;

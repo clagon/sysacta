@@ -15,6 +15,7 @@ public class WindowsSystemMonitorTests
     {
         Assert.Equal(16, Marshal.SizeOf<NativeMethods.PdhFmtCounterValue>());
         Assert.Equal(24, Marshal.SizeOf<NativeMethods.PdhFmtCounterValueItem>());
+        Assert.Equal(48, Marshal.SizeOf<NativeMethods.PdhRawCounterItem>());
         Assert.Equal(64, Marshal.SizeOf<NativeMethods.MemoryStatusEx>());
         Assert.Equal(96, Marshal.SizeOf<NativeMethods.DiskSpaceInformation>());
         Assert.Equal(64, Marshal.SizeOf<NativeMethods.D3dkmtAdapterPerfData>());
@@ -35,12 +36,28 @@ public class WindowsSystemMonitorTests
         var mask = types.Keys.Aggregate(0u, (m, l) => m | (1u << (l - 'A')));
         var (drives, excluded) = WindowsSystemMonitor.SelectDrives(mask, root => types[root[0]],
             l => { touched.Add(l); return targets[l]; },
-            l => { touched.Add(l); return new(l, new(10, 5, 5, 1, 1), null); });
+            l => { touched.Add(l); return new(l, new(10, 5, 5, 1, 1), null); }, CancellationToken.None);
 
         Assert.Equal(['C', 'C', 'D', 'S'], touched); // C: device then space; D: device only; S: device only
         Assert.Equal(['C', 'D'], drives.Select(d => d.Letter));
         Assert.Equal(UnavailableReason.Unavailable, drives.Single(d => d.Letter == 'D').Reason);
         Assert.Equal(5, excluded);
+    }
+
+    [Fact]
+    public void Drive_reads_stop_at_the_next_drive_after_cancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        var reads = new List<char>();
+        var mask = (1u << 2) | (1u << 3) | (1u << 4); // C, D, E
+        Assert.ThrowsAny<OperationCanceledException>(() => WindowsSystemMonitor.SelectDrives(mask, _ => 3, _ => @"\Device\HarddiskVolume1",
+            l =>
+            {
+                reads.Add(l);
+                cts.Cancel(); // cancelled while the first capacity read runs
+                return new(l, new(10, 5, 5, 1, 1), null);
+            }, cts.Token));
+        Assert.Equal(['C'], reads);
     }
 
     [Fact]
@@ -95,7 +112,7 @@ public class WindowsSystemMonitorTests
     public void Hardware_reads_os_topology_memory_and_gpus_without_identifiers()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
-        var d = SystemInventory.Hardware(new WindowsSystemMonitor().ReadHardware());
+        var d = SystemInventory.Hardware(new WindowsSystemMonitor().ReadHardware(TestContext.Current.CancellationToken));
 
         Assert.Equal(Environment.OSVersion.Version.Build, d.Os.BuildNumber);
         Assert.NotNull(d.Os.Architecture);
@@ -113,7 +130,7 @@ public class WindowsSystemMonitorTests
     public void Temperatures_return_values_or_reasons_for_each_source()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
-        var d = SystemInventory.Temperatures(new WindowsSystemMonitor().ReadTemperatures());
+        var d = SystemInventory.Temperatures(new WindowsSystemMonitor().ReadTemperatures(TestContext.Current.CancellationToken));
         Assert.All(d.Sensors, s => Assert.True(s.TemperatureC is not null ^ s.Reason is not null));
         Assert.All(d.Sensors, s => Assert.NotEqual(TemperatureDeviceType.Cpu, s.DeviceType));
         Assert.Equal(5, d.NotCollected.Count);
@@ -123,7 +140,7 @@ public class WindowsSystemMonitorTests
     public void Storage_lists_only_local_fixed_volumes_with_consistent_capacity()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
-        var d = SystemInventory.Storage(new WindowsSystemMonitor().ReadStorage());
+        var d = SystemInventory.Storage(new WindowsSystemMonitor().ReadStorage(TestContext.Current.CancellationToken));
         var system = Path.GetPathRoot(Environment.SystemDirectory)![..2].ToUpperInvariant();
         var c = d.Volumes.Single(v => v.DriveLetter == system);
         Assert.Null(c.Reason);
@@ -145,7 +162,7 @@ public class WindowsSystemMonitorTests
         Assert.Equal(adapters.Value!.Count, adapters.Value.Select(a => a.Luid).Distinct().Count());
         foreach (var hardware in adapters.Value.Where(a => !a.Software))
         {
-            var readings = WindowsSystemMonitor.GpuTemperatures(hardware);
+            var readings = WindowsSystemMonitor.GpuTemperatures(hardware, TestContext.Current.CancellationToken);
             Assert.Equal(Enumerable.Range(0, readings.Count), readings.Select(t => t.PhysicalIndex));
             Assert.All(readings, t => Assert.Equal(hardware.Luid, t.Luid));
             Assert.All(readings, t => Assert.True(t.DeciCelsius is not null ^ t.Reason is not null));

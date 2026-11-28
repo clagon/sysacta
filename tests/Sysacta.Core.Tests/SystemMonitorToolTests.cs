@@ -201,6 +201,30 @@ public class SystemMonitorToolTests
         Assert.True((await Call(h, c, "system_get_storage")).IsSuccess);
     }
 
+    [Theory]
+    [InlineData("system_get_status")]
+    [InlineData("system_get_hardware")]
+    [InlineData("system_get_temperatures")]
+    [InlineData("system_get_storage")]
+    public async Task No_new_read_starts_after_the_call_was_cancelled_while_an_earlier_read_hung(string name)
+    {
+        var (h, m, c) = Setup();
+        using var block = new SemaphoreSlim(0);
+        m.Block = block;
+        using var cts = new CancellationTokenSource();
+        var call = Call(h, c, name, ct: cts.Token);
+        await m.Entered.WaitAsync(Ct);
+        await cts.CancelAsync();
+        Assert.Equal(ErrorCodes.Cancelled, (await call).Error!.Code);
+
+        // The hung first read ends; the adapter sees the cancelled token and does not start its next read.
+        block.Release();
+        while (h.Executor.InFlight != 0) await Task.Delay(10, Ct);
+        Assert.Equal(1, m.StoppedAfterCancel);
+        Assert.Equal(0, m.ReadsCompleted);
+        Assert.Equal(0, m.Running);
+    }
+
     [Fact]
     public async Task Independent_reads_run_concurrently_up_to_the_executor_limit()
     {
@@ -369,9 +393,20 @@ public class SystemMonitorToolTests
         var idle = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 0.0), new(Engine(1, DiscreteLuid, 0, 0, "3D"), 0.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), 7.0)])), DiscreteLuid);
         Assert.Equal(7.0, idle.UtilizationPercent);
 
-        // Different values prove different counters: they add up.
+        // Different non-zero values do not prove independent counters: not summed.
         var distinct = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 10.0), new(Engine(1, DiscreteLuid, 0, 0, "3D"), 2.5)])), DiscreteLuid);
-        Assert.Equal(12.5, distinct.UtilizationPercent);
+        Assert.Null(distinct.UtilizationPercent);
+        Assert.Equal(UnavailableReason.InvalidData, distinct.UtilizationReason);
+        var suffixed = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 10.0), new(Engine(1, DiscreteLuid, 0, 0, "3D") + "#1", 2.5)])), DiscreteLuid);
+        Assert.Equal(UnavailableReason.InvalidData, suffixed.UtilizationReason);
+
+        // Zero mixed with a non-zero value is still ambiguous (sum and either single value differ).
+        var mixed = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 0.0), new(Engine(1, DiscreteLuid, 0, 0, "3D"), 4.0)])), DiscreteLuid);
+        Assert.Equal(UnavailableReason.InvalidData, mixed.UtilizationReason);
+
+        // Different processes on one engine are always summed.
+        var processes = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 10.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), 2.5)])), DiscreteLuid);
+        Assert.Equal(12.5, processes.UtilizationPercent);
 
         // One engine reported with two types.
         var conflict = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 10.0), new(Engine(2, DiscreteLuid, 0, 0, "Copy"), 10.0)])), DiscreteLuid);
@@ -389,13 +424,36 @@ public class SystemMonitorToolTests
     }
 
     [Fact]
-    public void Gpu_instances_without_a_valid_rate_are_left_out_and_an_engine_without_any_is_unknown()
+    public void Only_instances_absent_at_the_first_collection_are_left_out_and_other_invalid_values_make_the_engine_null()
     {
-        // A process that started during the window has no valid rate yet.
-        var partial = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 20.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), null)])), DiscreteLuid);
+        // A process that started during the window (absent at the first collection) has no rate yet: left out and counted.
+        var partial = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 20.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), null, InFirstSample: false)])), DiscreteLuid);
         Assert.Equal(20.0, partial.UtilizationPercent);
         Assert.Equal(1, partial.ExcludedNewInstances);
         Assert.Equal(0, Gpu(Status(DefaultStatus()), DiscreteLuid).ExcludedNewInstances);
+
+        // An existing instance whose value failed: the engine (and so the busiest engine) is unknown, not understated.
+        var existing = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 20.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), null, InFirstSample: true)])), DiscreteLuid);
+        Assert.Null(existing.Engines.Single().UtilizationPercent);
+        Assert.Equal(UnavailableReason.Unavailable, existing.UtilizationReason);
+        Assert.Equal(0, existing.ExcludedNewInstances);
+
+        // When the first instance list could not be read, an invalid value cannot be shown to be new.
+        var unknownFirst = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 20.0, null), new(Engine(2, DiscreteLuid, 0, 0, "3D"), null, null)])), DiscreteLuid);
+        Assert.Equal(UnavailableReason.Unavailable, unknownFirst.UtilizationReason);
+        var allValidUnknownFirst = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 0.0, null)])), DiscreteLuid);
+        Assert.Equal(0.0, allValidUnknownFirst.UtilizationPercent);
+
+        // Every instance invalid: unknown, never 0.
+        var allInvalid = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), null), new(Engine(2, DiscreteLuid, 0, 0, "3D"), null)])), DiscreteLuid);
+        Assert.Null(allInvalid.UtilizationPercent);
+        Assert.Equal(UnavailableReason.Unavailable, allInvalid.UtilizationReason);
+        var onlyNew = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), null, InFirstSample: false)])), DiscreteLuid);
+        Assert.Equal(UnavailableReason.Unavailable, onlyNew.UtilizationReason);
+        Assert.Equal(1, onlyNew.ExcludedNewInstances);
+
+        // A measured 0 % is a value.
+        Assert.Equal(0.0, Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 0.0)])), DiscreteLuid).UtilizationPercent);
 
         // An engine whose only instance has no valid rate: the busiest engine is unknown.
         var unknown = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 20.0), new(Engine(2, DiscreteLuid, 0, 1, "Copy"), null)])), DiscreteLuid);

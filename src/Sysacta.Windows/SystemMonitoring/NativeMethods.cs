@@ -37,6 +37,30 @@ internal static class NativeMethods
         public PdhFmtCounterValue Value;
     }
 
+    /// <summary>PDH_RAW_COUNTER (CStatus, FILETIME, two LONGLONG values, MultiCount).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PdhRawCounter
+    {
+        public uint CStatus;
+        public uint TimeStampLow;
+        public uint TimeStampHigh;
+        public long FirstValue;
+        public long SecondValue;
+        public uint MultiCount;
+    }
+
+    /// <summary>PDH_RAW_COUNTER_ITEM_W: the instance name pointer followed by the raw value. Only the name is used.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PdhRawCounterItem
+    {
+        public IntPtr Name;
+        public PdhRawCounter RawValue;
+    }
+
+    [DllImport("pdh.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    public static extern uint PdhGetRawCounterArrayW(IntPtr counter, ref uint bufferSize, out uint itemCount, IntPtr itemBuffer);
+
     [DllImport("pdh.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     public static extern uint PdhOpenQueryW(string? dataSource, IntPtr userData, out IntPtr query);

@@ -34,7 +34,7 @@ public sealed class SystemGetHardwareTool(ISystemMonitor monitor) : SysactaTool<
         DefaultPolicy.On, true, []);
 
     protected override Task<ToolOutcome<SystemHardwareData>> ExecuteAsync(SystemNoArgs args, ToolExecution execution, CancellationToken cancellationToken) =>
-        Task.FromResult(new ToolOutcome<SystemHardwareData>(SystemInventory.Hardware(monitor.ReadHardware()), Verification.NotApplicable));
+        Task.FromResult(new ToolOutcome<SystemHardwareData>(SystemInventory.Hardware(monitor.ReadHardware(cancellationToken)), Verification.NotApplicable));
 }
 
 public sealed class SystemGetTemperaturesTool(ISystemMonitor monitor) : SysactaTool<SystemNoArgs, SystemTemperaturesData>
@@ -44,7 +44,7 @@ public sealed class SystemGetTemperaturesTool(ISystemMonitor monitor) : SysactaT
         DefaultPolicy.On, true, []);
 
     protected override Task<ToolOutcome<SystemTemperaturesData>> ExecuteAsync(SystemNoArgs args, ToolExecution execution, CancellationToken cancellationToken) =>
-        Task.FromResult(new ToolOutcome<SystemTemperaturesData>(SystemInventory.Temperatures(monitor.ReadTemperatures()), Verification.NotApplicable));
+        Task.FromResult(new ToolOutcome<SystemTemperaturesData>(SystemInventory.Temperatures(monitor.ReadTemperatures(cancellationToken)), Verification.NotApplicable));
 }
 
 public sealed class SystemGetStorageTool(ISystemMonitor monitor) : SysactaTool<SystemNoArgs, SystemStorageData>
@@ -54,5 +54,5 @@ public sealed class SystemGetStorageTool(ISystemMonitor monitor) : SysactaTool<S
         DefaultPolicy.On, true, []);
 
     protected override Task<ToolOutcome<SystemStorageData>> ExecuteAsync(SystemNoArgs args, ToolExecution execution, CancellationToken cancellationToken) =>
-        Task.FromResult(new ToolOutcome<SystemStorageData>(SystemInventory.Storage(monitor.ReadStorage()), Verification.NotApplicable));
+        Task.FromResult(new ToolOutcome<SystemStorageData>(SystemInventory.Storage(monitor.ReadStorage(cancellationToken)), Verification.NotApplicable));
 }

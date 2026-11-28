@@ -45,8 +45,13 @@ public sealed record GpuAdapterReading(
     ulong SharedSystemMemory,
     bool Software);
 
-/// <summary>One instance of a wildcard performance counter. <paramref name="Value"/> is null when PDH reported no valid data for it.</summary>
-public sealed record CounterSample(string Instance, double? Value);
+/// <summary>One instance of a wildcard rate counter after the second collection.</summary>
+/// <param name="Value">null when PDH reported no valid data (CStatus) for this instance.</param>
+/// <param name="InFirstSample">
+/// Whether the instance name was present at the first collection: false means it appeared during the window (it cannot
+/// have a rate yet), true means it existed, null means the first instance list could not be read.
+/// </param>
+public sealed record CounterSample(string Instance, double? Value, bool? InFirstSample = true);
 
 /// <summary>One <c>GPU Adapter Memory</c> instance (bytes; null when PDH reported no valid data).</summary>
 public sealed record GpuMemorySample(string Instance, long? DedicatedUsage, long? SharedUsage);
@@ -152,10 +157,14 @@ public interface ISystemMonitor
     /// </summary>
     StatusReading SampleStatus(TimeSpan interval, CancellationToken cancellationToken);
 
-    HardwareReading ReadHardware();
+    /// <summary>
+    /// The read methods check <paramref name="cancellationToken"/> before each source and each device, so no new OS read
+    /// starts after a timeout or cancellation (a call already inside the OS is not interrupted).
+    /// </summary>
+    HardwareReading ReadHardware(CancellationToken cancellationToken);
 
-    TemperatureReading ReadTemperatures();
+    TemperatureReading ReadTemperatures(CancellationToken cancellationToken);
 
     /// <summary>Throws <see cref="ToolFailureException"/> only when the drive list itself cannot be read.</summary>
-    StorageReading ReadStorage();
+    StorageReading ReadStorage(CancellationToken cancellationToken);
 }

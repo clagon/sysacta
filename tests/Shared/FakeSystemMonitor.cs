@@ -44,7 +44,13 @@ public sealed class FakeSystemMonitor : ISystemMonitor
     private int _calls;
     private int _running;
     private int _cancelledWaits;
+    private int _stoppedAfterCancel;
+    private int _readsCompleted;
     public int Calls => Volatile.Read(ref _calls);
+    /// <summary>Calls that found the token cancelled after the (possibly hung) first read and started nothing more.</summary>
+    public int StoppedAfterCancel => Volatile.Read(ref _stoppedAfterCancel);
+    /// <summary>Calls that went on to their second read and returned data.</summary>
+    public int ReadsCompleted => Volatile.Read(ref _readsCompleted);
     public int Running => Volatile.Read(ref _running);
     public int CancelledWaits => Volatile.Read(ref _cancelledWaits);
     public TimeSpan? LastInterval { get; private set; }
@@ -62,23 +68,35 @@ public sealed class FakeSystemMonitor : ISystemMonitor
         }
 
         return Status();
-    });
+    }, cancellationToken);
 
-    public HardwareReading ReadHardware() => Run(Hardware);
+    public HardwareReading ReadHardware(CancellationToken cancellationToken) => Run(Hardware, cancellationToken);
 
-    public TemperatureReading ReadTemperatures() => Run(Temperatures);
+    public TemperatureReading ReadTemperatures(CancellationToken cancellationToken) => Run(Temperatures, cancellationToken);
 
-    public StorageReading ReadStorage() => Run(Storage);
+    public StorageReading ReadStorage(CancellationToken cancellationToken) => Run(Storage, cancellationToken);
 
-    private T Run<T>(Func<T> read)
+    /// <summary>
+    /// Models the real adapter's contract: a first read that may hang (ignoring cancellation, like a native call), then
+    /// a cancellation check before the next read.
+    /// </summary>
+    private T Run<T>(Func<T> read, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _calls);
         Interlocked.Increment(ref _running);
         try
         {
             Entered.Release();
-            Block?.Wait();
-            return read();
+            Block?.Wait(CancellationToken.None); // a hung native call ignores cancellation
+            if (cancellationToken.IsCancellationRequested)
+            {
+                Interlocked.Increment(ref _stoppedAfterCancel);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            var result = read();
+            Interlocked.Increment(ref _readsCompleted);
+            return result;
         }
         finally
         {
