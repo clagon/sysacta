@@ -198,7 +198,7 @@ Windows 11 Home（ビルド 26300 系、x64）の通常権限で、作業コピ�
 
 - Linux (WSL2, .NET SDK 10.0.404): `dotnet build Sysacta.sln -c Release` 警告・エラーゼロ。`dotnet test Sysacta.sln -c Release`: Core 660、Infrastructure 51、MCP 119、Windows 65 成功（Windows 実機専用 32 件スキップ）。追加: Core `SystemMonitorToolTests`、MCP `SystemServerTests`、Infrastructure の既存 DB テスト、Windows `WindowsSystemMonitorTests`。
 - Windows 実機: `WindowsSystemMonitorTests` 7 件成功（§7）。
-- Windows CI: PR 作成後に記録する。
+- Windows CI（windows-latest、PR #17、run 46111354768、レビュー対応後のコミット）: ビルド成功、App 31・Core 663・Infrastructure 51・MCP 119・Windows 88 成功（Windows 11 件スキップ: 音声機器等がない）、実 exe のスモークテスト成功。CI ランナーでは実 GPU がなく、GPU 温度・利用率は欠損理由付きの応答だけを確認したことになる。
 
 ## 12. レビュー対応（規約・仕様の 2 軸レビュー）
 
