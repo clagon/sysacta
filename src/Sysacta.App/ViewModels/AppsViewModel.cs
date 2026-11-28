@@ -16,7 +16,7 @@ namespace Sysacta.App.ViewModels;
 public sealed partial class AppsViewModel(SysactaRuntime runtime) : PageViewModel
 {
     private static readonly TimeSpan InspectTimeout = TimeSpan.FromSeconds(60);
-    private readonly Dictionary<(string Id, long Generation), RegisteredAppItem> _items = [];
+    private readonly Dictionary<string, RegisteredAppItem> _items = new(StringComparer.Ordinal);
     private int _loadGeneration;
 
     public ObservableCollection<RegisteredAppItem> Apps { get; } = [];
@@ -52,30 +52,36 @@ public sealed partial class AppsViewModel(SysactaRuntime runtime) : PageViewMode
     public override async Task RefreshAsync()
     {
         var generation = ++_loadGeneration;
-        IsElevated = runtime.AppPlatform.IsElevated;
         await RunAsync(async () =>
         {
-            var stored = await Task.Run(runtime.Apps.ListAll);
+            var (stored, elevated) = await Task.Run(() => (runtime.Apps.ListAll(), runtime.AppPlatform.IsElevated));
             if (generation != _loadGeneration)
             {
                 return;
             }
 
+            IsElevated = elevated;
             Apps.Clear();
             foreach (var app in stored)
             {
-                var key = (app.Id, app.App?.Generation ?? -1);
-                if (_items.TryGetValue(key, out var item))
+                // An item is kept while its approval is the same, so a save still running for its switch keeps its
+                // value; a re-approved, legacy or new row gets a new item. Removed rows are dropped from the cache.
+                if (_items.TryGetValue(app.Id, out var item) && item.CanApply(app))
                 {
-                    item.ApplyStoredValue(app.Allowed);
+                    item.ApplyStoredValue(app);
                 }
                 else
                 {
                     item = new RegisteredAppItem(this, app);
-                    _items[key] = item;
+                    _items[app.Id] = item;
                 }
 
                 Apps.Add(item);
+            }
+
+            foreach (var gone in _items.Keys.Except(stored.Select(a => a.Id)).ToList())
+            {
+                _items.Remove(gone);
             }
 
             HasApps = Apps.Count > 0;
@@ -147,7 +153,7 @@ public sealed partial class AppsViewModel(SysactaRuntime runtime) : PageViewMode
     {
         if (item.App is { } app)
         {
-            Draft = new AppDraft(app.Id, app.Generation, app.Path, app.DisplayName, string.Join(Environment.NewLine, app.FixedArgs));
+            Draft = new AppDraft(app.Id, item.Generation, app.Path, app.DisplayName, string.Join(Environment.NewLine, app.FixedArgs));
         }
     }
 
@@ -209,7 +215,7 @@ public sealed partial class AppsViewModel(SysactaRuntime runtime) : PageViewMode
 
     internal Task<bool> SetAllowedAsync(RegisteredAppItem item, bool allowed) => RunAsync(async () =>
     {
-        await Task.Run(() => runtime.Apps.SetAllowed(item.Id, item.App!.Generation, allowed));
+        item.Generation = await Task.Run(() => runtime.Apps.SetAllowed(item.Id, item.Generation, allowed));
         Notify(InfoBarSeverity.Success, allowed ? $"「{item.Name}」の起動・終了を許可しました" : $"「{item.Name}」の許可を取り消しました", "次のリクエストから即時に反映されます。");
     }, "許可を変更できませんでした");
 
@@ -221,10 +227,7 @@ public sealed partial class AppsViewModel(SysactaRuntime runtime) : PageViewMode
         }
 
         await Task.Run(() => runtime.Apps.Delete(item.Id));
-        foreach (var key in _items.Keys.Where(k => k.Id == item.Id).ToList())
-        {
-            _items.Remove(key);
-        }
+        _items.Remove(item.Id);
 
         Notify(InfoBarSeverity.Success, $"「{item.Name}」の登録を削除しました");
         await RefreshAsync();
@@ -297,6 +300,7 @@ public sealed partial class RegisteredAppItem : ObservableObject
         Id = stored.Id;
         Name = stored.DisplayName;
         App = stored.App;
+        Generation = stored.App?.Generation ?? 0;
         _isAllowed = stored.Allowed && stored.App is not null;
         _saver = new LatestValueSaver<bool>(() => IsAllowed, v => owner.SetAllowedAsync(this, v), owner.RefreshAsync);
         _status = App is null ? "旧形式または読み取れない登録です。削除して登録し直してください。" : "";
@@ -305,6 +309,9 @@ public sealed partial class RegisteredAppItem : ObservableObject
     public string Id { get; }
     public string Name { get; }
     public RegisteredApp? App { get; }
+
+    /// <summary>The stored generation (disallowing starts a new one); passed with every change.</summary>
+    public long Generation { get; internal set; }
     public bool IsValid => App is not null;
     public string Path => App?.Path ?? "";
 
@@ -332,15 +339,20 @@ public sealed partial class RegisteredAppItem : ObservableObject
         NeedsAttention = status is not AppStatus.Ready;
     }
 
-    internal void ApplyStoredValue(bool allowed)
+    /// <summary>Same approval (path, identity, arguments), so only the permission and generation may differ.</summary>
+    internal bool CanApply(StoredApp stored) =>
+        App is not null && stored.App is { } other && other.Path == App.Path && other.Identity == App.Identity && other.FixedArgs.SequenceEqual(App.FixedArgs);
+
+    internal void ApplyStoredValue(StoredApp stored)
     {
         if (_saver.IsSaving)
         {
             return;
         }
 
+        Generation = stored.App!.Generation;
         _applyingStoredValue = true;
-        IsAllowed = allowed && App is not null;
+        IsAllowed = stored.Allowed;
         _applyingStoredValue = false;
     }
 

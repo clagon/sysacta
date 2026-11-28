@@ -18,7 +18,8 @@ public sealed class WindowsAppPlatform : IAppPlatform
 {
     private const int MaxSnapshot = 4096;
     private readonly Lazy<bool> _elevated = new(DetectElevated);
-    private readonly Lazy<SelfInfo> _self = new(DetectSelf);
+    // PublicationOnly: a transient failure is retried on the next call instead of being cached.
+    private readonly Lazy<SelfInfo> _self = new(DetectSelf, LazyThreadSafetyMode.PublicationOnly);
     private readonly Lazy<string[]> _protectedFolders = new(ProtectedFolders);
 
     public bool IsElevated => _elevated.Value;
@@ -204,7 +205,8 @@ public sealed class WindowsAppPlatform : IAppPlatform
         }
 
         // Supplementary: a renamed copy of a denied program still carries its original name in the version resource.
-        // The folders and the file are held, so this path read refers to the same file.
+        // When exclusive (registration and launch), the folders and the file are held, so this path read refers to the
+        // same file; for the cheap listing check it is advisory only.
         try
         {
             var version = FileVersionInfo.GetVersionInfo(finalPath);
@@ -265,7 +267,6 @@ public sealed class WindowsAppPlatform : IAppPlatform
             offset += read;
         }
 
-        // A file that grew since its size was read cannot match the approved size anyway; reject the read as incomplete.
         return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
@@ -413,7 +414,7 @@ public sealed class WindowsAppPlatform : IAppPlatform
         {
             var owner = ReadSid(token, TokenUser);
             var label = ReadSid(token, TokenIntegrityLevel);
-            int? rid = label is not null && label.Value.StartsWith("S-1-16-", StringComparison.Ordinal) && int.TryParse(label.Value[7..], out var r) ? r : null;
+            var rid = IntegrityRid(label);
             return (owner is null || user is null ? null : owner.Equals(user), rid);
         }
     }
@@ -438,23 +439,33 @@ public sealed class WindowsAppPlatform : IAppPlatform
         }
     }
 
-    private static string? ImagePath(SafeProcessHandle handle)
+    /// <summary>The RID of a mandatory label SID (S-1-16-RID), e.g. 0x2000 for medium.</summary>
+    private static int? IntegrityRid(SecurityIdentifier? label) =>
+        label is not null && label.Value.StartsWith("S-1-16-", StringComparison.Ordinal) && int.TryParse(label.Value[7..], out var rid) ? rid : null;
+
+    private static string? ImagePath(SafeProcessHandle handle, bool native = false)
     {
         var buffer = new char[1024];
         var size = (uint)buffer.Length;
-        return QueryFullProcessImageNameW(handle, 0, buffer, ref size) && size > 0 && size < buffer.Length ? new string(buffer, 0, (int)size) : null;
+        return QueryFullProcessImageNameW(handle, native ? 1u /* PROCESS_NAME_NATIVE */ : 0, buffer, ref size) && size > 0 && size < buffer.Length ? new string(buffer, 0, (int)size) : null;
     }
 
-    /// <summary>Volume + file id of the image file named by the process (attribute-only open: no sharing conflict).</summary>
-    private static ExecutableIdentity? ImageIdentity(SafeProcessHandle handle)
-    {
-        if (ImagePath(handle) is not { } path)
-        {
-            return null;
-        }
+    /// <summary>
+    /// Volume + file id of the image file named by the process: its NT path (no drive letter mapping), opened without
+    /// following reparse points (a link placed at that path is "unknown", never a match). Attribute-only open.
+    /// </summary>
+    private static ExecutableIdentity? ImageIdentity(SafeProcessHandle handle) =>
+        ImagePath(handle, native: true) is { } path && path.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase)
+            ? FileKey(@"\\?\GLOBALROOT" + path, noReparse: true)
+            : null;
 
-        using var file = CreateFileW(path, FileReadAttributes, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
-        return !file.IsInvalid && GetFileInformationByHandleEx(file, FileIdInfoClass, out var id, (uint)Marshal.SizeOf<FileIdInfo>())
+    /// <summary>Volume + file id of a file by path (attribute-only open: no sharing conflict). Size and hash are placeholders.</summary>
+    private static ExecutableIdentity? FileKey(string path, bool noReparse = false)
+    {
+        using var file = CreateFileW(path, FileReadAttributes, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, noReparse ? FileFlagOpenReparsePoint : 0, IntPtr.Zero);
+        return !file.IsInvalid
+            && (!noReparse || (GetFileInformationByHandle(file, out var info) && (info.FileAttributes & (FileAttributeReparsePoint | FileAttributeDirectory)) == 0))
+            && GetFileInformationByHandleEx(file, FileIdInfoClass, out var id, (uint)Marshal.SizeOf<FileIdInfo>())
             ? new ExecutableIdentity(id.VolumeSerialNumber.ToString("x16"), FileIdHex(id), 1, "")
             : null;
     }
@@ -487,7 +498,11 @@ public sealed class WindowsAppPlatform : IAppPlatform
     private static SelfInfo DetectSelf()
     {
         var pid = Environment.ProcessId;
-        _ = ProcessIdToSessionId((uint)pid, out var session);
+        if (!ProcessIdToSessionId((uint)pid, out var session))
+        {
+            throw new ToolFailureException(ErrorCodes.OsApiError, "The current session could not be determined.", retryable: true);
+        }
+
         using var identity = WindowsIdentity.GetCurrent();
         long creation = 0;
         using (var own = NativeMethods.OpenProcess(ProcessQueryLimitedInformation, false, (uint)pid))
@@ -501,7 +516,7 @@ public sealed class WindowsAppPlatform : IAppPlatform
         // The parent pid is valid only while that process is older than Sysacta (otherwise the pid was reused).
         int? parentPid = null;
         long parentCreation = 0;
-        if (Snapshot().Entries.FirstOrDefault(e => e.Pid == pid) is { ParentPid: > 0 } me)
+        if (Snapshot().Entries.FirstOrDefault(e => e.Pid == pid) is { ParentPid: > 0 } me) // throws when unreadable: retried later
         {
             using var parent = NativeMethods.OpenProcess(ProcessQueryLimitedInformation, false, me.ParentPid);
             if (!parent.IsInvalid && GetProcessTimes(parent, out var pc, out _, out _, out _) && pc > 0 && pc <= creation)
@@ -511,16 +526,7 @@ public sealed class WindowsAppPlatform : IAppPlatform
             }
         }
 
-        ExecutableIdentity? image = null;
-        if (Environment.ProcessPath is { } exe)
-        {
-            using var file = CreateFileW(exe, FileReadAttributes, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
-            if (!file.IsInvalid && GetFileInformationByHandleEx(file, FileIdInfoClass, out var id, (uint)Marshal.SizeOf<FileIdInfo>()))
-            {
-                image = new ExecutableIdentity(id.VolumeSerialNumber.ToString("x16"), FileIdHex(id), 1, "");
-            }
-        }
-
+        var image = Environment.ProcessPath is { } exe ? FileKey(exe) : null;
         return new SelfInfo(pid, creation, session, identity.User, parentPid, parentCreation, image);
     }
 
@@ -540,7 +546,7 @@ public sealed class WindowsAppPlatform : IAppPlatform
             try
             {
                 var elevated = !GetTokenInformation(token, TokenElevation, buffer, sizeof(int), out _) || Marshal.ReadInt32(buffer) != 0;
-                var rid = label is not null && label.Value.StartsWith("S-1-16-", StringComparison.Ordinal) && int.TryParse(label.Value[7..], out var r) ? r : int.MaxValue;
+                var rid = IntegrityRid(label) ?? int.MaxValue;
                 return elevated || rid >= 0x3000;
             }
             finally
@@ -565,6 +571,14 @@ public sealed class WindowsAppPlatform : IAppPlatform
         }
     }
 
+    /// <summary>NT path (\Device\...) of an open handle; independent of drive letter mappings.</summary>
+    private static string? NtPath(SafeFileHandle handle)
+    {
+        var buffer = new char[1024];
+        var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 2 /* FILE_NAME_NORMALIZED | VOLUME_NAME_NT */);
+        return length == 0 || length >= buffer.Length ? null : new string(buffer, 0, (int)length);
+    }
+
     private sealed class PreparedLaunch(OpenedExecutable opened, string path, IReadOnlyList<string> args) : IPreparedLaunch
     {
         private int _started;
@@ -578,9 +592,10 @@ public sealed class WindowsAppPlatform : IAppPlatform
 
             // lpApplicationName is the verified path: the program never comes from parsing the command line or PATH.
             // No inherited handles, no std handles, Sysacta's own environment, the app's folder as working directory.
+            var expectedImage = NtPath(opened.File) ?? throw new ToolFailureException(ErrorCodes.OsApiError, "The executable could not be identified. Nothing was launched.", retryable: true);
             var commandLine = (ExecutablePolicy.BuildCommandLine(path, args) + "\0").ToCharArray();
             var startup = new StartupInfoW { Cb = Marshal.SizeOf<StartupInfoW>() };
-            if (!CreateProcessW(path, commandLine, IntPtr.Zero, IntPtr.Zero, false, CreateSuspended | CreateUnicodeEnvironment | CreateDefaultErrorMode,
+            if (!CreateProcessW(path, commandLine, IntPtr.Zero, IntPtr.Zero, false, CreateSuspended | CreateDefaultErrorMode,
                 IntPtr.Zero, Path.GetDirectoryName(path)!, ref startup, out var info))
             {
                 return new LaunchResult(Marshal.GetLastWin32Error() == ErrorElevationRequired ? LaunchStatus.ElevationRequired : LaunchStatus.Failed);
@@ -589,8 +604,9 @@ public sealed class WindowsAppPlatform : IAppPlatform
             using var process = new SafeProcessHandle(info.Process, ownsHandle: true);
             try
             {
-                // Defense in depth: the suspended process must run the verified image before any of its code runs.
-                if (!string.Equals(ImagePath(process), path, StringComparison.OrdinalIgnoreCase)
+                // Defense in depth: before any of its code runs, the suspended process's image must be the held file, compared
+                // as NT device paths (not through drive letters, which a same-user process could remap).
+                if (!string.Equals(ImagePath(process, native: true), expectedImage, StringComparison.OrdinalIgnoreCase)
                     || !GetProcessTimes(process, out var creation, out _, out _, out _))
                 {
                     _ = TerminateProcess(process, TerminatedExitCode);

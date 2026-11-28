@@ -61,6 +61,9 @@ public static class AppRules
 
     public const string AppIdPattern = "^app_[0-9a-f]{32}$";
 
+    /// <summary>The only registration kind: a local Win32 executable (stored in the database and returned as <c>kind</c>).</summary>
+    public const string Win32ExeKind = "win32_exe";
+
     public static string NewAppId() => "app_" + Guid.NewGuid().ToString("N");
 
     public static bool IsAppId(string? value) => value is { Length: 36 } && value.StartsWith("app_", StringComparison.Ordinal) && IsHex(value[4..], 32);

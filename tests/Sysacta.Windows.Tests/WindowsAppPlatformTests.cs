@@ -115,7 +115,8 @@ public sealed class WindowsAppPlatformTests : IDisposable
         File.WriteAllText(fake, "MZ not really a program");
         Assert.Equal(ExecutableRefusal.NotPortableExecutable, _os.Inspect(fake, false, Ct).Refusal);
         var dll = Path.Combine(_dir, "library.exe");
-        File.Copy(Path.Combine(Path.GetDirectoryName(CopyTarget())!, "HarmlessTarget.dll"), dll);
+        // A native DLL renamed to .exe (a .NET "exe" assembly built as .dll has no DLL flag, so it is not used here).
+        File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), dll);
         Assert.Equal(ExecutableRefusal.NotPortableExecutable, _os.Inspect(dll, false, Ct).Refusal);
         Assert.Equal(ExecutableRefusal.NotFound, _os.Inspect(Path.Combine(_dir, "missing.exe"), false, Ct).Refusal);
         Assert.Equal(ExecutableRefusal.ProtectedLocation, _os.Inspect(Path.Combine(Environment.SystemDirectory, "whoami.exe"), false, Ct).Refusal);

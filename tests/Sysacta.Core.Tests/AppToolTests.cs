@@ -81,6 +81,7 @@ public class AppToolTests
     [InlineData("process_list_running", "{\"limit\":0}")]
     [InlineData("process_list_running", "{\"limit\":257}")]
     [InlineData("process_list_running", "{\"filter\":\"\"}")]
+    [InlineData("process_list_running", "{\"filter\":\"   \"}")]
     [InlineData("process_list_running", "{\"filter\":\"a\\u0000b\"}")]
     [InlineData("process_list_running", "{\"filter\":null}")]
     [InlineData("app_list_available", "{\"x\":1}")]

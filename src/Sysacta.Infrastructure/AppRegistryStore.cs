@@ -21,7 +21,7 @@ public sealed record StoredApp(string Id, string DisplayName, bool Allowed, Regi
 /// </remarks>
 public sealed class AppRegistryStore(SysactaDatabase database, AuthorizationGate gate) : IAppRegistry
 {
-    private const string Kind = "win32_exe";
+    private const string Kind = AppRules.Win32ExeKind;
     private const string Select = "SELECT id, display_name, launch_target, fixed_args, allowed, generation, volume_serial, file_id, file_size, sha256, kind FROM registered_apps";
 
     // ---- IAppRegistry (tools, read side) ----
@@ -65,16 +65,23 @@ public sealed class AppRegistryStore(SysactaDatabase database, AuthorizationGate
         return id;
     }
 
-    /// <summary>Allows or disallows launching/closing. Refused when the row changed since <paramref name="generation"/> was read.</summary>
-    public void SetAllowed(string appId, long generation, bool allowed)
+    /// <summary>
+    /// Allows or disallows launching/closing. Refused when the row changed since <paramref name="generation"/> was read.
+    /// Disallowing also starts a new generation, so a call that resolved the app before cannot run even if the app is
+    /// allowed again before that call reaches its start point. Returns the generation after the change.
+    /// </summary>
+    public long SetAllowed(string appId, long generation, bool allowed)
     {
         using var update = gate.BeginUpdate();
         using var c = database.Open();
-        if (Execute(c, $"UPDATE registered_apps SET allowed = $a WHERE id = $id AND generation = $g AND kind = '{Kind}'",
-            ("$a", allowed ? 1 : 0), ("$id", appId), ("$g", generation)) == 0)
+        var next = allowed ? generation : generation + 1;
+        if (Execute(c, $"UPDATE registered_apps SET allowed = $a, generation = $n WHERE id = $id AND generation = $g AND kind = '{Kind}'",
+            ("$a", allowed ? 1 : 0), ("$n", next), ("$id", appId), ("$g", generation)) == 0)
         {
             throw new InvalidOperationException("登録が変更されたか削除されました。再読み込みしてください。");
         }
+
+        return next;
     }
 
     /// <summary>

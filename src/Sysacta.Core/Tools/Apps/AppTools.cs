@@ -85,7 +85,7 @@ public sealed class AppListAvailableTool(IAppRegistry registry, IAppPlatform pla
         {
             cancellationToken.ThrowIfCancellationRequested();
             var status = StatusOf(platform, app, cancellationToken);
-            apps.Add(new AvailableApp(app.Id, AppTargets.SafeName(app.DisplayName), "win32_exe", status, status == AppStatus.Ready && !elevated));
+            apps.Add(new AvailableApp(app.Id, AppTargets.SafeName(app.DisplayName), AppRules.Win32ExeKind, status, status == AppStatus.Ready && !elevated));
         }
 
         return Task.FromResult(new ToolOutcome<AppListAvailableData>(

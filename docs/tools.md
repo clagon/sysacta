@@ -20,6 +20,7 @@
 
 | PC 全体の電源遷移（他の状態変更との排他、ローカル解除） | Core + Windows + App | `src/Sysacta.Core/Tools/Power/PowerTools.cs`, `src/Sysacta.Core/Tools/PowerTransitionGate.cs`, `src/Sysacta.Windows/Power/WindowsPower.cs` |
 | 読み取りの欠損を値 null + 型付き理由で返す・OS 由来の数値の検証 | Core + Windows | `src/Sysacta.Core/Tools/SystemMonitoring/`, `src/Sysacta.Windows/SystemMonitoring/WindowsSystemMonitor.cs` |
+| ローカルの許可リストに依存する状態変更・開始点での対象固有の最終確認・同じハンドルへの操作 | Core + Infrastructure + Windows + App | `src/Sysacta.Core/Tools/Apps/`, `src/Sysacta.Infrastructure/AppRegistryStore.cs`, `src/Sysacta.Windows/Apps/WindowsAppPlatform.cs`, `src/Sysacta.App/ViewModels/AppsViewModel.cs` |
 
 ## 1 回の呼び出しで起きること
 
@@ -46,7 +47,7 @@ MCP tools/call ─▶ RequestGuards (Host/Origin → Bearer認証 → 監査:認
 
 ### 1. 名前・カテゴリ・既定の権限を決める
 
-- 名前: `<category>_<verb>_<object>`。カテゴリは `ToolCategories` の定数。spec §7 の表に名前があればそれを使う。
+- 名前: `<category>_<verb>_<object>`。カテゴリは `ToolCategories` の定数(`apps` カテゴリだけは spec §7.6 に合わせて `app_` と `process_` の接頭辞を使う。`ToolCategories.NamePrefixes`)。spec §7 の表に名前があればそれを使う。
 - 既定: 日常的で安全なものだけ `DefaultPolicy.On`。停止・切断・画面消失・データ消失の恐れがあれば `Off`。非公開API・未検証の方式は `Experimental`。
 - 読み取り専用か: 状態を一切変えないときだけ `ReadOnly: true`(ロック・pending 監査が省略されるため、迷ったら false)。
 
@@ -167,7 +168,7 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 | PERMISSION_DENIED | クライアントに未許可、失効・期限切れ | executor |
 | NOT_SUPPORTED / ADMIN_REQUIRED | この環境で恒常的に利用不可 | `GetAvailability()` |
 | TARGET_NOT_FOUND / AMBIGUOUS_TARGET | 対象が解決できない | ツール (`ResolveTargetAsync`) |
-| TARGET_CHANGED | ロック待機中に既定デバイスが切り替わった(副作用なし・再試行可) | ツール (`EnsureStillDefault`) |
+| TARGET_CHANGED | ロック待機中に既定デバイスが切り替わった、登録アプリの承認(世代)・実行ファイルが変わった、pid が別のプロセスに再利用された(いずれも副作用なし) | ツール (`EnsureStillDefault`、`AppTargets.Recheck`、アダプター) |
 | DEVICE_DISCONNECTED / NO_ACTIVE_SESSION | 一時的に操作できない | ツール/アダプター |
 | NOTIFICATIONS_DISABLED | Windows の設定・ポリシーで通知が無効(何も送っていない) | 通知アダプター |
 | BUSY | 待機キューが満杯、通知のレート制限(再試行可) | executor / ツール |
@@ -201,3 +202,11 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 
 - `notification_send` は固定の送信元でプレーンテキストだけを出す。文字列は `[NotificationText]`(Core)で検証し、XML は固定テンプレートの DOM テキストノードで作る。テンプレート・画像・アクション・起動引数を引数にしない。
 - レート制限はツールのインスタンス(プロセスに 1 つ)が持ち、`BeginSideEffect` の直後に枠を消費する。API の受理は常に `accepted` で、表示の証明ではない。詳細は [Phase 1G 進捗](phase-1g-progress.md)。
+
+### アプリ・プロセス(Phase 2A)
+
+- 対象がローカルの許可リスト(`IAppRegistry`)に依存する状態変更は、`execution.BeginSideEffect(targetCheck)` を使う。`targetCheck` は認可と同じ `AuthorizationGate` の読み取り側で評価され、登録の無効化・削除・再承認(世代変更)が開始点より前に確定していれば拒否される(監査は denied、OS 呼び出しなし)。中では Sysacta 自身の状態の短い読み取りだけを行い、OS 呼び出し・ハッシュ・await・ゲートの再取得をしない。許可リストへの書き込みは `AppRegistryStore` がゲートの書き込み側で行う。
+- `app_id` は登録時に生成する不透明な ID(`app_` + 32 桁の 16 進)。名前・パス・PID・別名での解決はしない。解決時の登録(世代)をロック後に `AppTargets.Recheck` で照合し、新しい承認へ切り替えない。
+- ネイティブハンドルは `ResolveTargetAsync` で保持しない。対象の固定に必要な値(pid・生成時刻)だけを解決し、実行ファイル・プロセスのハンドルはロック内の `ExecuteAsync` で開いて `using` で解放する。
+- ロックキーは `app:{id}` と `process:{pid}:{生成時刻 FILETIME}`(`AppTarget`)。app_launch / app_close / process_terminate が共有する。
+- `pid` は必ず正確な `start_time`(UTC、100 ns、`ProcessStartTime`)と組で受け取る。詳細は [Phase 2A 進捗](phase-2a-progress.md)。

@@ -12,6 +12,7 @@ public sealed class ProcessListArgs
 
     [Description("Optional case-insensitive substring of the process name (e.g. \"note\"). Plain text only: no wildcards, regular expressions or paths.")]
     [StringLength(64, MinimumLength = 1)]
+    [RegularExpression(@".*\S.*")]
     [NoControlCharacters]
     public string? Filter { get; init; }
 }

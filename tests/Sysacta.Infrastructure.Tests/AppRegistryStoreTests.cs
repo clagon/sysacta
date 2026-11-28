@@ -60,9 +60,15 @@ public class AppRegistryStoreTests
         Assert.True(store.IsCurrent(id, 1));
         Assert.False(store.IsCurrent(id, 2));
 
-        store.SetAllowed(id, 1, false);
+        Assert.Equal(2, store.SetAllowed(id, 1, false));
         Assert.Empty(store.ListAllowed());
         Assert.False(store.IsCurrent(id, 1));
+
+        // Allowed again: a call that resolved generation 1 stays refused.
+        Assert.Equal(2, store.SetAllowed(id, 2, true));
+        Assert.False(store.IsCurrent(id, 1));
+        Assert.True(store.IsCurrent(id, 2));
+        Assert.Throws<InvalidOperationException>(() => store.SetAllowed(id, 1, true));
     }
 
     [Fact]

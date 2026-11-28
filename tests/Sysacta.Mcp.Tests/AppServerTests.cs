@@ -138,8 +138,14 @@ public class AppServerTests
         Assert.Equal(ErrorCodes.PermissionDenied, Code(r));
         Assert.Equal(0, f.AppOs.Launches);
 
-        await Task.Run(() => f.Apps.SetAllowed(app.Id, 1, true), Ct);
-        f.AppOs.OnPrepare = () => f.Apps.Reapprove(app.Id, 1, app.Path, ["changed"], app.Identity);
+        // Disabled and allowed again before the start point: still refused (disabling starts a new generation).
+        Assert.Equal(2, await Task.Run(() => f.Apps.SetAllowed(app.Id, 2, true), Ct));
+        f.AppOs.OnPrepare = () => f.Apps.SetAllowed(app.Id, f.Apps.SetAllowed(app.Id, 2, false), true);
+        r = await client.CallToolAsync("app_launch", new Dictionary<string, object?> { ["app_id"] = app.Id }, cancellationToken: Ct);
+        Assert.Equal(ErrorCodes.PermissionDenied, Code(r));
+        Assert.Equal(0, f.AppOs.Launches);
+
+        f.AppOs.OnPrepare = () => f.Apps.Reapprove(app.Id, 3, app.Path, ["changed"], app.Identity);
         r = await client.CallToolAsync("app_launch", new Dictionary<string, object?> { ["app_id"] = app.Id }, cancellationToken: Ct);
         Assert.Equal(ErrorCodes.PermissionDenied, Code(r));
         Assert.Equal(0, f.AppOs.Launches);
