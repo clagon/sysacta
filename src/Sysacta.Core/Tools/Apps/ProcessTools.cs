@@ -64,8 +64,9 @@ public sealed class ProcessListRunningTool(IAppRegistry registry, IAppPlatform p
     protected override Task<ToolOutcome<ProcessListData>> ExecuteAsync(ProcessListArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
         var apps = registry.ListAllowed();
+        var mark = managed.Mark();
         var scan = platform.ScanSession([.. apps.Select(AppMatchKey.For)], cancellationToken);
-        managed.Prune(scan);
+        managed.Prune(scan, mark);
         var matching = scan.Processes
             .Select(p => (Facts: p, Name: UntrustedText.Sanitize(p.Name, 64)))
             .Where(p => args.Filter is null || (p.Name?.Contains(args.Filter, StringComparison.OrdinalIgnoreCase) ?? false))
@@ -98,9 +99,10 @@ public sealed class ProcessTerminateTool(IAppRegistry registry, IAppPlatform pla
         }
 
         var apps = registry.ListAllowed();
+        var mark = managed.Mark();
         var scan = platform.ScanSession([.. apps.Select(AppMatchKey.For)], cancellationToken);
         var samePid = scan.Processes.Where(p => p.Pid == args.Pid).ToList();
-        managed.Prune(scan);
+        managed.Prune(scan, mark);
         var facts = samePid.FirstOrDefault(p => p.CreationTime == creation) ?? throw (samePid.Count > 0
             ? new ToolFailureException(ErrorCodes.TargetChanged, "The pid now belongs to another process. Nothing was terminated.")
             : new ToolFailureException(ErrorCodes.TargetNotFound, "No such process of the current user and session is running. Nothing was terminated."));

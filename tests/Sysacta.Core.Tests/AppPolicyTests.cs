@@ -314,9 +314,17 @@ public class AppPolicyTests
         Assert.Null(managed.ManagedAppId(facts, []));                                        // not allowed
         Assert.Equal(TerminateBlock.Protected, managed.View(facts with { Protected = true }, [app]).Block);
 
-        managed.Prune(new ProcessScan([], 0, new HashSet<string>(), Truncated: true));   // incomplete: kept
+        var empty = new ProcessScan([], 0, new HashSet<string>(), Truncated: false);
+        managed.Prune(empty with { Truncated = true }, managed.Mark());   // incomplete: kept
         Assert.Equal(1, managed.Count);
-        managed.Prune(new ProcessScan([], 0, new HashSet<string>(), Truncated: false));  // exited: dropped
+
+        // A scan that started before a launch never drops the process launched meanwhile.
+        var mark = managed.Mark();
+        managed.Add(app.Id, 3, 20, 200);
+        managed.Prune(empty, mark);
+        Assert.Equal(1, managed.Count);
+        Assert.NotNull(managed.ManagedAppId(facts with { Pid = 20, CreationTime = 200 }, [app]));
+        managed.Prune(empty, managed.Mark());                               // exited: dropped
         Assert.Equal(0, managed.Count);
 
         for (var i = 0; i < ManagedProcesses.Capacity + 5; i++)

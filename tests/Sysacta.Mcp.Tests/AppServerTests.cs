@@ -145,6 +145,27 @@ public class AppServerTests
     }
 
     [Fact]
+    public async Task A_launched_process_is_managed_only_until_the_app_is_disabled_even_if_allowed_again()
+    {
+        await using var f = await ServerFixture.StartAsync(includeApps: true);
+        await Task.Run(() => { foreach (var t in Tools) f.Store.SetToolEnabled(t, true); }, Ct);
+        var app = await Task.Run(() => Register(f, 1, []), Ct);
+        await using var client = await f.ClientAsync(f.Issue(Tools).Token);
+        var launched = Body(await client.CallToolAsync("app_launch", new Dictionary<string, object?> { ["app_id"] = app.Id }, cancellationToken: Ct)).GetProperty("data");
+        var p = f.AppOs.Run(app, launched.GetProperty("pid").GetInt32(), creation: f.AppOs.NextLaunch.CreationTime!.Value);
+        var terminate = new Dictionary<string, object?> { ["pid"] = p.Pid, ["start_time"] = launched.GetProperty("start_time").GetString() };
+        var running = Body(await client.CallToolAsync("app_list_running", cancellationToken: Ct)).GetProperty("data").GetProperty("instances")[0];
+        Assert.Equal("managed", running.GetProperty("app_match").GetString());
+
+        // Disabled and allowed again in the console: the approval generation changed, the process is no longer managed.
+        await Task.Run(() => f.Apps.SetAllowed(app.Id, f.Apps.SetAllowed(app.Id, 1, false), true), Ct);
+        running = Body(await client.CallToolAsync("app_list_running", cancellationToken: Ct)).GetProperty("data").GetProperty("instances")[0];
+        Assert.Equal("estimated", running.GetProperty("app_match").GetString());
+        Assert.Equal(ErrorCodes.PermissionDenied, Code(await client.CallToolAsync("process_terminate", terminate, cancellationToken: Ct)));
+        Assert.Equal(0, f.AppOs.Terminations);
+    }
+
+    [Fact]
     public async Task Disabling_in_the_console_during_preparation_refuses_the_launch()
     {
         await using var f = await ServerFixture.StartAsync(includeApps: true);

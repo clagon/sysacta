@@ -132,8 +132,9 @@ public sealed class AppListRunningTool(IAppRegistry registry, IAppPlatform platf
     {
         var apps = registry.ListAllowed();
         var names = apps.ToDictionary(a => a.Id, a => AppTargets.SafeName(a.DisplayName), StringComparer.Ordinal);
+        var mark = managed.Mark();
         var scan = platform.ScanSession([.. apps.Select(AppMatchKey.For)], cancellationToken);
-        managed.Prune(scan);
+        managed.Prune(scan, mark);
         var matched = scan.Processes.Select(p => managed.View(p, apps)).Where(v => v.AppId is not null && names.ContainsKey(v.AppId))
             .OrderBy(v => v.AppId, StringComparer.Ordinal).ThenBy(v => v.Facts.CreationTime).ThenBy(v => v.Facts.Pid)
             .ToList();
@@ -168,8 +169,10 @@ public sealed class AppLaunchTool(IAppRegistry registry, IAppPlatform platform, 
             throw new ToolFailureException(ErrorCodes.NotSupported, "Sysacta runs elevated; launching apps is disabled. Nothing was launched.");
         }
 
+        var mark = managed.Mark();
+
         var scan = platform.ScanSession([AppMatchKey.For(app)], cancellationToken);
-        managed.Prune(scan);
+        managed.Prune(scan, mark);
         var views = scan.Processes.Select(p => managed.View(p, [app])).Where(v => v.AppId == app.Id).ToList();
         if (views.Any(v => v.Match == AppMatch.Managed))
         {

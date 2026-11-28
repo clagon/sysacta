@@ -89,8 +89,9 @@ public sealed class AppCloseTool(IAppRegistry registry, IAppPlatform platform, M
     /// </summary>
     private ProcessView? SingleInstance(RegisteredApp app, CancellationToken cancellationToken)
     {
+        var mark = managed.Mark();
         var scan = platform.ScanSession([AppMatchKey.For(app)], cancellationToken);
-        managed.Prune(scan);
+        managed.Prune(scan, mark);
         if (scan.Truncated || scan.UncertainAppIds.Contains(app.Id))
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "Could not identify the app's processes. Nothing was sent.", retryable: true);

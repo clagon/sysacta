@@ -28,21 +28,29 @@ public sealed record ProcessView(ProcessFacts Facts, string? AppId, AppMatch? Ma
 public sealed class ManagedProcesses
 {
     public const int Capacity = 256;
-    private readonly Dictionary<(int Pid, long Creation), (string AppId, long Generation)> _entries = [];
-    private readonly Queue<(int Pid, long Creation)> _order = new();
+    private readonly Dictionary<(int Pid, long Creation), (string AppId, long Generation, long Sequence)> _entries = [];
+    private long _sequence;
+
+    /// <summary>
+    /// Take before scanning: <see cref="Prune"/> then removes only entries added before this mark, so a process launched
+    /// while the scan ran (and therefore missing from it) is never dropped.
+    /// </summary>
+    public long Mark()
+    {
+        lock (_entries)
+        {
+            return _sequence;
+        }
+    }
 
     public void Add(string appId, long generation, int pid, long creation)
     {
         lock (_entries)
         {
-            if (_entries.TryAdd((pid, creation), (appId, generation)))
+            _entries[(pid, creation)] = (appId, generation, ++_sequence);
+            if (_entries.Count > Capacity)
             {
-                _order.Enqueue((pid, creation));
-            }
-
-            while (_entries.Count > Capacity && _order.TryDequeue(out var oldest))
-            {
-                _entries.Remove(oldest);
+                _entries.Remove(_entries.MinBy(e => e.Value.Sequence).Key);
             }
         }
     }
@@ -55,8 +63,11 @@ public sealed class ManagedProcesses
         }
     }
 
-    /// <summary>Drops entries whose process is not in a complete scan (exited, or no longer inspectable: unmanaged is the safe side).</summary>
-    public void Prune(ProcessScan scan)
+    /// <summary>
+    /// Drops entries added before <paramref name="mark"/> whose process is not in a complete scan: exited, or no longer
+    /// inspectable (unmanaged is the safe side).
+    /// </summary>
+    public void Prune(ProcessScan scan, long mark)
     {
         if (scan.Truncated)
         {
@@ -66,7 +77,7 @@ public sealed class ManagedProcesses
         var alive = scan.Processes.Select(p => (p.Pid, p.CreationTime)).ToHashSet();
         lock (_entries)
         {
-            foreach (var key in _entries.Keys.Where(k => !alive.Contains(k)).ToList())
+            foreach (var key in _entries.Where(e => e.Value.Sequence <= mark && !alive.Contains(e.Key)).Select(e => e.Key).ToList())
             {
                 _entries.Remove(key);
             }
@@ -76,7 +87,7 @@ public sealed class ManagedProcesses
     /// <summary>The app this exact process (pid + creation) was created for, while that app is allowed with the same generation.</summary>
     public string? ManagedAppId(ProcessFacts facts, IReadOnlyList<RegisteredApp> allowed)
     {
-        (string AppId, long Generation) entry;
+        (string AppId, long Generation, long Sequence) entry;
         lock (_entries)
         {
             if (!_entries.TryGetValue((facts.Pid, facts.CreationTime), out entry))
