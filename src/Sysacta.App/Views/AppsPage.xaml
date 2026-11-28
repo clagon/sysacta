@@ -5,27 +5,20 @@
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     ScrollViewer.CanContentScroll="False"
     Title="アプリ">
-  <!-- Fills the window: the registered apps and the discovered candidates scroll independently. -->
-  <Grid Margin="32,24,32,24">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="*" MinHeight="200" />
-    </Grid.RowDefinitions>
+  <!-- The page scrolls as a whole (the registration form can be tall at high DPI); each list scrolls within a bounded height. -->
+  <ScrollViewer Style="{StaticResource PageScroll}">
+  <StackPanel>
 
-    <StackPanel Grid.Row="0">
+    <StackPanel>
       <TextBlock Style="{StaticResource PageTitle}" Text="アプリ" />
       <TextBlock Style="{StaticResource PageSubtitle}" Text="MCP から起動・終了できるアプリの許可リストです。登録した実行ファイルと固定引数だけが使われ、パスや引数を MCP から指定することはできません。登録しただけでは使えず、許可をオンにしたアプリだけが対象になります。" />
     </StackPanel>
 
-    <ui:InfoBar Grid.Row="1" Margin="0,0,0,12" IsOpen="{Binding HasMessage, Mode=TwoWay}" Severity="{Binding MessageSeverity}" Title="{Binding MessageTitle}" Message="{Binding Message}" />
+    <ui:InfoBar Margin="0,0,0,12" IsOpen="{Binding HasMessage, Mode=TwoWay}" Severity="{Binding MessageSeverity}" Title="{Binding MessageTitle}" Message="{Binding Message}" />
 
-    <ui:InfoBar Grid.Row="2" Margin="0,0,0,12" IsClosable="False" IsOpen="{Binding IsElevated}" Severity="Warning" Title="管理者として実行中のため、アプリを起動できません" Message="起動したアプリに管理者権限が引き継がれるのを防ぐためです。登録・許可の変更と終了操作は使えます。起動するには、標準ユーザーとして Sysacta を起動し直してください。" />
+    <ui:InfoBar Margin="0,0,0,12" IsClosable="False" IsOpen="{Binding IsElevated}" Severity="Warning" Title="管理者として実行中のため、アプリを起動できません" Message="起動したアプリに管理者権限が引き継がれるのを防ぐためです。登録・許可の変更と終了操作は使えます。起動するには、標準ユーザーとして Sysacta を起動し直してください。" />
 
-    <StackPanel Grid.Row="3" Margin="0,0,0,12">
+    <StackPanel Margin="0,0,0,12">
       <WrapPanel>
         <ui:Button Margin="0,0,8,8" Command="{Binding DiscoverCommand}" Content="スタートメニューから検出" Icon="{ui:SymbolIcon Search24}" />
         <ui:Button Margin="0,0,8,8" Command="{Binding PickExecutableCommand}" Content="実行ファイルを選んで登録" Icon="{ui:SymbolIcon Add24}" />
@@ -34,7 +27,7 @@
     </StackPanel>
 
     <!-- Registration / re-approval form. -->
-    <Border Grid.Row="4" Margin="0,0,0,12" Style="{StaticResource Surface}" Visibility="{Binding HasDraft, Converter={StaticResource BoolToVisibility}}">
+    <Border Margin="0,0,0,12" Style="{StaticResource Surface}" Visibility="{Binding HasDraft, Converter={StaticResource BoolToVisibility}}">
       <StackPanel>
         <TextBlock Style="{StaticResource SectionHeader}" Margin="0,0,0,8" Text="{Binding DraftTitle}" />
         <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,4" Text="実行ファイル" />
@@ -51,7 +44,7 @@
       </StackPanel>
     </Border>
 
-    <Grid Grid.Row="5">
+    <Grid Margin="0,0,0,8">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="3*" MinWidth="280" />
         <ColumnDefinition Width="16" />
@@ -66,7 +59,7 @@
         <TextBlock Style="{StaticResource SectionHeader}" Margin="0,0,0,8" Text="登録済み" />
         <TextBlock Grid.Row="1" VerticalAlignment="Top" Style="{StaticResource EmptyState}" Text="登録されたアプリはありません。" Visibility="{Binding HasApps, Converter={StaticResource InverseBoolToVisibility}}" />
         <Border Grid.Row="1" Style="{StaticResource Surface}" Padding="4" Visibility="{Binding HasApps, Converter={StaticResource BoolToVisibility}}">
-          <ui:ListView Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Stretch" ItemsSource="{Binding Apps}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="登録済みアプリ">
+          <ui:ListView MaxHeight="520" Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Stretch" ItemsSource="{Binding Apps}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="登録済みアプリ">
             <ui:ListView.ItemTemplate>
               <DataTemplate>
                 <Grid Margin="4,8">
@@ -113,7 +106,7 @@
         <TextBlock Style="{StaticResource SectionHeader}" Margin="0,0,0,8" Text="検出した候補" />
         <TextBlock Grid.Row="1" Margin="0,0,0,8" Style="{StaticResource Caption}" TextWrapping="Wrap" Text="{Binding CandidateSummary}" />
         <Border Grid.Row="2" Style="{StaticResource Surface}" Padding="4" Visibility="{Binding HasCandidates, Converter={StaticResource BoolToVisibility}}">
-          <ui:ListView Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Stretch" ItemsSource="{Binding Candidates}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="検出した候補">
+          <ui:ListView MaxHeight="520" Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Stretch" ItemsSource="{Binding Candidates}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="検出した候補">
             <ui:ListView.ItemTemplate>
               <DataTemplate>
                 <Grid Margin="4,8">
@@ -134,5 +127,6 @@
         </Border>
       </Grid>
     </Grid>
-  </Grid>
+  </StackPanel>
+  </ScrollViewer>
 </Page>
