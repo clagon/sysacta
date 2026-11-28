@@ -70,6 +70,23 @@ public class WindowsMediaSessionsTests
     }
 
     [Fact]
+    public async Task Surviving_sessions_keep_their_ids_after_a_list_change()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows.");
+        using var sessions = new WindowsMediaSessions();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var before = await sessions.ListAsync(timeout.Token);
+        var generation = typeof(WindowsMediaSessions).GetField("_generation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        generation.SetValue(sessions, (long)generation.GetValue(sessions)! + 1);
+
+        var after = await sessions.ListAsync(timeout.Token);
+
+        Assert.Equal(
+            before.Sessions.Select(item => item.SessionId).OrderBy(id => id, StringComparer.Ordinal),
+            after.Sessions.Select(item => item.SessionId).OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task Preparation_rejects_stale_state_and_seek_range_without_starting_media()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows.");
@@ -92,17 +109,17 @@ public class WindowsMediaSessionsTests
             if (supported is null) continue;
             try
             {
-                _ = sessions.Prepare(entry.SessionId, false, supported.Value, null, state); // Never invoke the delegate.
+                _ = await sessions.PrepareAsync(entry.SessionId, false, supported.Value, null, state, timeout.Token); // Never invoke the delegate.
                 var changed = state.PlaybackStatus == MediaPlaybackStatus.Playing
                     ? MediaPlaybackStatus.Paused : MediaPlaybackStatus.Playing;
-                var failure = Assert.Throws<ToolFailureException>(() =>
-                    sessions.Prepare(entry.SessionId, false, supported.Value, null, state with { PlaybackStatus = changed }));
+                var failure = await Assert.ThrowsAsync<ToolFailureException>(() =>
+                    sessions.PrepareAsync(entry.SessionId, false, supported.Value, null, state with { PlaybackStatus = changed }, timeout.Token));
                 Assert.Equal(ErrorCodes.TargetChanged, failure.Code);
                 if (state.Controls.Seek && state.MinSeekTicks is { } min && state.MaxSeekTicks > min)
                 {
-                    var staleRange = Assert.Throws<ToolFailureException>(() =>
-                        sessions.Prepare(entry.SessionId, false, MediaOperation.Seek, min,
-                            state with { MinSeekTicks = min == long.MinValue ? min + 1 : min - 1 }));
+                    var staleRange = await Assert.ThrowsAsync<ToolFailureException>(() =>
+                        sessions.PrepareAsync(entry.SessionId, false, MediaOperation.Seek, min,
+                            state with { MinSeekTicks = min == long.MinValue ? min + 1 : min - 1 }, timeout.Token));
                     Assert.Equal(ErrorCodes.TargetChanged, staleRange.Code);
                 }
                 return;
@@ -132,7 +149,8 @@ public class WindowsMediaSessionsTests
             var entry = Assert.Single(entries.Values.Cast<object>(), value =>
                 (string)value.GetType().GetProperty("Id")!.GetValue(value)! == item.SessionId);
             entry.GetType().GetMethod("OnMediaPropertiesChanged")!.Invoke(entry, [null, null]);
-            var failure = Assert.Throws<ToolFailureException>(() => sessions.Prepare(item.SessionId, false, MediaOperation.Seek, min, state));
+            var failure = await Assert.ThrowsAsync<ToolFailureException>(() =>
+                sessions.PrepareAsync(item.SessionId, false, MediaOperation.Seek, min, state, timeout.Token));
             Assert.Equal(ErrorCodes.TargetChanged, failure.Code);
             return;
         }

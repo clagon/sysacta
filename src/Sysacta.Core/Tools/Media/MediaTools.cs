@@ -98,7 +98,7 @@ public abstract class MediaChangeTool<TArgs>(IMediaSessions sessions) : SysactaT
         var progress = new MediaChangeData(id, Operation, ready.PlaybackStatus, null, ready.PositionMs, null, null, null);
         ReportProgress(execution, progress);
         cancellationToken.ThrowIfCancellationRequested();
-        var start = sessions.Prepare(id, current, Operation, ticks, ready);
+        var start = await sessions.PrepareAsync(id, current, Operation, ticks, ready, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         execution.BeginSideEffect();
         try

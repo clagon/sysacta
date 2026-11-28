@@ -46,7 +46,7 @@ public sealed record MediaSessionTarget(string SessionId, string LockKey);
 /// <summary>
 /// OS adapter. IDs are allocated by the adapter to live session instances, never from client input or app identity.
 /// ReadAsync must recheck both existence and, when requested, the current session against the resolved instance.
-/// Prepare must perform its final target checks without starting a native operation. Its returned delegate must
+/// PrepareAsync must perform its final target checks without starting a native operation. Its returned delegate must
 /// initiate exactly one native operation synchronously, and must not stop waiting while the operation may still run.
 /// </summary>
 public interface IMediaSessions
@@ -54,5 +54,6 @@ public interface IMediaSessions
     Task<MediaSessionList> ListAsync(CancellationToken cancellationToken);
     Task<MediaSessionTarget> ResolveAsync(string? sessionId, CancellationToken cancellationToken);
     Task<MediaState> ReadAsync(string sessionId, bool requireCurrent, CancellationToken cancellationToken);
-    Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks, MediaState expected);
+    Task<Func<Task<bool>>> PrepareAsync(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks,
+        MediaState expected, CancellationToken cancellationToken);
 }

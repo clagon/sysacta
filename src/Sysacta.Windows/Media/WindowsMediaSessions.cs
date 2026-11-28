@@ -7,7 +7,7 @@ using WinRT;
 
 namespace Sysacta.Windows.Media;
 
-/// <summary>GSMTC adapter. A list change invalidates every issued ID, including surviving sessions.</summary>
+/// <summary>GSMTC adapter. Session IDs remain bound to retained COM identities until those sessions disappear.</summary>
 public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
 {
     private const int MaxSearch = 256;
@@ -124,20 +124,53 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
             timeline.MinSeekTime.Ticks, timeline.MaxSeekTime.Ticks, mediaRevision);
     }
 
-    public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks, MediaState expected)
+    public async Task<Func<Task<bool>>> PrepareAsync(string sessionId, bool requireCurrent, MediaOperation operation,
+        long? positionTicks, MediaState expected, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        GlobalSystemMediaTransportControlsSessionManager manager;
+        Entry entry;
+        long generation;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             EnsureEventTracking();
-            var generation = Volatile.Read(ref _generation);
+            manager = _manager ?? throw new ToolFailureException(ErrorCodes.OsApiError, "Media sessions are unavailable.");
+            generation = Volatile.Read(ref _generation);
             if (generation != _reconciledGeneration)
             {
                 throw new ToolFailureException(ErrorCodes.TargetChanged, "The media session changed before the operation.");
             }
 
-            var entry = _entries.Values.FirstOrDefault(e => e.Id == sessionId)
+            entry = _entries.Values.FirstOrDefault(e => e.Id == sessionId)
                 ?? throw new ToolFailureException(ErrorCodes.TargetNotFound, "The media session is no longer available.");
+        }
+
+        string? finalFingerprint = expected.MetadataFingerprint;
+        if (operation == MediaOperation.Seek)
+        {
+            try
+            {
+                var properties = await entry.Session.TryGetMediaPropertiesAsync().AsTask().ConfigureAwait(false);
+                finalFingerprint = Fingerprint(properties?.Title, properties?.Artist);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Event revision and timeline checks remain authoritative when metadata is unavailable.
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            EnsureEventTracking();
+            EnsureGeneration(generation);
+            if (!_entries.TryGetValue(entry.Identity, out var live) || !ReferenceEquals(entry, live) || entry.Id != sessionId)
+            {
+                throw new ToolFailureException(ErrorCodes.TargetNotFound, "The media session is no longer available.");
+            }
+
             var playback = entry.Session.GetPlaybackInfo();
             if (!Controls(playback.Controls).Supports(operation))
             {
@@ -150,6 +183,11 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
             if (operation == MediaOperation.Seek)
             {
                 EnsureMediaRevision(entry, expected.MediaRevision);
+                if (expected.MetadataFingerprint is not null && finalFingerprint is not null &&
+                    expected.MetadataFingerprint != finalFingerprint)
+                {
+                    throw new ToolFailureException(ErrorCodes.TargetChanged, "The media item changed before the operation.");
+                }
                 var timeline = entry.Session.GetTimelineProperties();
                 if (expected.MinSeekTicks != timeline.MinSeekTime.Ticks || expected.MaxSeekTicks != timeline.MaxSeekTime.Ticks ||
                     expected.StartMs != Milliseconds(timeline.StartTime) || expected.EndMs != Milliseconds(timeline.EndTime) ||
@@ -161,7 +199,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
 
             if (requireCurrent)
             {
-                var current = _manager?.GetCurrentSession();
+                var current = manager.GetCurrentSession();
                 if (current is null)
                 {
                     throw new ToolFailureException(ErrorCodes.TargetChanged, "The current media session changed.");
@@ -241,7 +279,6 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
             var generation = Volatile.Read(ref _generation);
             if (generation != _reconciledGeneration)
             {
-                ClearEntries();
                 _reconciledGeneration = generation;
                 EnsureEventTracking();
             }

@@ -287,6 +287,16 @@ public class MediaToolTests
     }
 
     [Fact]
+    public async Task Metadata_change_during_final_seek_preparation_prevents_the_native_call()
+    {
+        _media.State = _media.State with { MetadataFingerprint = "original-item" };
+        _media.OnPrepare = () => _media.State = _media.State with { Title = "replacement", MetadataFingerprint = "replacement-item" };
+        var result = await Call("media_seek", new { position_ms = 1000 });
+        Assert.Equal(ErrorCodes.TargetChanged, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
     public async Task Track_change_between_metadata_samples_prevents_seek()
     {
         _media.State = _media.State with { MediaRevision = 1 };
@@ -509,8 +519,10 @@ public class MediaToolTests
             }
             return State with { IsCurrent = CurrentId == sessionId };
         }
-        public Func<Task<bool>> Prepare(string sessionId, bool requireCurrent, MediaOperation operation, long? positionTicks, MediaState expected)
+        public Task<Func<Task<bool>>> PrepareAsync(string sessionId, bool requireCurrent, MediaOperation operation,
+            long? positionTicks, MediaState expected, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             OnPrepare?.Invoke();
             if (requireCurrent && CurrentId != sessionId)
             {
@@ -519,11 +531,12 @@ public class MediaToolTests
             if (!State.Controls.Supports(operation))
                 throw new ToolFailureException(ErrorCodes.NotSupported, "Operation no longer supported.");
             if (State.PlaybackStatus != expected.PlaybackStatus ||
-                (operation == MediaOperation.Seek && (State.MediaRevision != expected.MediaRevision || State.MinSeekTicks != expected.MinSeekTicks || State.MaxSeekTicks != expected.MaxSeekTicks)))
+                (operation == MediaOperation.Seek && (State.MediaRevision != expected.MediaRevision ||
+                    State.MetadataFingerprint != expected.MetadataFingerprint || State.MinSeekTicks != expected.MinSeekTicks || State.MaxSeekTicks != expected.MaxSeekTicks)))
                 throw new ToolFailureException(ErrorCodes.TargetChanged, "State changed.");
             var lifetime = TrackPreparedLifetime ? new object() : null;
             if (lifetime is not null) PreparedLifetime = new WeakReference(lifetime);
-            return () =>
+            return Task.FromResult<Func<Task<bool>>>(() =>
             {
                 GC.KeepAlive(lifetime);
                 Interlocked.Increment(ref Starts);
@@ -533,7 +546,7 @@ public class MediaToolTests
                 Ticks = positionTicks;
                 if (operation == MediaOperation.Play && Accepted) State = State with { PlaybackStatus = MediaPlaybackStatus.Playing };
                 return NativeResult ?? Task.FromResult(Accepted);
-            };
+            });
         }
     }
 }
