@@ -5,12 +5,14 @@ using Sysacta.Core.Security;
 using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
+using Sysacta.Core.Tools.Network;
 using Sysacta.Infrastructure;
 using Sysacta.Mcp;
 using Sysacta.Windows.Apps;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Display;
 using Sysacta.Windows.Media;
+using Sysacta.Windows.Network;
 using Sysacta.Windows.Notification;
 using Sysacta.Windows.Power;
 
@@ -47,7 +49,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
-        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate, Notifications, Apps, AppPlatform));
+        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate, Notifications, Apps, AppPlatform, Network));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
         Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate, power: PowerGate);
         // Suspend/resume evidence for a held sleep, including an unattended wake. Never releases a shutdown. Without
@@ -73,6 +75,8 @@ public sealed class SysactaRuntime : IAsyncDisposable
     public IAudioEndpoints AudioEndpoints { get; } = new CoreAudioEndpoints();
     /// <summary>Shared by the display tools and the device page.</summary>
     public IDisplays Displays { get; } = new WindowsDisplays();
+    /// <summary>Shared by the network tools and the device page.</summary>
+    public INetworkPlatform Network { get; } = new WindowsNetwork();
     /// <summary>The latest display mode change, restorable from the tray menu and the device page (app lifetime only).</summary>
     public DisplayModeRecovery DisplayModeRecovery { get; } = new();
     private WindowsMediaSessions MediaSessions { get; } = new();

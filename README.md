@@ -48,6 +48,10 @@ Sysacta is a Windows 11 desktop utility that exposes structured system-managemen
 | `app_close` | Asks an app Sysacta launched (one process, one window) to close normally (WM_CLOSE); never forces | Disabled |
 | `process_list_running` | Processes of the current user and session: `pid`, exact `start_time`, name, matching `app_id`, whether it may be terminated | Enabled |
 | `process_terminate` | **Force-terminates** one process Sysacta launched, by `pid` + exact `start_time` (unsaved data is lost) | Disabled |
+| `network_get_status` | Adapters that are up, every adapter holding an IPv4/IPv6 default route, and Windows' own connectivity level (no probe is sent) | Enabled |
+| `network_list_adapters` | Adapters with stable id, kind, administrative / operational / media state, link speed, IPv4/IPv6 addresses and aliases | Enabled |
+| `network_get_traffic` | Per-adapter traffic over a ~1 s window from the 64-bit OS counters (totals, deltas, bit/s); never summed | Enabled |
+| `network_set_adapter_enabled` | **Dangerous**: enables or disables one physical wired/Wi-Fi adapter; administrator only; disabling only an adapter that is unplugged and unused | Disabled |
 
 "Enabled" applies to new installations. Experimental tools and newly added tools on upgrade start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console. Display support depends on the monitor, cable, dock and the monitor's DDC/CI setting; mirrored displays cannot be adjusted over DDC/CI. `display_get_state` with `include_switching: true` reports the power state and the `input_id` values (the capabilities query can take several seconds). A monitor that is switched off or to an input without a signal may stop answering, so Sysacta cannot always switch it back: make sure the monitor's power button and menu are within reach before enabling these tools.
 
@@ -59,11 +63,12 @@ Notifications use the Windows desktop notification API without extra dependencie
 
 Apps are managed on the **アプリ** (Apps) page: Start menu discovery (shortcuts are only read), manual registration of an `.exe` with fixed arguments (one per line), allowing, re-approval and deletion. Nothing found or registered is allowed until the local user turns it on, and MCP can neither register nor allow anything nor pass a path, argument, URL or environment. Only plain `.exe` files on a local fixed drive qualify; shells, script hosts, interpreters, installers/updaters, administration tools, programs in the Windows folder, packaged (Store) apps, Sysacta itself and paths through junctions or symbolic links are refused. The approved file is pinned by volume, file id, size and SHA-256 and re-verified before every launch while the file and its folders are locked against replacement; an updated or replaced file must be re-approved (which turns the permission off again). Closing and termination are limited to processes Sysacta itself launched with `app_launch` from the approved file, since Sysacta last started and under the current approval, of the current user and session at normal integrity; apps you started yourself are listed as `estimated` and never closed or terminated (Windows offers no documented way to prove which file a running process was loaded from). Sysacta, its parent, protected, critical and elevated processes are never terminated. Registering an app is a trust decision: Sysacta cannot limit what the app itself does. Launch, normal close and termination were checked once with one harmless real app on one PC; see [progress](docs/phase-2a-progress.md) for what is unverified.
 
+Networking uses IP Helper tables and Windows' own connectivity result; Sysacta sends no traffic to any host. Adapters are identified by `net-` + their interface GUID; aliases are managed on the **デバイス** page. `network_set_adapter_enabled` appears only while Sysacta runs as administrator (started by the local user) and refuses anything that might carry traffic: an adapter that is up or connected, has an IP address or a route, is stacked with another interface, or is a loopback, VPN/tunnel (e.g. Tailscale), Hyper-V/WSL or other virtual adapter. Because the path of a remote MCP connection cannot be known (a loopback proxy such as Tailscale Serve hides it), the decision never relies on the caller's address. Recover a disabled adapter locally from Windows Settings > Network & internet > Advanced network settings. Reads and changes have not been verified on real hardware yet ([progress](docs/phase-2b-progress.md)).
+
 ## Planned features
 
 | Category | Capabilities |
 | --- | --- |
-| Network | Connection information, traffic and adapter management |
 | Bluetooth | Device discovery and supported connection controls |
 
 Availability will depend on hardware, Windows APIs, permissions and configuration.
@@ -132,7 +137,7 @@ For contributors (and coding agents): [AGENTS.md](AGENTS.md) (rules), [docs/tool
 
 - [x] Phase 0 — MCP server, authentication, authorization, settings UI and audit logs (see [progress](docs/phase-0-progress.md) for items verified only by automated tests)
 - [ ] Phase 1 — Audio (standard tools done; default-device change pending), display (done except changes on the primary display; writes not yet verified on hardware), media (implementation under verification), power (implemented; not verified on hardware), system monitoring and notifications
-- [ ] Phase 2 — Apps and processes (implemented; not verified with real apps), networking and Bluetooth
+- [ ] Phase 2 — Apps and processes (implemented; not verified with real apps), networking (implemented; not verified on hardware) and Bluetooth
 - [ ] Phase 3 — Testing, security review and Windows distribution
 
 ## Distribution

@@ -38,6 +38,8 @@ public static class ErrorCodes
     public const string TargetNotFound = "TARGET_NOT_FOUND";
     public const string AmbiguousTarget = "AMBIGUOUS_TARGET";
     public const string TargetChanged = "TARGET_CHANGED";
+    /// <summary>A safety rule refused the change because the target may be in use (nothing was changed).</summary>
+    public const string TargetProtected = "TARGET_PROTECTED";
     public const string DeviceDisconnected = "DEVICE_DISCONNECTED";
     public const string NoActiveSession = "NO_ACTIVE_SESSION";
     public const string NotificationsDisabled = "NOTIFICATIONS_DISABLED";

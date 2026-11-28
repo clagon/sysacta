@@ -79,9 +79,10 @@
               <TextBlock Style="{StaticResource FieldLabel}" Text="既定の役割 / プライマリ" />
               <TextBlock Style="{StaticResource Caption}" Text="{Binding Selected.DefaultText}" />
               <TextBlock Style="{StaticResource FieldLabel}" Text="現在値" />
-              <TextBlock Style="{StaticResource Caption}" Text="{Binding SelectedValues}" />
+              <TextBlock Style="{StaticResource Caption}" Text="{Binding SelectedValues}" TextWrapping="Wrap" />
               <TextBlock Style="{StaticResource FieldLabel}" Text="対応する操作" />
-              <TextBlock Style="{StaticResource Caption}" Text="{Binding Selected.Operations}" />
+              <TextBlock Style="{StaticResource Caption}" Text="{Binding Selected.Operations}" TextWrapping="Wrap" />
+              <TextBlock Margin="0,8,0,0" Style="{StaticResource Caption}" TextWrapping="Wrap" Visibility="{Binding IsNetwork, Converter={StaticResource BoolToVisibility}}" Text="この画面からアダプターの有効・無効は変更しません。無効になったアダプターは、この PC の「設定」>「ネットワークとインターネット」>「ネットワークの詳細設定」から有効にできます。" />
             </StackPanel>
           </Border>
 

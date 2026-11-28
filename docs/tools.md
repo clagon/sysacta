@@ -21,6 +21,7 @@
 | PC 全体の電源遷移（他の状態変更との排他、ローカル解除） | Core + Windows + App | `src/Sysacta.Core/Tools/Power/PowerTools.cs`, `src/Sysacta.Core/Tools/PowerTransitionGate.cs`, `src/Sysacta.Windows/Power/WindowsPower.cs` |
 | 読み取りの欠損を値 null + 型付き理由で返す・OS 由来の数値の検証 | Core + Windows | `src/Sysacta.Core/Tools/SystemMonitoring/`, `src/Sysacta.Windows/SystemMonitoring/WindowsSystemMonitor.cs` |
 | ローカルの許可リストに依存する状態変更・開始点での対象固有の最終確認・同じハンドルへの操作 | Core + Infrastructure + Windows + App | `src/Sysacta.Core/Tools/Apps/`, `src/Sysacta.Infrastructure/AppRegistryStore.cs`, `src/Sysacta.Windows/Apps/WindowsAppPlatform.cs`, `src/Sysacta.App/ViewModels/AppsViewModel.cs` |
+| 1 要求内の 2 サンプルと単調時計による測定(`TimeProvider` で決定的にテスト)・接続断の恐れがある変更の fail-closed な安全判定・共有の排他キー | Core + Windows | `src/Sysacta.Core/Tools/Network/`(`NetworkTraffic` / `NetworkGuard` / `NetworkSetAdapterEnabledTool`), `src/Sysacta.Windows/Network/WindowsNetwork.cs` |
 
 ## 1 回の呼び出しで起きること
 
@@ -168,6 +169,7 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 | PERMISSION_DENIED | クライアントに未許可、失効・期限切れ | executor |
 | NOT_SUPPORTED / ADMIN_REQUIRED | この環境で恒常的に利用不可 | `GetAvailability()` |
 | TARGET_NOT_FOUND / AMBIGUOUS_TARGET | 対象が解決できない | ツール (`ResolveTargetAsync`) |
+| TARGET_PROTECTED | 安全規則が「対象が使用中かもしれない」として変更を拒否した(何も変更していない。`blocked_reason` に固定理由) | ツール(`NetworkGuard`) |
 | TARGET_CHANGED | ロック待機中に既定デバイスが切り替わった、登録アプリの承認(世代)・実行ファイルが変わった、pid が別のプロセスに再利用された(いずれも副作用なし) | ツール (`EnsureStillDefault`、`AppTargets.Recheck`、アダプター) |
 | DEVICE_DISCONNECTED / NO_ACTIVE_SESSION | 一時的に操作できない | ツール/アダプター |
 | NOTIFICATIONS_DISABLED | Windows の設定・ポリシーで通知が無効(何も送っていない) | 通知アダプター |
@@ -210,3 +212,10 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 - ネイティブハンドルは `ResolveTargetAsync` で保持しない。対象の固定に必要な値(pid・生成時刻)だけを解決し、実行ファイル・プロセスのハンドルはロック内の `ExecuteAsync` で開いて `using` で解放する。
 - ロックキーは `app:{id}` と `process:{pid}:{生成時刻 FILETIME}`(`AppTarget`)。app_launch / app_close / process_terminate が共有する。
 - `pid` は必ず正確な `start_time`(UTC、100 ns、`ProcessStartTime`)と組で受け取る。詳細は [Phase 2A 進捗](phase-2a-progress.md)。
+
+### ネットワーク(Phase 2B)
+
+- アダプターは `net-` + InterfaceGuid(32 桁小文字 16 進)で識別する。LUID・InterfaceIndex・名前・IP を ID の代わりにしない(Index は無効化→有効化で変わり得る)。対応付けは LUID で行う。
+- OS の表(`GetIfTable2` など)は Windows アダプターが上限付きで読み、生の値と `NetTable<T>`(完全/切り詰め/失敗)を返す。種別・状態の解釈と安全判定は Core(`NetworkAdapters` / `NetworkGuard`)に置き、フェイクでテストする。
+- 通信量は 1 要求内で 2 回読み、`TimeProvider` の単調時計で窓を測る。同一性・状態の変化、カウンターの減少、Sysacta 自身の変更(`NetworkChanges`)が窓に重なれば速度は null と理由。合算しない。
+- 接続断の恐れがある変更は、経路の推定(接続元アドレス・転送ヘッダー・ループバック)に頼らず、「その対象を通る通信が存在し得ない」ことを完全な OS 情報から確かめたときだけ行う。情報の欠落・切り詰め・不一致は拒否(`TARGET_PROTECTED`)。全変更で `network:topology` を共有ロックし、ロック後に再判定、開始点の直前に変わりやすい値を再読する。詳細は [Phase 2B 進捗](phase-2b-progress.md)。
