@@ -197,7 +197,7 @@ public sealed partial class ToolItem : ObservableObject
     {
         IsAvailable = availability.IsAvailable;
         AvailabilityText = availability.IsAvailable ? ""
-            : Name == "notification_send" ? "通知を登録できないため利用できません。スタートメニューに Sysacta が作成していない「Sysacta」がある場合は取り除き、Sysacta を再起動してください。"
+            : Name == "notification_send" ? "通知を登録できないため利用できません。スタートメニューの「Sysacta」がこの Sysacta のものでない場合（別の場所にあるコピーが登録したものを含む）は、そのコピーを使うか、ショートカットを取り除いて Sysacta を再起動してください。"
             : $"この環境では利用できません: {availability.Reason}";
         CanTest = (TestArguments is not null || (_readOnly && !_needsArguments)) && availability.IsAvailable;
     }

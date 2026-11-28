@@ -14,48 +14,66 @@ internal static class ShellShortcut
     private const uint SlgpRawPath = 4;
 
     /// <summary>
-    /// Creates the shortcut, or accepts an existing one with the same id (repointing it only when its target no longer
-    /// exists, for example a moved portable copy). A file with another or no id, or one that cannot be read, belongs to
-    /// someone else: it is left untouched and false is returned. Throws when reading the id or writing fails.
+    /// Creates the shortcut, or accepts an existing one only when it already is this copy's registration (same id, same
+    /// target, no arguments). One with our id whose target no longer exists (a moved portable copy) is repointed.
+    /// Anything else, including an unreadable file, an empty target or another existing copy, belongs to someone else:
+    /// it is left untouched and false is returned. Throws when reading or writing fails.
     /// </summary>
     public static bool Ensure(string path, string target, string appUserModelId)
     {
-        var link = (IShellLinkW)new ShellLink();
-        try
+        if (!File.Exists(path))
         {
-            var file = (IPersistFile)link;
-            if (File.Exists(path))
+            Create(path, target, appUserModelId);
+            return true;
+        }
+
+        return Open(path, link =>
+        {
+            if (link is null || !string.Equals(ReadId(link), appUserModelId, StringComparison.Ordinal) || ReadArguments(link).Length != 0)
             {
-                try
-                {
-                    file.Load(path, 0 /* STGM_READ */);
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
-                {
-                    return false;
-                }
+                return false;
+            }
 
-                if (!string.Equals(ReadId(link), appUserModelId, StringComparison.Ordinal))
-                {
-                    return false;
-                }
-
-                var current = ReadTarget(link);
-                if (current.Length == 0 || File.Exists(Environment.ExpandEnvironmentVariables(current)))
-                {
-                    return true;
-                }
-
-                link.SetPath(target);
-                file.Save(path, true);
+            var current = ReadTarget(link);
+            if (SameFile(current, target))
+            {
                 return true;
+            }
+
+            if (current.Length == 0 || File.Exists(Environment.ExpandEnvironmentVariables(current)))
+            {
+                return false;
             }
 
             link.SetPath(target);
             link.SetWorkingDirectory(Path.GetDirectoryName(target) ?? "");
-            WriteId((IPropertyStore)link, appUserModelId);
-            file.Save(path, true);
+            ((IPersistFile)link).Save(path, true);
             return true;
+        });
+    }
+
+    /// <summary>Read-only: true when the shortcut is this copy's registration (same id and target, no arguments).</summary>
+    public static bool IsRegistration(string path, string target, string appUserModelId) =>
+        File.Exists(path) && Open(path, link => link is not null
+            && string.Equals(ReadId(link), appUserModelId, StringComparison.Ordinal)
+            && ReadArguments(link).Length == 0
+            && SameFile(ReadTarget(link), target));
+
+    /// <summary>Writes a new shortcut. An empty <paramref name="target"/> is only used by tests.</summary>
+    internal static void Create(string path, string target, string appUserModelId, string arguments = "")
+    {
+        var link = (IShellLinkW)new ShellLink();
+        try
+        {
+            if (target.Length != 0)
+            {
+                link.SetPath(target);
+                link.SetWorkingDirectory(Path.GetDirectoryName(target) ?? "");
+            }
+
+            link.SetArguments(arguments);
+            WriteId((IPropertyStore)link, appUserModelId);
+            ((IPersistFile)link).Save(path, true);
         }
         finally
         {
@@ -63,18 +81,45 @@ internal static class ShellShortcut
         }
     }
 
-    internal static (string? Id, string Target) Read(string path)
+    internal static (string? Id, string Target, string WorkingDirectory) Read(string path) => Open(path, link =>
+    {
+        var directory = new StringBuilder(32_768);
+        link!.GetWorkingDirectory(directory, directory.Capacity);
+        return (ReadId(link), ReadTarget(link), directory.ToString());
+    });
+
+    /// <summary>Loads the file read-only; <paramref name="use"/> receives null when it is not a readable shortcut.</summary>
+    private static T Open<T>(string path, Func<IShellLinkW?, T> use)
     {
         var link = (IShellLinkW)new ShellLink();
         try
         {
-            ((IPersistFile)link).Load(path, 0);
-            return (ReadId(link), ReadTarget(link));
+            var loaded = true;
+            try
+            {
+                ((IPersistFile)link).Load(path, 0 /* STGM_READ */);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                loaded = false;
+            }
+
+            return use(loaded ? link : null);
         }
         finally
         {
             _ = Marshal.FinalReleaseComObject(link);
         }
+    }
+
+    private static bool SameFile(string current, string target) =>
+        current.Length != 0 && string.Equals(Environment.ExpandEnvironmentVariables(current), target, StringComparison.OrdinalIgnoreCase);
+
+    private static string ReadArguments(IShellLinkW link)
+    {
+        var buffer = new StringBuilder(32_768);
+        link.GetArguments(buffer, buffer.Capacity);
+        return buffer.ToString();
     }
 
     private static string ReadTarget(IShellLinkW link)
@@ -149,10 +194,10 @@ internal static class ShellShortcut
         void SetIDList();
         void GetDescription();
         void SetDescription();
-        void GetWorkingDirectory();
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder directory, int capacity);
         void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string directory);
-        void GetArguments();
-        void SetArguments();
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder arguments, int capacity);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string arguments);
         void GetHotkey();
         void SetHotkey();
         void GetShowCmd();

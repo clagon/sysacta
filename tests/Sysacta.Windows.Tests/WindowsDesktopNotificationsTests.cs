@@ -5,7 +5,7 @@ namespace Sysacta.Windows.Tests;
 
 /// <summary>
 /// Shortcut and payload handling only. Shortcuts are written to a temporary folder, which registers nothing with
-/// Windows, and no notification is ever shown: the action returned by Prepare is never created or invoked.
+/// Windows, and no notification is ever shown: Prepare is only called where it must refuse.
 /// </summary>
 public sealed class WindowsDesktopNotificationsTests : IDisposable
 {
@@ -36,7 +36,8 @@ public sealed class WindowsDesktopNotificationsTests : IDisposable
         var exe = Executable("Sysacta.exe");
 
         Assert.True(Register(exe).GetAvailability().IsAvailable);
-        Assert.Equal((WindowsDesktopNotifications.AppUserModelId, exe), ShellShortcut.Read(Shortcut));
+        Assert.Equal((WindowsDesktopNotifications.AppUserModelId, exe, _dir), ShellShortcut.Read(Shortcut));
+        Assert.True(ShellShortcut.IsRegistration(Shortcut, exe, WindowsDesktopNotifications.AppUserModelId));
 
         var bytes = File.ReadAllBytes(Shortcut);
         Assert.True(Register(exe).GetAvailability().IsAvailable);
@@ -44,19 +45,56 @@ public sealed class WindowsDesktopNotificationsTests : IDisposable
     }
 
     [Fact]
-    public void Another_existing_copy_keeps_the_shortcut_and_a_moved_one_repoints_it()
+    public void Another_existing_copy_is_a_conflict_and_a_moved_one_is_repointed_with_its_working_directory()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
         var first = Executable("first.exe");
-        var second = Executable("second.exe");
+        var moved = Path.Combine(Directory.CreateDirectory(Path.Combine(_dir, "moved")).FullName, "second.exe");
+        File.WriteAllText(moved, "");
         Register(first);
 
-        Assert.True(Register(second).GetAvailability().IsAvailable);
-        Assert.Equal(first, ShellShortcut.Read(Shortcut).Target);
+        var bytes = File.ReadAllBytes(Shortcut);
+        Assert.False(Register(moved).GetAvailability().IsAvailable);
+        Assert.Equal(bytes, File.ReadAllBytes(Shortcut));
 
         File.Delete(first);
-        Assert.True(Register(second).GetAvailability().IsAvailable);
-        Assert.Equal((WindowsDesktopNotifications.AppUserModelId, second), ShellShortcut.Read(Shortcut));
+        Assert.True(Register(moved).GetAvailability().IsAvailable);
+        Assert.Equal((WindowsDesktopNotifications.AppUserModelId, moved, Path.GetDirectoryName(moved)!), ShellShortcut.Read(Shortcut));
+    }
+
+    [Theory]
+    [InlineData("empty target")]
+    [InlineData("other existing target")]
+    [InlineData("arguments")]
+    [InlineData("other id")]
+    [InlineData("removed")]
+    [InlineData("unreadable")]
+    public void A_registration_changed_after_startup_sends_nothing_and_is_not_repaired(string change)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
+        var exe = Executable("Sysacta.exe");
+        var notifications = Register(exe);
+        Assert.True(notifications.GetAvailability().IsAvailable);
+
+        File.Delete(Shortcut);
+        const string id = WindowsDesktopNotifications.AppUserModelId;
+        switch (change)
+        {
+            case "empty target": ShellShortcut.Create(Shortcut, "", id); break;
+            case "other existing target": ShellShortcut.Create(Shortcut, Executable("other.exe"), id); break;
+            case "arguments": ShellShortcut.Create(Shortcut, exe, id, "--extra"); break;
+            case "other id": ShellShortcut.Create(Shortcut, exe, "Other.Application"); break;
+            case "unreadable": File.WriteAllText(Shortcut, "not a shortcut"); break;
+        }
+
+        var bytes = File.Exists(Shortcut) ? File.ReadAllBytes(Shortcut) : null;
+        var failure = Assert.Throws<ToolFailureException>(() => notifications.Prepare("t", "b"));
+        Assert.Equal(ErrorCodes.NotSupported, failure.Code);
+        Assert.DoesNotContain(_dir, failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(bytes, File.Exists(Shortcut) ? File.ReadAllBytes(Shortcut) : null);
+
+        // A restart does not accept it either (a removed shortcut is simply created again).
+        Assert.Equal(change == "removed", Register(exe).GetAvailability().IsAvailable);
     }
 
     [Theory]
@@ -85,7 +123,7 @@ public sealed class WindowsDesktopNotificationsTests : IDisposable
     }
 
     [Fact]
-    public void A_failed_or_pending_or_removed_registration_sends_nothing()
+    public void A_failed_or_pending_registration_sends_nothing()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
         var pending = new WindowsDesktopNotifications(Shortcut, Executable("Sysacta.exe"));
@@ -95,10 +133,7 @@ public sealed class WindowsDesktopNotificationsTests : IDisposable
         var failed = new WindowsDesktopNotifications(Path.Combine(_dir, "missing", "folder", "Sysacta.lnk"), Executable("Sysacta.exe"));
         failed.Register();
         Assert.False(failed.GetAvailability().IsAvailable);
-
-        pending.Register();
-        File.Delete(Shortcut);
-        Assert.Equal(ErrorCodes.NotSupported, Assert.Throws<ToolFailureException>(() => pending.Prepare("t", "b")).Code);
+        Assert.Equal(ErrorCodes.NotSupported, Assert.Throws<ToolFailureException>(() => failed.Prepare("t", "b")).Code);
     }
 
     [Fact]

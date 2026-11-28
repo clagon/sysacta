@@ -45,7 +45,7 @@ public sealed class WindowsDesktopNotifications : IDesktopNotifications
 
     public ToolAvailability GetAvailability() => _state switch
     {
-        Registration.Conflict => ToolAvailability.Unavailable(ErrorCodes.NotSupported, "Another Start menu shortcut named Sysacta already exists, so notifications are not registered. It was left unchanged."),
+        Registration.Conflict => ToolAvailability.Unavailable(ErrorCodes.NotSupported, "The Start menu shortcut named Sysacta does not belong to this copy of Sysacta, so notifications are not registered. It was left unchanged."),
         Registration.Failed => ToolAvailability.Unavailable(ErrorCodes.NotSupported, "Notification registration failed when Sysacta started."),
         _ => ToolAvailability.Available,
     };
@@ -84,18 +84,19 @@ public sealed class WindowsDesktopNotifications : IDesktopNotifications
 
     public Action Prepare(string title, string body)
     {
-        switch (_state)
+        if (_state == Registration.Pending)
         {
-            case Registration.Pending:
-                throw new ToolFailureException(ErrorCodes.OsApiError, "Notification registration has not finished. Nothing was sent.", retryable: true);
-            case Registration.Registered when File.Exists(_shortcut):
-                break;
-            default:
-                throw new ToolFailureException(ErrorCodes.NotSupported, "The Sysacta notification registration is missing; restarting Sysacta registers it again. Nothing was sent.");
+            throw new ToolFailureException(ErrorCodes.OsApiError, "Notification registration has not finished. Nothing was sent.", retryable: true);
         }
 
         try
         {
+            // The shortcut can be replaced or removed after startup: check it again (read-only, never repaired here).
+            if (_state != Registration.Registered || !OnStaThread(() => ShellShortcut.IsRegistration(_shortcut, _executable!, AppUserModelId)))
+            {
+                throw new ToolFailureException(ErrorCodes.NotSupported, "The Sysacta notification registration is missing or was changed. Restart Sysacta to check it again. Nothing was sent.");
+            }
+
             var notifier = ToastNotificationManager.CreateToastNotifier(AppUserModelId);
             if (ReadSetting(notifier) is { } setting && setting != NotificationSetting.Enabled)
             {
@@ -109,6 +110,32 @@ public sealed class WindowsDesktopNotifications : IDesktopNotifications
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "The Windows notification could not be prepared. Nothing was sent.", retryable: true);
         }
+    }
+
+    /// <summary>
+    /// Shell COM on its own STA thread, as at registration. A hang blocks only this call, which holds the send lock, so
+    /// at most one such thread is stuck; the executor times the call out and refuses a late start.
+    /// </summary>
+    private static bool OnStaThread(Func<bool> read)
+    {
+        var result = false;
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                result = read();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                failure = ex;
+            }
+        })
+        { IsBackground = true, Name = "Sysacta notification registration check" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        return failure is null ? result : throw new InvalidOperationException("The registration could not be read.", failure);
     }
 
     /// <summary>The text goes in as DOM text nodes of a fixed template, so it can never add markup or attributes.</summary>
