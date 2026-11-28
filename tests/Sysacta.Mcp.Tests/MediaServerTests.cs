@@ -45,6 +45,10 @@ public class MediaServerTests
             Assert.Equal(tool.Name is "media_list_sessions" or "media_get_state", tool.Annotations!.ReadOnlyHint);
         }
         Assert.Equal("position_ms", tools["media_seek"].InputSchema.GetProperty("required")[0].GetString());
+        var listOutputSchema = tools["media_list_sessions"].OutputSchema!.Value.GetRawText();
+        Assert.Contains("app_label", listOutputSchema, StringComparison.Ordinal);
+        Assert.Contains("Sanitized source app label", listOutputSchema, StringComparison.Ordinal);
+        Assert.Contains("only when it can be matched safely", tools["media_play"].Description, StringComparison.Ordinal);
     }
 
     [Theory]

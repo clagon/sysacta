@@ -26,6 +26,30 @@ public class WindowsMediaSessionsTests
     }
 
     [Theory]
+    [InlineData("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify", "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify")]
+    [InlineData("C:\\Program Files\\Music\\player.exe", null)]
+    [InlineData("https://example.invalid/player", null)]
+    [InlineData("file:private-player", null)]
+    [InlineData("../private/player", null)]
+    [InlineData("", null)]
+    public void App_labels_allow_only_bounded_identifier_characters(string input, string? expected)
+    {
+        Assert.Equal(expected, WindowsMediaSessions.SafeAppLabel(input));
+        Assert.Null(WindowsMediaSessions.SafeAppLabel(new string('a', 257)));
+    }
+
+    [Theory]
+    [InlineData("same", "same", true, true)]
+    [InlineData("known", "other", true, false)]
+    [InlineData("known", null, true, false)]
+    [InlineData("known", null, false, false)]
+    [InlineData(null, null, false, true)]
+    [InlineData(null, "newly-available", true, true)]
+    public void Final_seek_fingerprint_revalidation_distinguishes_missing_known_data(
+        string? expected, string? actual, bool readSucceeded, bool matches) =>
+        Assert.Equal(matches, WindowsMediaSessions.MatchesKnownFingerprint(expected, actual, readSucceeded));
+
+    [Theory]
     [InlineData(10000L, 1L, 1L)]
     [InlineData(10001L, 1L, 2L)]
     [InlineData(-10001L, -2L, -1L)]

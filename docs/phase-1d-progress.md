@@ -4,7 +4,7 @@
 
 - 8 ツールと Windows GSMTC アダプターを実装。セッション ID は保持中の COM `IUnknown` identity に結び付け、一覧変更後も再照合できた存続セッションは同じ ID を保ち、一覧から消えた実体は ID を破棄する。Windows 実機で読み取り専用の列挙・状態取得・再列挙を確認し、一覧変更世代を合成した ID 維持テストを実機で実行した。GetCurrentSession と一覧項目の COM identity が一致しない環境では省略対象の照合を拒否する。
 - 状態変更の自動検証、WinRT 呼び出し開始境界、`verified` / `accepted` / `unknown`、シークの範囲とメディア再検証は Core フェイク・Windows テストで確認。実際の再生・停止・曲送り・シークは利用者の承認がないため一切実行していない。従って各アプリでの実制御は未検証。
-- 直近のコードを含む Linux Release ビルドは警告ゼロ、全体テストは Core 494、Infrastructure 50、MCP 106、Windows 40 件成功（Windows 固有 20 件スキップ）。Windows 11 実機の `WindowsMediaSessionsTests` は 18 件すべて成功。PR #13 の最新 HEAD CI/レビューは下記の更新欄に記録する。
+- 直近のレビュー対応を含む Linux Release ビルドは警告ゼロ、全体テストは Core 498、Infrastructure 50、MCP 106、Windows 52 件成功（Windows 固有 20 件スキップ）。Windows 11 実機の `WindowsMediaSessionsTests` は 30 件すべて成功。実メディア制御は行っていない。
 - 既知の制約: 現在セッションと一覧が別 COM identity の時は省略指定を使えない。`MediaPropertiesChanged` 通知の遅延・欠落や同一タイトル/アーティストのメディア切替は完全には識別できない。実セッション切替・終了・再起動後の寿命、アプリ別実制御、配布物は未確認。
 
 ## 技術調査
@@ -100,3 +100,12 @@
 - `2612abe` のレビュー指摘を受け、二度目のメタデータ取得後から副作用開始前までの曲切替検出を強化した。最終準備を非同期化して同じセッションからメタデータを再取得し、可能な場合は fingerprint、内部変更世代、再生状態、タイムライン、シーク範囲を確認してから書き込みデリゲートを返す。WinRT の読み取り準備完了後にキャンセルを再確認し、`BeginSideEffect` 後に初めて Try*Async を呼ぶ順序を維持する。Core フェイクで最終準備中に fingerprint が変われば OS 呼び出しゼロを確認する。イベント遅延・欠落や同一メタデータの別メディアは完全検出できない制約が残る。Release 全体テスト・Windows CI・再レビューで確認する。
 - `8382696` は Windows CI の Release ビルド、全テスト、アプリのスモークテストに成功。Codex の該当指摘は `PrepareAsync` での最終メタデータ読み戻しと Core テスト追加で対応し、該当スレッドを解決した。
 - `03177ed` は Windows CI の Release ビルド、全テスト、アプリのスモークテストに成功。clagon 認証から依頼した Codex レビューは同コミットについて「重大な問題なし」で完了し、新規指摘なし。レビューで指摘された全スレッドは解決済み。
+
+### 2026-11-28 追加レビュー指摘への対応
+
+- Microsoft の[GetCurrentSession](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssessionmanager.getcurrentsession)、[GetSessions](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssessionmanager.getsessions)、[GSMTC session](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssession) 契約を再確認した。GetCurrentSession は制御対象として OS が選ぶ session object、GetSessions は全利用可能 session object を返し、公開 session API にある識別情報は source app の AUMID。公式契約にはその二経路を結ぶ session ID がない。既存の Windows 11 実測では GetCurrentSession の再取得同士は同一 IUnknown だが、GetSessions 内のどの session とも identity が一致しなかった。
+- GetCurrentSession の object を直接使う案は検討した。実行自体は可能でも、明示 session_id の object と同一の一時 ID・ResourceLocks key に結び付けられない。Global な書き込み lock で代用すると docs/phase-1d.md §6 の異なる session の独立実行条件を崩し、誤った同一視は仕様の禁止事項に反する。このため安全な対応付けが得られない環境では fail-closed を維持し、ツール説明に明示 ID の代替を記載した。AUMID やタイトルで相関しない。
+- 一覧には選択用の `app_label` を加えた。SourceAppUserModelId が 256 文字以下で ASCII の英数字・`.`・`_`・`!`・`+`・`-` のみの場合だけ返す。パス・URI・未知形式は `null`。表示用であり、session ID・lock key・権限に使用しない。同じ app_label を持つ項目を別 ID のまま保つ Core テストと schema / description 検査を追加した。Windows SDK はこのプロパティを「source app の App user model Id」と定義するが、人が読む表示名である保証はないため label と呼ぶ。
+- [TryGetMediaPropertiesAsync](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssession.trygetmediapropertiesasync) の最終取得で、直前まで既知だった fingerprint が例外・null・過大値で得られない場合は `TARGET_CHANGED` として副作用前に拒否する。初回から fingerprint がない場合は、観測済み media revision と timeline/range の検査を使い、メディア識別情報を失ったケースと区別する。既知値の取得失敗/null と初回から unknown のケースのフェイクテストを追加した。
+- レビューコメントの推奨にある実 MCP クライアントの再生・一時停止・シーク確認は、利用者の明示承認がないため実施しない。実メディア状態の変更は行わず、該当する実機操作は未検証として維持する。
+- 追加修正のローカル検証: Release build 0 warning/error、Core 498、Infrastructure 50、MCP 106、Windows 52 (Windows-specific 20 skipped); Windows 11 のメディア実機テスト 30 passed, 0 skipped。アプリのスモークテストと最新 push 後の CI は再実行する。実メディア制御は含めない。

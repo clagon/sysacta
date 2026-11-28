@@ -26,7 +26,7 @@ Sysacta is a Windows 11 desktop utility that exposes structured system-managemen
 | `display_set_mode` | Applies a listed mode to one non-primary display after Windows' test; not saved; restorable locally from the tray menu or the Devices page | Disabled |
 | `display_set_power` | Turns one external monitor on or into its power-saving off state over DDC/CI (MCCS 0xD6, values 0x01/0x04 only) | Disabled |
 | `display_set_input` | Switches one external monitor to an input it declares with a standard MCCS 2.x meaning (0x60) | Disabled |
-| `media_list_sessions` | Lists system media sessions and supported operations | Enabled |
+| `media_list_sessions` | Lists system media sessions, safe app labels and supported operations | Enabled |
 | `media_get_state` | Reads state, metadata and timeline for one media session | Enabled |
 | `media_play` / `media_pause` / `media_stop` | Request an explicit playback state | Enabled |
 | `media_next_track` / `media_previous_track` | Request one track skip | Enabled |

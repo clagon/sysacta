@@ -42,15 +42,25 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         var failed = 0;
         foreach (var entry in snapshot.Entries.Take(MaxResponse))
         {
+            string? appLabel;
+            try
+            {
+                appLabel = SafeAppLabel(entry.Session.SourceAppUserModelId);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                appLabel = null;
+            }
+
             try
             {
                 var playback = entry.Session.GetPlaybackInfo();
-                entries.Add(new(entry.Id, IsCurrent(snapshot, entry), Status(playback.PlaybackStatus), Controls(playback.Controls)));
+                entries.Add(new(entry.Id, IsCurrent(snapshot, entry), Status(playback.PlaybackStatus), Controls(playback.Controls), appLabel));
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 failed++;
-                entries.Add(new(entry.Id, IsCurrent(snapshot, entry), MediaPlaybackStatus.Unknown, null));
+                entries.Add(new(entry.Id, IsCurrent(snapshot, entry), MediaPlaybackStatus.Unknown, null, appLabel));
             }
         }
 
@@ -146,17 +156,19 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
                 ?? throw new ToolFailureException(ErrorCodes.TargetNotFound, "The media session is no longer available.");
         }
 
-        string? finalFingerprint = expected.MetadataFingerprint;
+        string? finalFingerprint = null;
+        var finalFingerprintAvailable = false;
         if (operation == MediaOperation.Seek)
         {
             try
             {
                 var properties = await entry.Session.TryGetMediaPropertiesAsync().AsTask().ConfigureAwait(false);
                 finalFingerprint = Fingerprint(properties?.Title, properties?.Artist);
+                finalFingerprintAvailable = finalFingerprint is not null;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                // Event revision and timeline checks remain authoritative when metadata is unavailable.
+                // Continue only if the earlier read had no fingerprint to lose.
             }
         }
         cancellationToken.ThrowIfCancellationRequested();
@@ -183,10 +195,9 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
             if (operation == MediaOperation.Seek)
             {
                 EnsureMediaRevision(entry, expected.MediaRevision);
-                if (expected.MetadataFingerprint is not null && finalFingerprint is not null &&
-                    expected.MetadataFingerprint != finalFingerprint)
+                if (!MatchesKnownFingerprint(expected.MetadataFingerprint, finalFingerprint, finalFingerprintAvailable))
                 {
-                    throw new ToolFailureException(ErrorCodes.TargetChanged, "The media item changed before the operation.");
+                    throw new ToolFailureException(ErrorCodes.TargetChanged, "The media item could not be revalidated before the operation.");
                 }
                 var timeline = entry.Session.GetTimelineProperties();
                 if (expected.MinSeekTicks != timeline.MinSeekTime.Ticks || expected.MaxSeekTicks != timeline.MaxSeekTime.Ticks ||
@@ -437,6 +448,15 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         var result = new string(cleaned.Take(256).ToArray());
         return result.Length == 0 ? null : result;
     }
+
+    internal static string? SafeAppLabel(string? value) =>
+        value is { Length: > 0 and <= 256 } && SafeAppLabelPattern().IsMatch(value) ? value : null;
+
+    internal static bool MatchesKnownFingerprint(string? expected, string? actual, bool readSucceeded) =>
+        expected is null || readSucceeded && actual is not null && expected == actual;
+
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._!+-]{0,255}$", RegexOptions.CultureInvariant)]
+    private static partial Regex SafeAppLabelPattern();
 
     [GeneratedRegex(@"(?i)(?:(?:^|\s)[a-z]:|\b(?:file|mailto|data|javascript|http|https|ftp|smb):)", RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveText();

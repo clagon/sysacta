@@ -63,6 +63,25 @@ public class MediaToolTests
     }
 
     [Fact]
+    public async Task Listed_sessions_with_the_same_app_label_keep_distinct_session_ids()
+    {
+        const string secondId = "m_00000000000000000000000000000002";
+        _media.SessionList = new(
+        [
+            new(FakeMedia.Id, false, MediaPlaybackStatus.Paused, new(true, true, true, false, false, false), "shared-player"),
+            new(secondId, null, MediaPlaybackStatus.Playing, new(true, false, true, false, false, false), "shared-player"),
+        ], 2, 0, false);
+
+        var result = await Call("media_list_sessions", new { });
+        var sessions = result.Data!["sessions"]!.AsArray();
+
+        Assert.Equal(2, sessions.Count);
+        Assert.Equal(FakeMedia.Id, sessions[0]!["session_id"]!.GetValue<string>());
+        Assert.Equal(secondId, sessions[1]!["session_id"]!.GetValue<string>());
+        Assert.All(sessions, session => Assert.Equal("shared-player", session!["app_label"]!.GetValue<string>()));
+    }
+
+    [Fact]
     public async Task Ambiguous_current_session_never_falls_back_to_an_explicit_target()
     {
         _media.AmbiguousCurrent = true;
@@ -296,6 +315,34 @@ public class MediaToolTests
         Assert.Equal(0, _media.Starts);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Losing_a_known_fingerprint_during_final_preparation_prevents_seek(bool returnsNull)
+    {
+        _media.State = _media.State with { MetadataFingerprint = "known-item" };
+        _media.FinalMetadataReadFails = !returnsNull;
+        _media.FinalMetadataReturnsNull = returnsNull;
+
+        var result = await Call("media_seek", new { position_ms = 1000 });
+
+        Assert.Equal(ErrorCodes.TargetChanged, result.Error?.Code);
+        Assert.Equal(0, _media.Starts);
+    }
+
+    [Fact]
+    public async Task Missing_fingerprint_from_initial_read_remains_distinct_from_losing_known_data()
+    {
+        _media.State = _media.State with { MetadataFingerprint = null };
+        _media.FinalMetadataReadFails = true;
+
+        var result = await Call("media_seek", new { position_ms = 1000 });
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(Verification.Accepted, result.Verification);
+        Assert.Equal(1, _media.Starts);
+    }
+
     [Fact]
     public async Task Track_change_between_metadata_samples_prevents_seek()
     {
@@ -495,7 +542,10 @@ public class MediaToolTests
         public TaskCompletionSource<bool>? ReadGate;
         public TaskCompletionSource<bool> ReadbackStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<bool> Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task<MediaSessionList> ListAsync(CancellationToken cancellationToken) => Task.FromResult(new MediaSessionList([], 0, 0, false));
+        public MediaSessionList SessionList = new([], 0, 0, false);
+        public bool FinalMetadataReadFails;
+        public bool FinalMetadataReturnsNull;
+        public Task<MediaSessionList> ListAsync(CancellationToken cancellationToken) => Task.FromResult(SessionList);
         public Task<MediaSessionTarget> ResolveAsync(string? sessionId, CancellationToken cancellationToken)
         {
             if (sessionId is null && AmbiguousCurrent)
@@ -532,7 +582,8 @@ public class MediaToolTests
                 throw new ToolFailureException(ErrorCodes.NotSupported, "Operation no longer supported.");
             if (State.PlaybackStatus != expected.PlaybackStatus ||
                 (operation == MediaOperation.Seek && (State.MediaRevision != expected.MediaRevision ||
-                    State.MetadataFingerprint != expected.MetadataFingerprint || State.MinSeekTicks != expected.MinSeekTicks || State.MaxSeekTicks != expected.MaxSeekTicks)))
+                    State.MetadataFingerprint != expected.MetadataFingerprint || State.MinSeekTicks != expected.MinSeekTicks || State.MaxSeekTicks != expected.MaxSeekTicks ||
+                    (expected.MetadataFingerprint is not null && (FinalMetadataReadFails || FinalMetadataReturnsNull)))))
                 throw new ToolFailureException(ErrorCodes.TargetChanged, "State changed.");
             var lifetime = TrackPreparedLifetime ? new object() : null;
             if (lifetime is not null) PreparedLifetime = new WeakReference(lifetime);
