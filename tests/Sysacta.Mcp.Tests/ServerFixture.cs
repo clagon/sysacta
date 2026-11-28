@@ -89,7 +89,8 @@ public sealed class ServerFixture : IAsyncDisposable
             .. includeSystem ? new SysactaTool[] { new SystemGetStatusTool(Monitor), new SystemGetHardwareTool(Monitor),
                 new SystemGetTemperaturesTool(Monitor), new SystemGetStorageTool(Monitor) } : [],
             .. includeNotification ? new SysactaTool[] { new NotificationSendTool(Notifications, Time) } : [],
-            .. includeApps ? new SysactaTool[] { new AppListAvailableTool(Apps, AppOs), new AppListRunningTool(Apps, AppOs), new AppLaunchTool(Apps, AppOs) } : [],
+            .. includeApps ? new SysactaTool[] { new AppListAvailableTool(Apps, AppOs), new AppListRunningTool(Apps, AppOs), new AppLaunchTool(Apps, AppOs),
+                new AppCloseTool(Apps, AppOs), new ProcessListRunningTool(Apps, AppOs), new ProcessTerminateTool(Apps, AppOs) } : [],
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");

@@ -22,6 +22,9 @@ public class AppToolTests
             ["app_list_available"] = (DefaultPolicy.On, true),
             ["app_list_running"] = (DefaultPolicy.On, true),
             ["app_launch"] = (DefaultPolicy.On, false),
+            ["app_close"] = (DefaultPolicy.Off, false),
+            ["process_list_running"] = (DefaultPolicy.On, true),
+            ["process_terminate"] = (DefaultPolicy.Off, false),
         };
         foreach (var (name, (policy, readOnly)) in expected)
         {
@@ -29,6 +32,8 @@ public class AppToolTests
             Assert.Equal((policy, readOnly, ToolCategories.Apps, false, null), (d.DefaultPolicy, d.ReadOnly, d.Category, d.LocalOnly, d.Transition));
         }
 
+        Assert.Equal(["pid"], s.H.Executor.Registry.Find("process_terminate")!.Descriptor.AuditedArguments);
+        Assert.Equal(["limit"], s.H.Executor.Registry.Find("process_list_running")!.Descriptor.AuditedArguments);
         Assert.Empty(s.H.Executor.Registry.Find("app_launch")!.Descriptor.AuditedArguments);
     }
 
@@ -52,6 +57,8 @@ public class AppToolTests
 
         var launch = s.H.Executor.Registry.Find("app_launch")!.InputSchema;
         Assert.Equal(AppRules.AppIdPattern, launch.GetProperty("properties").GetProperty("app_id").GetProperty("pattern").GetString());
+        var terminate = s.H.Executor.Registry.Find("process_terminate")!.InputSchema;
+        Assert.Equal(["pid", "start_time"], terminate.GetProperty("required").EnumerateArray().Select(e => e.GetString()!).Order());
     }
 
     [Theory]
@@ -62,6 +69,20 @@ public class AppToolTests
     [InlineData("app_launch", "{\"app_id\":\"app_0123456789abcdef0123456789ABCDEF\"}")]
     [InlineData("app_launch", "{\"app_id\":\"app_0123456789abcdef0123456789abcdef\",\"args\":[\"x\"]}")]
     [InlineData("app_launch", "{\"app_id\":\"app_0123456789abcdef0123456789abcdef\",\"path\":\"C:\\\\x.exe\"}")]
+    [InlineData("app_close", "{\"app_id\":\"all\"}")]
+    [InlineData("app_close", "{\"app_id\":\"app_0123456789abcdef0123456789abcdef\",\"force\":true}")]
+    [InlineData("process_terminate", "{\"pid\":10}")]
+    [InlineData("process_terminate", "{\"pid\":0,\"start_time\":\"2026-11-28T10:25:01.1234567Z\"}")]
+    [InlineData("process_terminate", "{\"pid\":\"10\",\"start_time\":\"2026-11-28T10:25:01.1234567Z\"}")]
+    [InlineData("process_terminate", "{\"pid\":10,\"start_time\":\"2026-11-28T10:25:01Z\"}")]
+    [InlineData("process_terminate", "{\"pid\":10,\"start_time\":\"2026-11-28T10:25:01.1234567+09:00\"}")]
+    [InlineData("process_terminate", "{\"pid\":10,\"start_time\":\"2026-11-28T10:25:01.1234567Z\",\"kill_tree\":true}")]
+    [InlineData("process_terminate", "{\"pid\":10,\"start_time\":\"2026-11-28T10:25:01.1234567Z\",\"exit_code\":0}")]
+    [InlineData("process_list_running", "{\"limit\":0}")]
+    [InlineData("process_list_running", "{\"limit\":257}")]
+    [InlineData("process_list_running", "{\"filter\":\"\"}")]
+    [InlineData("process_list_running", "{\"filter\":\"a\\u0000b\"}")]
+    [InlineData("process_list_running", "{\"filter\":null}")]
     [InlineData("app_list_available", "{\"x\":1}")]
     public async Task Invalid_or_extra_arguments_are_refused_before_any_os_access(string tool, string json)
     {

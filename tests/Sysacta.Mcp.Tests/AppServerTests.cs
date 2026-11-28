@@ -14,7 +14,7 @@ public class AppServerTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static readonly string[] Tools = ["app_list_available", "app_list_running", "app_launch"];
+    private static readonly string[] Tools = ["app_list_available", "app_list_running", "app_launch", "app_close", "process_list_running", "process_terminate"];
 
     private static string Code(ModelContextProtocol.Protocol.CallToolResult r) =>
         Assert.IsType<JsonElement>(r.StructuredContent).GetProperty("error").GetProperty("code").GetString()!;
@@ -42,12 +42,13 @@ public class AppServerTests
     public async Task A_new_install_enables_only_the_everyday_tools_and_an_upgrade_adds_all_disabled_without_grants()
     {
         await using var f = await ServerFixture.StartAsync(includeApps: true);
-        Assert.Equal([true, true, true], Tools.Select(f.Store.IsToolEnabled));
+        Assert.Equal([true, true, true, false, true, false], Tools.Select(f.Store.IsToolEnabled));
 
         var dir = Path.GetDirectoryName(f.Database.Path)!;
         var registry = new FakeAppRegistry();
         var os = new FakeAppPlatform();
-        SysactaTool[] appTools = [new AppListAvailableTool(registry, os), new AppListRunningTool(registry, os), new AppLaunchTool(registry, os)];
+        SysactaTool[] appTools = [new AppListAvailableTool(registry, os), new AppListRunningTool(registry, os), new AppLaunchTool(registry, os),
+            new AppCloseTool(registry, os), new ProcessListRunningTool(registry, os), new ProcessTerminateTool(registry, os)];
         var oldDb = new SysactaDatabase(Path.Combine(dir, "apps-upgrade.db"));
         oldDb.Migrate();
         var old = new AccessStore(oldDb, TimeProvider.System, new AuthorizationGate());
@@ -102,21 +103,28 @@ public class AppServerTests
         await using var f = await ServerFixture.StartAsync(includeApps: true);
         var app = await Task.Run(() => Register(f, 1, []), Ct);
         var other = await Task.Run(() => Register(f, 2, [], allow: false), Ct);
+        var p = f.AppOs.Run(app, 10);
         var args = new Dictionary<string, object?> { ["app_id"] = app.Id };
+        var terminate = new Dictionary<string, object?> { ["pid"] = 10, ["start_time"] = ProcessStartTime.ToText(p.Creation) };
 
         await using (var client = await f.ClientAsync(f.Issue("app_list_available").Token))
         {
             Assert.Equal(ErrorCodes.PermissionDenied, Code(await client.CallToolAsync("app_launch", args, cancellationToken: Ct)));
+            Assert.Equal(ErrorCodes.ToolDisabled, Code(await client.CallToolAsync("process_terminate", terminate, cancellationToken: Ct)));
+            Assert.Equal(ErrorCodes.ToolDisabled, Code(await client.CallToolAsync("app_close", args, cancellationToken: Ct)));
         }
 
         await using (var client = await f.ClientAsync(f.Issue(Tools).Token))
         {
+            await Task.Run(() => { f.Store.SetToolEnabled("app_close", true); f.Store.SetToolEnabled("process_terminate", true); }, Ct);
             Assert.Equal(ErrorCodes.TargetNotFound, Code(await client.CallToolAsync("app_launch", new Dictionary<string, object?> { ["app_id"] = other.Id }, cancellationToken: Ct)));
             await Task.Run(() => f.Apps.SetAllowed(app.Id, 1, false), Ct);
             Assert.Equal(ErrorCodes.TargetNotFound, Code(await client.CallToolAsync("app_launch", args, cancellationToken: Ct)));
+            Assert.Equal(ErrorCodes.TargetNotFound, Code(await client.CallToolAsync("app_close", args, cancellationToken: Ct)));
+            Assert.Equal(ErrorCodes.PermissionDenied, Code(await client.CallToolAsync("process_terminate", terminate, cancellationToken: Ct)));
         }
 
-        Assert.Equal(0, f.AppOs.Launches);
+        Assert.Equal((0, 0, 0), (f.AppOs.Launches, f.AppOs.CloseRequests, f.AppOs.Terminations));
     }
 
     [Fact]
@@ -143,6 +151,7 @@ public class AppServerTests
         await using var f = await ServerFixture.StartAsync(includeApps: true);
         await Task.Run(() => { foreach (var t in Tools) f.Store.SetToolEnabled(t, true); }, Ct);
         var app = await Task.Run(() => Register(f, 1, ["synthetic-arg"]), Ct);
+        var p = f.AppOs.Run(app, 10);
         await using var client = await f.ClientAsync(f.Issue(Tools).Token);
         var responses = new List<string>();
         async Task Call(string tool, Dictionary<string, object?>? args = null) =>
@@ -150,8 +159,13 @@ public class AppServerTests
 
         await Call("app_list_available");
         await Call("app_list_running");
+        await Call("process_list_running", new() { ["filter"] = "synthetic-filter" });
         await Call("app_launch", new() { ["app_id"] = "synthetic-app-id" });
         await Call("app_launch", new() { ["app_id"] = app.Id });
+        f.AppOs.OnWrite = () => throw new InvalidOperationException("synthetic-exception C:\\private");
+        await Call("app_close", new() { ["app_id"] = app.Id });
+        await Call("process_terminate", new() { ["pid"] = 10, ["start_time"] = ProcessStartTime.ToText(p.Creation) });
+        await Call("process_terminate", new() { ["pid"] = 10, ["start_time"] = "synthetic-start-time-xxxxxxx" });
 
         foreach (var secret in new[] { "synthetic", app.Path, @"C:\\Apps", app.Identity.Sha256, app.Identity.FileId })
         {
@@ -186,7 +200,7 @@ public class AppServerTests
 
         foreach (var bytes in data)
         {
-            foreach (var secret in new[] { "synthetic-app-id" })
+            foreach (var secret in new[] { "synthetic-filter", "synthetic-app-id", "synthetic-exception", "synthetic-start-time" })
             {
                 Assert.True(bytes.AsSpan().IndexOf(Encoding.UTF8.GetBytes(secret)) < 0, secret);
                 Assert.True(bytes.AsSpan().IndexOf(Encoding.Unicode.GetBytes(secret)) < 0, secret);

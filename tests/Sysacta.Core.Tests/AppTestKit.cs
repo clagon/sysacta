@@ -10,7 +10,7 @@ internal static class AppTestKit
 {
     public static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public static readonly string[] All = ["app_list_available", "app_list_running", "app_launch"];
+    public static readonly string[] All = ["app_list_available", "app_list_running", "app_launch", "app_close", "process_list_running", "process_terminate"];
 
     public sealed record Setup(Harness H, FakeAppRegistry Registry, FakeAppPlatform Os, Caller Caller)
     {
@@ -35,6 +35,7 @@ internal static class AppTestKit
         var h = new Harness(_ =>
         [
             new AppListAvailableTool(registry, os), new AppListRunningTool(registry, os), new AppLaunchTool(registry, os),
+            new AppCloseTool(registry, os), new ProcessListRunningTool(registry, os), new ProcessTerminateTool(registry, os),
         ]);
         var (caller, _) = h.Store.AddClient("c1", All);
         return new(h, registry, os, caller);

@@ -65,6 +65,9 @@ internal static class ToolCatalog
             new AppListAvailableTool(apps, appPlatform),
             new AppListRunningTool(apps, appPlatform),
             new AppLaunchTool(apps, appPlatform),
+            new AppCloseTool(apps, appPlatform),
+            new ProcessListRunningTool(apps, appPlatform),
+            new ProcessTerminateTool(apps, appPlatform),
             // Local console only (tray menu / device page / overview); never listed or callable over MCP.
             new DisplayRestoreModeTool(displays, recovery),
             new PowerReleaseGateTool(powerGate),
