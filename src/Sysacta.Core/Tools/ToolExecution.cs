@@ -42,7 +42,17 @@ public sealed class ToolExecution
     /// changed anything. Throws if the call is no longer authorized or was already abandoned (timeout/cancel).
     /// Calling it again is a no-op.
     /// </summary>
-    public void BeginSideEffect()
+    public void BeginSideEffect() => BeginSideEffect(null);
+
+    /// <summary>
+    /// <see cref="BeginSideEffect()"/> with a target-specific condition evaluated atomically with the authorization, in
+    /// the same shared side of the gate (for example: the registered app is still allowed and has the generation that was
+    /// verified). A permission or registry change committed before this point is therefore always seen, and none can
+    /// complete during the evaluation. <paramref name="targetCheck"/> returns the refusal, or null to proceed. It must be a
+    /// short read of Sysacta's own state: no OS call, hashing, UI or await, and it must never enter the authorization
+    /// gate itself (the lock does not allow recursion).
+    /// </summary>
+    public void BeginSideEffect(Func<ToolError?>? targetCheck)
     {
         _gate.Evaluate(() =>
         {
@@ -61,6 +71,11 @@ public sealed class ToolExecution
                 throw new SideEffectRefusedException(refusal);
             }
 
+            if (targetCheck?.Invoke() is { } targetRefusal)
+            {
+                throw new SideEffectRefusedException(new ToolResult { Status = ToolStatus.Error, Error = targetRefusal });
+            }
+
             if (Interlocked.CompareExchange(ref _state, Started, Pending) == Abandoned)
             {
                 throw new OperationCanceledException("The call was abandoned before its side effect started.");
@@ -77,7 +92,13 @@ public sealed class ToolExecution
     /// When this returns a non-null <see cref="ToolError"/>, the caller must NOT perform the next write and must report
     /// any already-applied changes (typically as <see cref="ToolStatus.Partial"/>) without rolling back.
     /// </summary>
-    public ToolError? BeginNextSideEffect(CancellationToken cancellationToken)
+    public ToolError? BeginNextSideEffect(CancellationToken cancellationToken) => BeginNextSideEffect(null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="BeginNextSideEffect(CancellationToken)"/> with the same kind of target-specific condition as
+    /// <see cref="BeginSideEffect(Func{ToolError?})"/>, evaluated atomically with the authorization.
+    /// </summary>
+    public ToolError? BeginNextSideEffect(Func<ToolError?>? targetCheck, CancellationToken cancellationToken)
     {
         if (Volatile.Read(ref _state) != Started)
         {
@@ -104,6 +125,11 @@ public sealed class ToolExecution
             if (_authorize() is { } refusal)
             {
                 return (refusal.Error ?? new ToolError(ErrorCodes.PermissionDenied, "Authorization was revoked.", false)) with { Retryable = false };
+            }
+
+            if (targetCheck?.Invoke() is { } targetRefusal)
+            {
+                return targetRefusal with { Retryable = false };
             }
 
             if (Volatile.Read(ref _detached) != 0 || cancellationToken.IsCancellationRequested)

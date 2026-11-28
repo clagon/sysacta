@@ -41,7 +41,7 @@ Sysacta.App ──▶ Sysacta.Mcp ─────────▶ Sysacta.Core
 ## 絶対に守ること
 
 1. **ツールは `ToolExecutor` 以外から実行しない。** MCP も管理コンソールの「動作確認」も `ToolExecutor.ExecuteAsync` を通る。`[McpServerTool]` 属性や `WithTools*` で SDK にツールを直接登録しない。
-2. **ツールは `SysactaTool<TArgs, TData>` を継承し、認証・認可・監査・ロック・タイムアウトを自分で実装しない。** 基底クラスのパイプライン用メンバーは internal で、迂回できない設計になっている。状態変更ツールは最初の OS 書き込みの直前に `execution.BeginSideEffect()` を呼ぶ(ここが最終の認可点と副作用の開始点。docs/tools.md)。複数の OS 書き込みを行う場合は 2 回目以降の直前に `execution.BeginNextSideEffect(cancellationToken)` を呼ぶ。権限を狭める書き込みは `AuthorizationGate.BeginUpdate()` の中で行う(`AccessStore` が実施済み)。
+2. **ツールは `SysactaTool<TArgs, TData>` を継承し、認証・認可・監査・ロック・タイムアウトを自分で実装しない。** 基底クラスのパイプライン用メンバーは internal で、迂回できない設計になっている。状態変更ツールは最初の OS 書き込みの直前に `execution.BeginSideEffect()` を呼ぶ(ここが最終の認可点と副作用の開始点。docs/tools.md)。複数の OS 書き込みを行う場合は 2 回目以降の直前に `execution.BeginNextSideEffect(cancellationToken)` を呼ぶ。権限を狭める書き込みは `AuthorizationGate.BeginUpdate()` の中で行う(`AccessStore` が実施済み)。対象がローカルの許可リストに依存する状態変更(登録アプリなど)は `BeginSideEffect(targetCheck)` で許可・世代を同じゲート内で照合し、許可リストの書き込みも `BeginUpdate()` の中で行う(`AppRegistryStore`)。
 3. **本番ツールは `src/Sysacta.App/ToolCatalog.cs` にだけ登録する。** テスト用ツールはテストプロジェクト内に置く(本番ビルドに含まれない)。
 4. **MCP から認証・権限・設定・ログを変更する手段を作らない。** MCP 層が受け取るのは読み取り専用の `IAccessStore` だけ。
 5. **秘密や内部情報を記録・返却しない。** トークン原文、Authorization ヘッダー、リクエスト/レスポンス本文、スタックトレースを、監査ログ・MCP の応答・UI に出さない。例外メッセージ(内部のパスや SQL を含み得る)は MCP の応答・監査ログ・UI のエラー表示に出さず、固定文言にする(UI は `PageViewModel.SafeMessage`)。MCP の応答と監査ログにはファイルパスを含めない。一方、管理コンソールでローカルの利用者本人に見せる情報(仕様の「データ保存場所」、本人が選んだ書き出し先など)はパスを表示してよい。監査ログにはクライアントが入力した文字列を残さない: 記録するのは固定値・登録名・解決済み識別子と、許可リストにある数値・真偽値・列挙値の引数だけ。

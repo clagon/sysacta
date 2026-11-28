@@ -61,7 +61,9 @@
         <ui:NavigationViewItem Content="デバイス" TargetPageType="{x:Type views:DevicesPage}">
           <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Speaker224" /></ui:NavigationViewItem.Icon>
         </ui:NavigationViewItem>
-        <!-- Phase 2 pages (アプリ) are added here when their features exist. No placeholder pages. -->
+        <ui:NavigationViewItem Content="アプリ" TargetPageType="{x:Type views:AppsPage}">
+          <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Apps24" /></ui:NavigationViewItem.Icon>
+        </ui:NavigationViewItem>
         <ui:NavigationViewItem Content="監査ログ" TargetPageType="{x:Type views:LogsPage}">
           <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="DocumentBulletList24" /></ui:NavigationViewItem.Icon>
         </ui:NavigationViewItem>

@@ -42,6 +42,12 @@ Sysacta is a Windows 11 desktop utility that exposes structured system-managemen
 | `system_get_temperatures` | GPU driver temperature and ACPI thermal zones; CPU, GPU hotspot/memory and drive temperatures are reported as not collected | Enabled |
 | `system_get_storage` | Logical volume capacity of local fixed drives (total, free, available to the user, used) | Enabled |
 | `notification_send` | Shows a plain-text Windows notification from Sysacta (title and body; rate limited) | Enabled |
+| `app_list_available` | Apps the local user registered and allowed, with an opaque `app_id` and the state of the approved file | Enabled |
+| `app_list_running` | Running processes of the allowed apps with `pid`, exact `start_time` and `app_match` (`managed` = launched by Sysacta, `estimated` = only observed) | Enabled |
+| `app_launch` | Launches an allowed app by `app_id` with its approved executable and fixed arguments (no-op when already running); unavailable while Sysacta runs elevated | Enabled |
+| `app_close` | Asks an app Sysacta launched (one process, one window) to close normally (WM_CLOSE); never forces | Disabled |
+| `process_list_running` | Processes of the current user and session: `pid`, exact `start_time`, name, matching `app_id`, whether it may be terminated | Enabled |
+| `process_terminate` | **Force-terminates** one process Sysacta launched, by `pid` + exact `start_time` (unsaved data is lost) | Disabled |
 
 "Enabled" applies to new installations. Experimental tools and newly added tools on upgrade start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console. Display support depends on the monitor, cable, dock and the monitor's DDC/CI setting; mirrored displays cannot be adjusted over DDC/CI. `display_get_state` with `include_switching: true` reports the power state and the `input_id` values (the capabilities query can take several seconds). A monitor that is switched off or to an input without a signal may stop answering, so Sysacta cannot always switch it back: make sure the monitor's power button and menu are within reach before enabling these tools.
 
@@ -51,11 +57,12 @@ System monitoring is read-only and uses documented Windows APIs only (PDH, DXGI,
 
 Notifications use the Windows desktop notification API without extra dependencies. At startup Sysacta creates a per-user Start menu shortcut (`Sysacta.lnk`), which Windows requires to attribute notifications to the app; an existing shortcut of that name that does not point to this copy (another application, or another Sysacta copy that still exists) is left alone and the tool is then unavailable; to switch copies, delete the shortcut and restart. The shortcut is checked again before every send. `verification: "accepted"` means Windows accepted the request, not that it was displayed or seen. The text can appear in the notification center and on the lock screen, so do not send secrets. Sends are limited to 5 per 60 seconds, at least 2 seconds apart, across all clients. Registration and display were verified once with the portable build on one PC; MCP-originated sends, disabled notifications and the installer layout are unverified ([progress](docs/phase-1g-progress.md)). A portable copy that is deleted leaves the shortcut behind.
 
+Apps are managed on the **アプリ** (Apps) page: Start menu discovery (shortcuts are only read), manual registration of an `.exe` with fixed arguments (one per line), allowing, re-approval and deletion. Nothing found or registered is allowed until the local user turns it on, and MCP can neither register nor allow anything nor pass a path, argument, URL or environment. Only plain `.exe` files on a local fixed drive qualify; shells, script hosts, interpreters, installers/updaters, administration tools, programs in the Windows folder, packaged (Store) apps, Sysacta itself and paths through junctions or symbolic links are refused. The approved file is pinned by volume, file id, size and SHA-256 and re-verified before every launch while the file and its folders are locked against replacement; an updated or replaced file must be re-approved (which turns the permission off again). Closing and termination are limited to processes Sysacta itself launched with `app_launch` from the approved file, since Sysacta last started and under the current approval, of the current user and session at normal integrity; apps you started yourself are listed as `estimated` and never closed or terminated (Windows offers no documented way to prove which file a running process was loaded from). Sysacta, its parent, protected, critical and elevated processes are never terminated. Registering an app is a trust decision: Sysacta cannot limit what the app itself does. Launch, normal close and termination were checked once with one harmless real app on one PC; see [progress](docs/phase-2a-progress.md) for what is unverified.
+
 ## Planned features
 
 | Category | Capabilities |
 | --- | --- |
-| Apps & processes | App discovery, allowlisted launch and process management |
 | Network | Connection information, traffic and adapter management |
 | Bluetooth | Device discovery and supported connection controls |
 
@@ -125,7 +132,7 @@ For contributors (and coding agents): [AGENTS.md](AGENTS.md) (rules), [docs/tool
 
 - [x] Phase 0 — MCP server, authentication, authorization, settings UI and audit logs (see [progress](docs/phase-0-progress.md) for items verified only by automated tests)
 - [ ] Phase 1 — Audio (standard tools done; default-device change pending), display (done except changes on the primary display; writes not yet verified on hardware), media (implementation under verification), power (implemented; not verified on hardware), system monitoring and notifications
-- [ ] Phase 2 — Apps and processes, networking and Bluetooth
+- [ ] Phase 2 — Apps and processes (implemented; not verified with real apps), networking and Bluetooth
 - [ ] Phase 3 — Testing, security review and Windows distribution
 
 ## Distribution

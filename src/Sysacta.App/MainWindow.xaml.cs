@@ -30,6 +30,7 @@ public partial class MainWindow
             new ToolsPage(new ToolsViewModel(runtime)),
             new ClientsPage(new ClientsViewModel(runtime)),
             new DevicesPage(new DevicesViewModel(runtime)),
+            new AppsPage(new AppsViewModel(runtime)),
             new LogsPage(new LogsViewModel(runtime)),
             new GeneralPage(new GeneralViewModel(runtime, () => this)));
         Navigation.SetServiceProvider(_pages);

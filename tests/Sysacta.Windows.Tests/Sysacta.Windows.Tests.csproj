@@ -7,6 +7,12 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sysacta.Windows\Sysacta.Windows.csproj" />
+    <!-- Built only to be launched by the app tests (a dedicated harmless process); not referenced as an assembly. -->
+    <ProjectReference Include="..\HarmlessTarget\HarmlessTarget.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>HarmlessTargetDirectory</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)..\HarmlessTarget\bin\$(Configuration)\net10.0\</_Parameter2>
+    </AssemblyAttribute>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />
