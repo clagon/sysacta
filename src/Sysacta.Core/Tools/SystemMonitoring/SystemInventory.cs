@@ -77,7 +77,7 @@ public enum TemperatureSensorType
 public enum TemperatureSource { D3dkmtAdapterPerfdata, PdhThermalZone }
 
 public sealed record TemperatureSensor(
-    [property: Description("Sensor id, unique in this response; null when the OS name could not be validated.")] string? SensorId,
+    [property: Description("Sensor id, unique in this response (GPU: <gpu_id>:phys_<n>:temperature); null when the OS name could not be validated.")] string? SensorId,
     TemperatureDeviceType DeviceType,
     [property: Description("gpu_id of the adapter for GPU sensors; null for thermal zones.")] string? DeviceId,
     TemperatureSensorType SensorType,
@@ -220,7 +220,7 @@ public static partial class SystemInventory
         }
         else
         {
-            foreach (var g in r.Gpus.Value!.OrderBy(g => g.Luid))
+            foreach (var g in r.Gpus.Value!.OrderBy(g => g.Luid).ThenBy(g => g.PhysicalIndex))
             {
                 double? celsius = null;
                 var reason = g.Reason;
@@ -234,7 +234,7 @@ public static partial class SystemInventory
                 }
 
                 var id = SystemStatus.GpuId(g.Luid);
-                sensors.Add(new($"{id}:temperature", TemperatureDeviceType.Gpu, id, TemperatureSensorType.GpuTemperature,
+                sensors.Add(new($"{id}:phys_{g.PhysicalIndex}:temperature", TemperatureDeviceType.Gpu, id, TemperatureSensorType.GpuTemperature,
                     SystemStatus.AdapterName(g.Description), celsius, TemperatureSource.D3dkmtAdapterPerfdata, r.GpusMeasuredAt, reason));
             }
         }
@@ -245,10 +245,13 @@ public static partial class SystemInventory
         }
         else
         {
+            var duplicated = r.Zones.Value!.GroupBy(z => z.Instance, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
             foreach (var z in r.Zones.Value!.OrderBy(z => z.Instance, StringComparer.Ordinal))
             {
-                var m = z.Instance.Length <= 64 ? ZoneInstance().Match(z.Instance) : Match.Empty;
-                var (celsius, reason) = ZoneCelsius(z);
+                // The same instance name twice cannot be attributed to one zone: no id, no value.
+                var dup = duplicated.Contains(z.Instance);
+                var m = !dup && z.Instance.Length <= 64 ? ZoneInstance().Match(z.Instance) : Match.Empty;
+                var (celsius, reason) = dup ? (null, UnavailableReason.InvalidData) : ZoneCelsius(z);
                 sensors.Add(new(m.Success ? $"acpi_thermal_zone:{m.Groups[1].Value}{m.Groups[2].Value}" : null, TemperatureDeviceType.AcpiThermalZone, null,
                     TemperatureSensorType.AcpiThermalZone, m.Success ? m.Groups[1].Value : null, celsius, TemperatureSource.PdhThermalZone, r.ZonesMeasuredAt, reason));
             }

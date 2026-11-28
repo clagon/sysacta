@@ -42,6 +42,7 @@ public sealed record GpuStatus(
     string? BusiestEngineType,
     IReadOnlyList<GpuEngineStatus> Engines,
     bool EnginesTruncated,
+    [property: Description("Process instances left out of the engine sums because they first appeared during the window (no rate yet). Processes that ended during the window are not visible and not counted either, so values can be slightly low.")] int ExcludedNewInstances,
     [property: Description("Dedicated GPU memory in use by all processes (GPU Adapter Memory\\Dedicated Usage), bytes.")] long? DedicatedMemoryUsedBytes,
     [property: Description("Shared system memory in use by the GPU (GPU Adapter Memory\\Shared Usage), bytes.")] long? SharedMemoryUsedBytes,
     UnavailableReason? MemoryUsageReason,
@@ -67,8 +68,11 @@ public static partial class SystemStatus
 {
     public static readonly TimeSpan SamplingInterval = TimeSpan.FromMilliseconds(1000);
 
-    /// <summary>Formatted percentages may exceed the range by rounding; anything beyond this is invalid, never clamped.</summary>
-    public const double PercentTolerance = 1.0;
+    /// <summary>
+    /// Floating-point noise only (values that still read 0.0 or 100.0 at 0.1 precision). Anything beyond is invalid, never
+    /// clamped: a sum above 100 can mean double counting.
+    /// </summary>
+    public const double PercentTolerance = 0.05;
 
     /// <summary>Longest gap between GetTickCount64 and unbiased interrupt time before the window counts as interrupted.</summary>
     public const long MaxSuspendGapMs = 250;
@@ -196,9 +200,10 @@ public static partial class SystemStatus
         foreach (var luid in luids.Take(MaxGpus))
         {
             var dxgi = adapters.FirstOrDefault(a => a.Luid == luid);
+            var mine = engineReason is null ? parsed!.Where(p => p.Key.Luid == luid).ToList() : [];
             var (engines, enginesTruncated, utilization, utilizationReason, busiest) = engineReason is { } er
                 ? ([], false, null, er, null)
-                : Engines(parsed!.Where(p => p.Key.Luid == luid).ToList());
+                : Engines(mine);
             var (dedicated, shared, memReason) = memoryReason is { } mr ? (null, null, mr)
                 : memory.TryGetValue(luid, out var m) ? m
                 : (null, null, UnavailableReason.Unavailable);
@@ -211,6 +216,7 @@ public static partial class SystemStatus
                 busiest,
                 engines,
                 enginesTruncated,
+                mine.Count(p => p.Value is null),
                 dedicated,
                 shared,
                 memReason,

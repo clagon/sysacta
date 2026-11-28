@@ -15,6 +15,11 @@ public enum UnavailableReason
     Interrupted,
     /// <summary>More items than the fixed internal limit; an aggregate over a partial set is not reported.</summary>
     Truncated,
+    /// <summary>
+    /// The source did not answer within its time budget, or an earlier read of it is still hung; a hung source is not
+    /// opened again until that read ends.
+    /// </summary>
+    Timeout,
 }
 
 /// <summary>A value read from the OS, or the reason it is missing.</summary>
@@ -108,9 +113,10 @@ public sealed record HardwareReading(
     IReadOnlyDictionary<HardwarePart, UnavailableReason> Failures);
 
 /// <summary>
-/// D3DKMT_ADAPTER_PERFDATA.Temperature of physical adapter 0 (deci-Celsius, 1 = 0.1 °C), or why it could not be read.
+/// D3DKMT_ADAPTER_PERFDATA.Temperature of one physical adapter (deci-Celsius, 1 = 0.1 °C), or why it could not be read.
 /// </summary>
-public sealed record GpuTemperatureReading(ulong Luid, string? Description, uint? DeciCelsius, UnavailableReason? Reason);
+/// <param name="PhysicalIndex">Physical adapter of a linked adapter (0 when not linked).</param>
+public sealed record GpuTemperatureReading(ulong Luid, int PhysicalIndex, string? Description, uint? DeciCelsius, UnavailableReason? Reason);
 
 /// <summary>One <c>Thermal Zone Information</c> instance. Null values: PDH reported no valid data for that counter.</summary>
 /// <param name="HighPrecisionTenthsKelvin"><c>High Precision Temperature</c> (tenths of a kelvin).</param>

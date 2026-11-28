@@ -116,8 +116,8 @@ public sealed class FakeSystemMonitor : ISystemMonitor
     public static TemperatureReading DefaultTemperatures() =>
         new(T0, Observed.Ok<IReadOnlyList<GpuTemperatureReading>>(
             [
-                new(DiscreteLuid, "NVIDIA GeForce RTX 4090", 455, null),
-                new(IntegratedLuid, "Intel(R) UHD Graphics 770", 0, null),
+                new(DiscreteLuid, 0, "NVIDIA GeForce RTX 4090", 455, null),
+                new(IntegratedLuid, 0, "Intel(R) UHD Graphics 770", 0, null),
             ]),
             T0, Observed.Ok<IReadOnlyList<ThermalZoneReading>>([new(@"\_TZ.TZ00", 3201, 320)]));
 

@@ -199,3 +199,10 @@ Windows 11 Home（ビルド 26300 系、x64）の通常権限で、作業コピ�
 - Linux (WSL2, .NET SDK 10.0.404): `dotnet build Sysacta.sln -c Release` 警告・エラーゼロ。`dotnet test Sysacta.sln -c Release`: Core 660、Infrastructure 51、MCP 119、Windows 65 成功（Windows 実機専用 32 件スキップ）。追加: Core `SystemMonitorToolTests`、MCP `SystemServerTests`、Infrastructure の既存 DB テスト、Windows `WindowsSystemMonitorTests`。
 - Windows 実機: `WindowsSystemMonitorTests` 7 件成功（§7）。
 - Windows CI: PR 作成後に記録する。
+
+## 12. レビュー対応（規約・仕様の 2 軸レビュー）
+
+- 規約: 明確な違反なし。対応: 同名インスタンスの扱いを熱ゾーン・GPU メモリで統一（`JoinByName`、重複は `invalid_data`）、`Array` → `ReadArray`、`EAccessDenied` 定数化、キャンセル確認の重複除去、PDH 配列要素サイズを構造体（`PdhFmtCounterValueItem`）から算出。
+- 仕様: (1) ハングした取得元を再初期化しない → 取得元（PDH・DXGI・D3DKMT・WMI・ストレージ）ごとの `HangGuard`。5 秒を超えて終わらない呼び出しがある間は新規に開かず `timeout`（ストレージは `TIMEOUT` エラー）。通常の並行読み取りは直列化しない。(2) 予算内に取れない項目は欠損 → hardware の WMI 3 クエリに合計 3 秒の締め切り、超過分は `timeout`。(3) 100 超の丸め → 許容幅を ±0.05（浮動小数点誤差のみ）に縮小、100.9 は `invalid_data`。(4) 除外インスタンスの明示 → `excluded_new_instances` を追加。(5) 熱ゾーンの重複 → `invalid_data`・ID なし。(6) status の全体失敗が稼働時間で起きない → CPU・メモリ・GPU がすべて欠損ならエラー。(7) リンク構成 GPU → `KMTQAITYPE_PHYSICALADAPTERCOUNT`(30) で物理アダプターごとに照会、`sensor_id = <gpu_id>:phys_<n>:temperature`（取得不能なら 1 台として扱う）。(8) 種別判定前に容量取得しないことを `SelectDrives` の単体テストで検証。
+- 追加の理由値 `timeout` を `UnavailableReason` に追加。§8 の「リンク構成 GPU の 2 台目以降」の制約は解消（実機はリンク構成でないため未検証）。§10 の WMI ハングのリスクは「締め切り超過は欠損、接続自体のハングは executor の TIMEOUT、再初期化しない」に更新。
+- 再検証: Linux で Core 663・Infrastructure 51・MCP 119・Windows 67 成功（スキップ 32）、警告ゼロ。Windows 実機で `WindowsSystemMonitorTests` 9 件成功、status/temperatures/hardware/storage の値を再確認（物理アダプター数 1、温度 32 °C）。

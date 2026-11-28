@@ -143,6 +143,22 @@ public class SystemMonitorToolTests
         var r = await Call(h, c, "system_get_status");
         Assert.Equal(ErrorCodes.OsApiError, r.Error!.Code);
         Assert.True(r.Error.Retryable);
+
+        // Uptime alone is always readable and is not a usable status.
+        m.Status = () => DefaultStatus(engines: [], memory: []) with
+        {
+            CpuPercent = null, CpuReason = UnavailableReason.Timeout, MemoryTotalBytes = null,
+            Adapters = Observed.Missing<IReadOnlyList<GpuAdapterReading>>(UnavailableReason.Timeout),
+            Engines = Observed.Missing<IReadOnlyList<CounterSample>>(UnavailableReason.Timeout),
+        };
+        Assert.Equal(ErrorCodes.OsApiError, (await Call(h, c, "system_get_status")).Error!.Code);
+
+        // A hung source is reported as timeout while the rest is returned.
+        m.Status = () => DefaultStatus() with { CpuPercent = null, CpuReason = UnavailableReason.Timeout, Engines = Observed.Missing<IReadOnlyList<CounterSample>>(UnavailableReason.Timeout) };
+        var partial = await Call(h, c, "system_get_status");
+        Assert.True(partial.IsSuccess);
+        Assert.Equal("timeout", partial.Data!["cpu"]!["reason"]!.GetValue<string>());
+        Assert.NotNull(partial.Data["memory"]!["used_bytes"]);
     }
 
     [Fact]
@@ -239,8 +255,10 @@ public class SystemMonitorToolTests
     [Theory]
     [InlineData(0.0, 0.0)]
     [InlineData(100.0, 100.0)]
-    [InlineData(100.9, 100.0)]
-    [InlineData(-0.4, 0.0)]
+    [InlineData(100.04, 100.0)]
+    [InlineData(-0.04, 0.0)]
+    [InlineData(100.9, null)]
+    [InlineData(-0.4, null)]
     [InlineData(101.5, null)]
     [InlineData(250.0, null)]
     [InlineData(-3.0, null)]
@@ -330,9 +348,11 @@ public class SystemMonitorToolTests
         Assert.Null(g.UtilizationPercent);
         Assert.Equal(UnavailableReason.InvalidData, g.UtilizationReason);
 
-        // Rounding noise within the tolerance is reported as 100.
-        var edge = Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 60.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), 40.6)]));
+        // Floating-point noise is reported as 100; a sum that is visibly above 100 is not.
+        var edge = Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 60.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), 40.04)]));
         Assert.Equal(100.0, Gpu(edge, DiscreteLuid).UtilizationPercent);
+        var over = Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 60.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), 40.6)]));
+        Assert.Equal(UnavailableReason.InvalidData, Gpu(over, DiscreteLuid).UtilizationReason);
     }
 
     [Fact]
@@ -374,6 +394,8 @@ public class SystemMonitorToolTests
         // A process that started during the window has no valid rate yet.
         var partial = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 20.0), new(Engine(2, DiscreteLuid, 0, 0, "3D"), null)])), DiscreteLuid);
         Assert.Equal(20.0, partial.UtilizationPercent);
+        Assert.Equal(1, partial.ExcludedNewInstances);
+        Assert.Equal(0, Gpu(Status(DefaultStatus()), DiscreteLuid).ExcludedNewInstances);
 
         // An engine whose only instance has no valid rate: the busiest engine is unknown.
         var unknown = Gpu(Status(DefaultStatus(engines: [new(Engine(1, DiscreteLuid, 0, 0, "3D"), 20.0), new(Engine(2, DiscreteLuid, 0, 1, "Copy"), null)])), DiscreteLuid);
@@ -534,7 +556,7 @@ public class SystemMonitorToolTests
         var dgpu = d.Sensors.Single(s => s.DeviceId == SystemStatus.GpuId(DiscreteLuid));
         Assert.Equal((TemperatureDeviceType.Gpu, TemperatureSensorType.GpuTemperature, TemperatureSource.D3dkmtAdapterPerfdata), (dgpu.DeviceType, dgpu.SensorType, dgpu.Source));
         Assert.Equal(45.5, dgpu.TemperatureC);
-        Assert.Equal("luid_0x00000000_0x0000c5a3:temperature", dgpu.SensorId);
+        Assert.Equal("luid_0x00000000_0x0000c5a3:phys_0:temperature", dgpu.SensorId);
 
         // The integrated GPU's driver reports no temperature (0): null with a reason, not 0 °C.
         var igpu = d.Sensors.Single(s => s.DeviceId == SystemStatus.GpuId(IntegratedLuid));
@@ -570,27 +592,44 @@ public class SystemMonitorToolTests
         {
             Gpus = Observed.Ok<IReadOnlyList<GpuTemperatureReading>>(
             [
-                new(DiscreteLuid, "GPU", uint.MaxValue, null),
-                new(IntegratedLuid, "GPU", null, UnavailableReason.PermissionDenied),
+                new(DiscreteLuid, 0, "GPU", uint.MaxValue, null),
+                new(IntegratedLuid, 0, "GPU", null, UnavailableReason.PermissionDenied),
             ]),
             Zones = Observed.Ok<IReadOnlyList<ThermalZoneReading>>(
             [
                 new(@"\_TZ.TZ00", 3000, null),
                 new(@"\_TZ.TZ00#1", 3100, null),
                 new(@"C:\Windows\x", 3000, null),
+                new(@"\_TZ.THRM", null, null),
+                new(@"\_TZ.THRM", null, null),
             ]),
         };
         var d = SystemInventory.Temperatures(r);
         Assert.Equal(UnavailableReason.InvalidData, d.Sensors.Single(s => s.DeviceId == SystemStatus.GpuId(DiscreteLuid)).Reason);
         Assert.Equal(UnavailableReason.PermissionDenied, d.Sensors.Single(s => s.DeviceId == SystemStatus.GpuId(IntegratedLuid)).Reason);
         var zones = d.Sensors.Where(s => s.Source == TemperatureSource.PdhThermalZone).ToList();
-        Assert.Equal(3, zones.Count);
+        Assert.Equal(5, zones.Count);
         Assert.Equal(2, zones.Count(z => z.SensorId is not null));
+        // An instance name reported twice cannot be attributed: no id, no value, invalid.
+        Assert.Equal(2, zones.Count(z => z.SensorId is null && z.Reason == UnavailableReason.InvalidData));
         Assert.Equal(zones.Count(z => z.SensorId is not null), zones.Where(z => z.SensorId is not null).Select(z => z.SensorId).Distinct().Count());
-        var unnamed = zones.Single(z => z.SensorId is null);
+        var unnamed = zones.Single(z => z.SensorId is null && z.Reason is null);
         Assert.Null(unnamed.Label);
         Assert.Equal(26.85, unnamed.TemperatureC);
         Assert.DoesNotContain(@"Windows\\x", JsonSerializer.Serialize(d, ToolJson.Options), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Linked_adapters_report_one_sensor_per_physical_adapter()
+    {
+        var d = SystemInventory.Temperatures(DefaultTemperatures() with
+        {
+            Gpus = Observed.Ok<IReadOnlyList<GpuTemperatureReading>>([new(DiscreteLuid, 1, "GPU", 610, null), new(DiscreteLuid, 0, "GPU", 600, null)]),
+        });
+        var gpu = d.Sensors.Where(s => s.DeviceType == TemperatureDeviceType.Gpu).ToList();
+        Assert.Equal(["luid_0x00000000_0x0000c5a3:phys_0:temperature", "luid_0x00000000_0x0000c5a3:phys_1:temperature"], gpu.Select(s => s.SensorId));
+        Assert.Equal([60.0, 61.0], gpu.Select(s => s.TemperatureC!.Value));
+        Assert.All(gpu, s => Assert.Equal(SystemStatus.GpuId(DiscreteLuid), s.DeviceId));
     }
 
     [Fact]

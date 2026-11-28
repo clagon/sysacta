@@ -29,6 +29,14 @@ internal static class NativeMethods
         [FieldOffset(8)] public long LargeValue;
     }
 
+    /// <summary>PDH_FMT_COUNTERVALUE_ITEM_W: the instance name pointer followed by the value (layout per architecture).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PdhFmtCounterValueItem
+    {
+        public IntPtr Name;
+        public PdhFmtCounterValue Value;
+    }
+
     [DllImport("pdh.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     public static extern uint PdhOpenQueryW(string? dataSource, IntPtr userData, out IntPtr query);
@@ -95,6 +103,7 @@ internal static class NativeMethods
     public const uint DriveFixed = 3;
     public const uint SemFailCriticalErrors = 0x0001;
     public const uint SemNoOpenFileErrorBox = 0x8000;
+    public const int EAccessDenied = unchecked((int)0x80070005);
 
     [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
@@ -171,6 +180,9 @@ internal static class NativeMethods
 
     /// <summary>KMTQAITYPE_ADAPTERPERFDATA. The enum skips 14 (KMTQAITYPE_ADAPTERTYPE = 15), so this is 62.</summary>
     public const int KmtqaitypeAdapterPerfData = 62;
+
+    /// <summary>KMTQAITYPE_PHYSICALADAPTERCOUNT (D3DKMT_PHYSICAL_ADAPTER_COUNT: one UINT). 30 for the same reason.</summary>
+    public const int KmtqaitypePhysicalAdapterCount = 30;
     public const int StatusAccessDenied = unchecked((int)0xC0000022);
     public const int StatusInvalidParameter = unchecked((int)0xC000000D);
     public const int StatusNotSupported = unchecked((int)0xC00000BB);

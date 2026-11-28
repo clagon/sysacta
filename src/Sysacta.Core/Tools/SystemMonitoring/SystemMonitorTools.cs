@@ -17,7 +17,8 @@ public sealed class SystemGetStatusTool(ISystemMonitor monitor) : SysactaTool<Sy
     {
         var reading = monitor.SampleStatus(SystemStatus.SamplingInterval, cancellationToken);
         var data = SystemStatus.Interpret(reading, SystemStatus.SamplingInterval);
-        if (data.Cpu.Reason is not null && data.Memory.Reason is not null && data.UptimeSeconds is null && data.Gpus.Count == 0 && data.GpusReason is not null)
+        // Uptime alone (always readable) is not a usable status.
+        if (data.Cpu.UsagePercent is null && data.Memory.UsedBytes is null && data.Gpus.All(g => g.UtilizationPercent is null && g.DedicatedMemoryUsedBytes is null))
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "The system status could not be read.", retryable: true);
         }
