@@ -228,19 +228,21 @@ dotnet test tests/Sysacta.Windows.Tests -c Release --filter WindowsDisplaysTests
 
 ## Phase 2A アプリ・プロセス(一部確認)
 
+2026-11-28 の実アプリ確認は、利用者が対象(`ImagingDevices.exe`)と操作(登録・起動・通常終了・再起動・強制終了を各 1 回)を承認して行った。本番の部品(許可リスト・Windows アダプター・executor・MCP ホスト)を一時 DB で組み立てた使い捨ての検証プログラムから、実際の MCP HTTP で呼び出した(普段の Sysacta のデータ・画面は使っていない)。検証プログラムと一時 DB は削除済み。
+
 自動テストと CI が起動・終了するのは、テスト専用の無害なプロセス `HarmlessTarget`(テスト用フォルダーに複製したもの、本番配布に含めない)だけ。実在のアプリの起動・通常終了・強制終了は、利用者が**対象アプリと操作を個別に明示承認**した場合だけ行う。対象は保存データのない無害なアプリ(利用者が選ぶ)。管理者起動・権限変更・保護されたプロセスや危険なアプリの終了・データ損失を誘発する操作は試さない(拒否は読み取りとフェイクで確認する)。API の受理(accepted)と実際の状態を分けて記録する。
 
 | # | 項目 | 手順と期待結果 | 状況 |
 |---|---|---|---|
 | A0 | アダプター(実機) | 開発 PC(Windows 11、通常の利用者セッション)で `Sysacta.Windows.Tests` の `WindowsAppPlatformTests` を実行。起動・終了するのは複製した `HarmlessTarget` だけ | 確認 (2026-11-28): 9 件すべて成功(読み取り共有で保持したファイルからの起動、保持中の書き込み・名前変更・親フォルダー移動の拒否、内容変更・差し替えの検出、照合、古い生成時刻の拒否、同じハンドルでの強制終了と終了確認、シンボリックリンクの拒否、`CommandLineToArgvW` との往復、スタートメニュー検出(読み取りのみ)、自身の生成時刻) |
 | A1 | 検出 | 「アプリ」画面の「スタートメニューから検出」で候補が出ること。ショートカットを開かず・起動せず、引数付きショートカットは注記が出て引数を取り込まないこと。シェル・インストーラー等は登録不可と理由が出ること。候補を出しただけでは登録・許可されないこと | 未実施 |
-| A2 | 手動登録 | 「実行ファイルを選んで登録」で利用者が選んだ無害なアプリを登録(固定引数あり/なし)。登録直後は許可オフ。同じ exe の二重登録が拒否されること。ネットワークドライブ・ジャンクション経由・Windows フォルダーの exe が拒否されること | 未実施 |
-| A3 | 許可と一覧 | 許可をオンにすると `app_list_available` に出る(`ready`)。オフ・削除で即座に消えること。パス・引数・ハッシュが応答に出ないこと | 未実施 |
-| A4 | 起動(承認が必要) | 利用者の承認後、MCP から `app_launch` で 1 回起動。accepted と pid / start_time が返り、`app_list_running` の pid / start_time と一致すること。起動中にもう一度呼ぶと `already_running` で追加起動しないこと。固定引数がアプリに渡っていること | 未実施 |
+| A2 | 手動登録 | 「実行ファイルを選んで登録」で利用者が選んだ無害なアプリを登録(固定引数あり/なし)。登録直後は許可オフ。同じ exe の二重登録が拒否されること。ネットワークドライブ・ジャンクション経由・Windows フォルダーの exe が拒否されること | 一部確認: 画面と同じ検査・登録の経路(ハッシュあり)で登録できた(確認 (2026-11-28、利用者承認、対象は `C:\Program Files\Windows Photo Viewer\ImagingDevices.exe` だけ。一時 DB・ループバックの MCP HTTP 経由、通常権限))。画面からの操作・固定引数・拒否例の実機確認は未実施 |
+| A3 | 許可と一覧 | 許可をオンにすると `app_list_available` に出る(`ready`)。オフ・削除で即座に消えること。パス・引数・ハッシュが応答に出ないこと | 一部確認: `ready` / `launchable: true` で、パス・ハッシュは応答になかった(確認 (2026-11-28、利用者承認、対象は `C:\Program Files\Windows Photo Viewer\ImagingDevices.exe` だけ。一時 DB・ループバックの MCP HTTP 経由、通常権限))。オフ・削除の即時反映は自動テストのみ |
+| A4 | 起動(承認が必要) | 利用者の承認後、MCP から `app_launch` で 1 回起動。accepted と pid / start_time が返り、`app_list_running` の pid / start_time と一致すること。起動中にもう一度呼ぶと `already_running` で追加起動しないこと。固定引数がアプリに渡っていること | 確認: accepted(pid と 100 ns の start_time)、`app_list_running` と一致、2 回目は `already_running` / verified で追加起動なし(確認 (2026-11-28、利用者承認、対象は `C:\Program Files\Windows Photo Viewer\ImagingDevices.exe` だけ。一時 DB・ループバックの MCP HTTP 経由、通常権限))。固定引数は未確認(引数なしで登録) |
 | A5 | 実体の変更 | 登録した exe を更新・置換(利用者の承認したテスト用コピーで)すると、一覧が `target_changed`、起動が `TARGET_CHANGED` になり、再承認で許可がオフに戻ること | 未実施 |
-| A6 | 通常終了(承認が必要) | `app_close` を有効化し、ウィンドウ 1 つのアプリに 1 回送る。保存確認が出るアプリでは accepted / exited=false で、ダイアログが自動操作されないこと。終了した場合は verified / exited=true | 未実施 |
-| A7 | 強制終了(承認が必要) | `process_terminate` を有効化し、保存データのないアプリの pid / start_time で 1 回。verified または accepted。古い start_time では `TARGET_CHANGED`、終了済みでは `TARGET_NOT_FOUND`。子プロセス・他のインスタンスが残ること | 未実施 |
-| A8 | 保護 | `process_list_running` で Sysacta 自身(`self`)、起動元(`sysacta_parent`)、管理者として動くプロセス(`elevated`)などが `can_terminate=false` と理由付きで出ること(読み取りのみ。実際に終了を試さない) | 未実施 |
+| A6 | 通常終了(承認が必要) | `app_close` を有効化し、ウィンドウ 1 つのアプリに 1 回送る。保存確認が出るアプリでは accepted / exited=false で、ダイアログが自動操作されないこと。終了した場合は verified / exited=true | 一部確認: verified / exited=true、その後の一覧で 0 件(確認 (2026-11-28、利用者承認、対象は `C:\Program Files\Windows Photo Viewer\ImagingDevices.exe` だけ。一時 DB・ループバックの MCP HTTP 経由、通常権限))。保存確認が出るアプリは未確認 |
+| A7 | 強制終了(承認が必要) | `process_terminate` を有効化し、保存データのないアプリの pid / start_time で 1 回。verified または accepted。古い start_time では `TARGET_CHANGED`、終了済みでは `TARGET_NOT_FOUND`。子プロセス・他のインスタンスが残ること | 確認: 再起動したインスタンスに対し、100 ns ずらした start_time は `TARGET_CHANGED`(何もしない)、正しい組で verified / exited=true、直後の再実行は `TARGET_NOT_FOUND`(確認 (2026-11-28、利用者承認、対象は `C:\Program Files\Windows Photo Viewer\ImagingDevices.exe` だけ。一時 DB・ループバックの MCP HTTP 経由、通常権限))。監査は `pid` と `app_id|pid|start_time` だけ。子プロセス・他インスタンスの保持は未確認(該当なし) |
+| A8 | 保護 | `process_list_running` で Sysacta 自身(`self`)、起動元(`sysacta_parent`)、管理者として動くプロセス(`elevated`)などが `can_terminate=false` と理由付きで出ること(読み取りのみ。実際に終了を試さない) | 一部確認: 検証用プロセス自身が `self` / `can_terminate: false`(読み取りのみ、2026-11-28)。`sysacta_parent`・`elevated` の表示は未確認 |
 | A9 | 昇格中 | 利用者が自分で Sysacta を管理者として起動した場合、`app_launch` が tools/list に出ず、画面に警告が出ること(任意。環境がなければ未検証) | 未実施 |
 | A10 | 画面 | ライト・ダーク・DPI、一覧のスクロール、再承認・削除の確認ダイアログ、エラー表示にパス以外の内部情報が出ないこと | 未実施(スクリーンショットは CI で生成) |
 | A11 | 既存 DB | 既存環境への更新で 6 ツールが無効、既存クライアントに付与されないこと(自動テストで確認済み) | 未実施(実機) |
