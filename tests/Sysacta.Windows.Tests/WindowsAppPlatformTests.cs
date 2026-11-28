@@ -186,7 +186,8 @@ public sealed class WindowsAppPlatformTests : IDisposable
     public void The_harmless_target_is_launched_found_and_terminated_through_its_own_handle()
     {
         RequireWindows();
-        var app = Approve(CopyTarget(), "a b", "", "c\"d");
+        string[] fixedArgs = ["a b", "", "c\"d", @"tail\", "日本語", "&|<>^%"];
+        var app = Approve(CopyTarget(), fixedArgs);
         LaunchResult result;
         using (var prepared = _os.PrepareLaunch(app, Ct))
         {
@@ -195,6 +196,16 @@ public sealed class WindowsAppPlatformTests : IDisposable
 
         Assert.Equal(LaunchStatus.Started, result.Status);
         _launched.Add(result.Pid!.Value);
+
+        // The approved fixed arguments arrive exactly as approved (through CreateProcessW and the C runtime's parsing).
+        var echo = Path.Combine(Path.GetDirectoryName(app.Path)!, "args.txt");
+        for (var i = 0; i < 100 && !File.Exists(echo); i++)
+        {
+            Thread.Sleep(50);
+        }
+
+        Thread.Sleep(200);
+        Assert.Equal(fixedArgs, File.ReadAllLines(echo));
         var key = AppMatchKey.For(app);
         var scan = _os.ScanSession([key], Ct);
         var facts = Assert.Single(scan.Processes, p => p.AppId == app.Id);

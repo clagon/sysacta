@@ -181,6 +181,7 @@
 
 - 2026-11-28、開発 PC(Windows 11): `WindowsAppPlatformTests` 9 件が成功(manual-tests A0)。起動・終了したのはテスト用に複製した `HarmlessTarget` だけで、実在のアプリ・既存のプロセスには読み取り(スタートメニューの検出、セッションのプロセス列挙)しか行っていない。
 - 2026-11-28、利用者の承認のもと `C:\Program Files\Windows Photo Viewer\ImagingDevices.exe` だけを対象に、本番の部品を一時 DB で組み立てた検証プログラムから MCP HTTP で確認した(通常権限): 登録(ハッシュあり)→ `ready` → 起動 accepted(pid / start_time が一覧と一致)→ 2 回目は `already_running` → `app_close` verified / exited → 再起動 → 古い start_time で `TARGET_CHANGED` → 強制終了 verified / exited → 再実行で `TARGET_NOT_FOUND` → 自身は `self`。監査は `target` と `pid` だけ。`failed_count` は 0 だった。検証プログラムと一時 DB は削除済み。
+- 同日、テスト専用 `HarmlessTarget` の複製で A5(書き換え → `target_changed` → `TARGET_CHANGED` → 再承認で許可オフ → 許可して起動)と、固定引数がそのまま届くこと(Windows テストにも追加)を MCP HTTP 経由で確認した。
 - 残りの実在のアプリでの確認は [manual-tests.md](manual-tests.md) の A1〜A11 に従い、利用者が対象アプリと操作を個別に承認した場合だけ行う。
 
 ## 仕様との差分
