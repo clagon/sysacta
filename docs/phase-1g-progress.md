@@ -8,7 +8,7 @@
 |---|---|
 | 実装 | 完了 |
 | Linux/WSL の Release build / test | 成功(警告・エラー 0)。Windows.Tests の Windows 専用テストはスキップ、App.Tests は対象外 |
-| Windows CI(build / test / smoke) | PR で確認(下の「テスト」) |
+| Windows CI(build / test / smoke) | 成功(2026-11-28、PR #19) |
 | 実通知の表示 | **未実施**(利用者の承認なしに送信していない) |
 | 実際のスタートメニューへの登録 | **未実施**(自動テスト・CI は登録しない) |
 | 配布形式別の実機確認 | **未実施** |
@@ -140,6 +140,8 @@
 | smoke | 起動前に Sysacta のものではない `Sysacta.lnk` を置き、起動・再起動が成功してファイルが変わらないことを確認(登録はしない) |
 
 結果(Linux/WSL、2026-11-28): `dotnet build Sysacta.sln -c Release` 警告・エラー 0。`dotnet test` は Core 740 / Mcp 127 / Infrastructure 51 成功、Windows.Tests 68 成功・38 スキップ。`dotnet publish -r win-x64 --self-contained` は成功(起動は未確認)。
+
+結果(Windows CI、2026-11-28、[run 46131083215](https://github.com/clagon/sysacta/actions/runs/46131083215)): Release build / test / smoke 成功。Core 740 / Mcp 127 / Infrastructure 51 / App 32 成功、Windows.Tests 95 成功・11 スキップ。`WindowsDesktopNotificationsTests`(ショートカットの作成・付け替え・非上書き、XML DOM のペイロード)と App.Tests の動作確認ボタンのテストは実行されて成功。smoke は他者の `Sysacta.lnk` が変わらないことを確認した。いずれも通知の表示と実際の登録は含まない。
 
 ## 配布形式別の対応状況
 
