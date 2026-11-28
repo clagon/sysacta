@@ -1,6 +1,13 @@
 # Phase 1D 進捗
 
-## 技術調査（途中）
+## 現在の結論（2026-11-28）
+
+- 8 ツールと Windows GSMTC アダプターを実装。セッション ID は保持中の COM `IUnknown` identity に結び付け、一覧変更後も再照合できた存続セッションは同じ ID を保ち、一覧から消えた実体は ID を破棄する。Windows 実機で読み取り専用の列挙・状態取得・再列挙を確認し、一覧変更世代を合成した ID 維持テストを実機で実行した。GetCurrentSession と一覧項目の COM identity が一致しない環境では省略対象の照合を拒否する。
+- 状態変更の自動検証、WinRT 呼び出し開始境界、`verified` / `accepted` / `unknown`、シークの範囲とメディア再検証は Core フェイク・Windows テストで確認。実際の再生・停止・曲送り・シークは利用者の承認がないため一切実行していない。従って各アプリでの実制御は未検証。
+- 直近のコードを含む Linux Release ビルドは警告ゼロ、全体テストは Core 494、Infrastructure 50、MCP 106、Windows 40 件成功（Windows 固有 20 件スキップ）。Windows 11 実機の `WindowsMediaSessionsTests` は 18 件すべて成功。PR #13 の最新 HEAD CI/レビューは下記の更新欄に記録する。
+- 既知の制約: 現在セッションと一覧が別 COM identity の時は省略指定を使えない。`MediaPropertiesChanged` 通知の遅延・欠落や同一タイトル/アーティストのメディア切替は完全には識別できない。実セッション切替・終了・再起動後の寿命、アプリ別実制御、配布物は未確認。
+
+## 技術調査
 
 - [GSMTC マネージャー](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssessionmanager) はシステムに公開されたセッションの列挙、現在のセッション取得、変更イベントを提供する。現在のセッションは Windows が利用者の操作対象として最も可能性が高いと判断したものであり、列挙順では代用できない。
 - [セッション API](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssession) の公開プロパティは `SourceAppUserModelId` であり、アプリの ID から個々のセッションの一意性は保証できない。同 API のセッション型は Agile と文書化されている。Windows 10 1809 以降で導入され、ドキュメントには `globalMediaControl` capability が記載されている。非パッケージアプリでの実際の利用可否は未検証。
@@ -9,7 +16,7 @@
 - [シーク API](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssession.trychangeplaybackpositionasync) の単位は 100 ns ticks、戻り値は成功を示す bool。アプリでの反映を証明する読み戻しとは区別する。[タイムライン](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssessiontimelineproperties) のメディア範囲とシーク可能範囲は別に扱う。
 - [操作可否](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssessionplaybackcontrols) はセッションが現在公開しているフラグで判断する。
 
-## 現状と未検証事項
+## 初期実装時点の未検証事項（2026-11-26、後続の進捗記録で一部更新）
 
 - Core に 8 ツールの暫定契約と共通の変更フローを追加した。Windows アダプターを追加して本番登録したが、JSON 契約の最終確認・同一性の実機検証・アプリ別の対応状況は未完了。実メディア操作は行っていない。
 - Core のフェイクを使った対象テスト 18 件で、入力拒否、現在セッション切替、明示 ID の固定、no-op、操作非対応、曲送りの accepted、API false・開始後の例外の unknown、シーク範囲と単位変換、準備中の権限剥奪、キャンセル後の排他保持、監査データの最小化を確認した。これは実機や COM 同一性の検証ではない。
@@ -91,3 +98,4 @@
 - 完了監査で、`SessionsChanged` 後の再照合前に全セッション ID を破棄していたため、残存セッションの ID が一覧変更だけで変わる仕様差分を確認した。世代変化後も保持中の `IUnknown` 同一性を使って一覧を再照合し、存在が続くセッションは既存 ID を維持し、消失した実体だけを購読解除・解放するよう修正した。リスト変更世代を Windows 実機テストで合成し、実際のメディア状態を変えずに残存 ID の維持を確認するテストを追加。次のビルド・テスト・Windows CI とレビューで検証する。COM 実体の保持中に同じポインター値が別実体へ再利用されない性質を利用するが、イベント通知の遅延・欠落時には列挙時の実在確認を必須とする。
 - 上記の修正後に Linux Release ビルドは警告・エラーゼロ、全体テストは Core 493、Infrastructure 50、MCP 106、Windows 40 件成功、Windows 固有 20 件スキップ。Windows 11 実機の .NET 10.0.15 で `WindowsMediaSessionsTests` 18 件すべて成功（スキップなし）。一覧変更後の ID 維持はイベント世代を合成して確認し、実セッションの列挙・ID・状態読み取りも実施。実メディア状態の変更は行っていない。
 - `2612abe` のレビュー指摘を受け、二度目のメタデータ取得後から副作用開始前までの曲切替検出を強化した。最終準備を非同期化して同じセッションからメタデータを再取得し、可能な場合は fingerprint、内部変更世代、再生状態、タイムライン、シーク範囲を確認してから書き込みデリゲートを返す。WinRT の読み取り準備完了後にキャンセルを再確認し、`BeginSideEffect` 後に初めて Try*Async を呼ぶ順序を維持する。Core フェイクで最終準備中に fingerprint が変われば OS 呼び出しゼロを確認する。イベント遅延・欠落や同一メタデータの別メディアは完全検出できない制約が残る。Release 全体テスト・Windows CI・再レビューで確認する。
+- `8382696` は Windows CI の Release ビルド、全テスト、アプリのスモークテストに成功。Codex の該当指摘は `PrepareAsync` での最終メタデータ読み戻しと Core テスト追加で対応済み。レビュー依頼の最終結果を追記する。
