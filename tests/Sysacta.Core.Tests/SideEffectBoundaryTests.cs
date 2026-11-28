@@ -101,6 +101,27 @@ public class SideEffectBoundaryTests
     }
 
     [Fact]
+    public async Task Cancellation_while_the_start_gate_is_held_abandons_the_write()
+    {
+        var (h, tool, caller) = Setup();
+        using var reachedStart = new ManualResetEventSlim();
+        using var cancel = new CancellationTokenSource();
+        using var held = h.Gate.BeginUpdate();
+        tool.BeforeStart = reachedStart.Set;
+        var call = h.Executor.ExecuteAsync(caller, tool.Name, TestJson.Args(new { value = 1 }), cancel.Token);
+        reachedStart.Wait(Ct);
+        cancel.Cancel();
+        held.Dispose();
+        var result = await call;
+        Assert.Equal(ToolStatus.Error, result.Status);
+        Assert.Equal(ErrorCodes.Cancelled, result.Error!.Code);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (h.Executor.InFlight > 0 && DateTime.UtcNow < deadline) await Task.Delay(10, Ct);
+        Assert.Equal(0, tool.Writes);
+        Assert.Equal(0, h.Executor.InFlight);
+    }
+
+    [Fact]
     public async Task A_long_native_call_after_the_start_point_does_not_hold_up_permission_changes()
     {
         var (h, tool, caller) = Setup();

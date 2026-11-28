@@ -25,8 +25,9 @@ jobs:
         run: dotnet build Sysacta.sln -c Release --no-restore
       # Hardware tests that change device state are opt-in (SYSACTA_HARDWARE_TESTS) and never run in CI.
       # Tests needing an audio device skip themselves on runners without one.
+      # Keep project test runners from competing for the small hosted runner; each suite retains its own concurrency tests.
       - name: Test
-        run: dotnet test Sysacta.sln -c Release --no-build --logger "trx" --results-directory TestResults
+        run: dotnet test Sysacta.sln -c Release --no-build -m:1 --logger "trx" --results-directory TestResults
         env:
           # App.Tests renders every page to PNG for layout review (uploaded with the test results).
           SYSACTA_SCREENSHOT_DIR: ${{ github.workspace }}/TestResults/screenshots

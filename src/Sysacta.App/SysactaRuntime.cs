@@ -9,6 +9,7 @@ using Sysacta.Infrastructure;
 using Sysacta.Mcp;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Display;
+using Sysacta.Windows.Media;
 
 namespace Sysacta.App;
 
@@ -41,7 +42,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
-        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery));
+        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
         Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate);
         Host = new McpServerHost(Executor, new TokenAuthenticator(Access, _time), Audit, _time, Version);
@@ -59,6 +60,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
     public IDisplays Displays { get; } = new WindowsDisplays();
     /// <summary>The latest display mode change, restorable from the tray menu and the device page (app lifetime only).</summary>
     public DisplayModeRecovery DisplayModeRecovery { get; } = new();
+    private WindowsMediaSessions MediaSessions { get; } = new();
     public AuditLog Audit { get; }
     public SettingsStore SettingsStore { get; }
     public ToolRegistry Registry { get; }
@@ -175,5 +177,26 @@ public sealed class SysactaRuntime : IAsyncDisposable
         return null;
     }
 
-    public async ValueTask DisposeAsync() => await Host.DisposeAsync().ConfigureAwait(false);
+    public async ValueTask DisposeAsync()
+    {
+        await Host.DisposeAsync().ConfigureAwait(false);
+        if (Executor.InFlight == 0)
+        {
+            await Task.Run(MediaSessions.Dispose).ConfigureAwait(false);
+        }
+        else
+        {
+            // Timed-out native calls retain their target until they really complete.
+            _ = DisposeMediaWhenIdleAsync();
+        }
+    }
+
+    private async Task DisposeMediaWhenIdleAsync()
+    {
+        while (Executor.InFlight != 0)
+        {
+            await Task.Delay(250).ConfigureAwait(false);
+        }
+        MediaSessions.Dispose();
+    }
 }

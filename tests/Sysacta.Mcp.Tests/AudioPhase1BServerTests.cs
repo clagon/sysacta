@@ -138,6 +138,7 @@ public class AudioPhase1BServerTests
         using var json = new MemoryStream();
         AuditLog.ExportJson(events, json);
         var contents = new List<byte[]> { Encoding.UTF8.GetBytes(csv.ToString()), json.ToArray() };
+        using var liveDatabase = f.Database.Open(); // Keep SQLite from removing WAL during inspection.
         foreach (var file in Directory.GetFiles(Path.GetDirectoryName(f.Database.Path)!))
         {
             using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

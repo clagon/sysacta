@@ -146,6 +146,14 @@ public abstract class SysactaTool<TArgs, TData> : SysactaTool
     protected static void ReportProgress(ToolExecution execution, TData data) =>
         execution.SetProgress(JsonSerializer.SerializeToNode(data, ToolJson.Options));
 
+    /// <summary>
+    /// Records confirmed OS acceptance so a readback timeout can return accepted without releasing locks early.
+    /// Only call after the final write has started and its acceptance is known; no further writes are permitted.
+    /// </summary>
+    protected static void ReportAccepted(ToolExecution execution, TData data) =>
+        execution.SetAcceptedProgress(JsonSerializer.SerializeToNode(data, ToolJson.Options)
+            ?? throw new InvalidOperationException("Accepted progress must not be null."));
+
     internal sealed override async Task<ToolRun> RunAsync(object arguments, ToolExecution execution, CancellationToken cancellationToken)
     {
         var outcome = await ExecuteAsync((TArgs)arguments, execution, cancellationToken).ConfigureAwait(false);

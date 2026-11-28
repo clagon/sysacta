@@ -188,6 +188,7 @@ public class DisplaySwitchingServerTests
         using var csv = new StringWriter();
         AuditLog.ExportCsv(events, csv);
         Assert.DoesNotContain(Secret, csv.ToString(), StringComparison.Ordinal);
+        using var liveDatabase = f.Database.Open(); // Keep SQLite from removing WAL during inspection.
         foreach (var file in Directory.GetFiles(Path.GetDirectoryName(f.Database.Path)!))
         {
             using var copy = new MemoryStream();

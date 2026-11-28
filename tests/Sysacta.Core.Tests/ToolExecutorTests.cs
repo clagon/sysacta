@@ -257,6 +257,7 @@ public class ToolExecutorTests
         tool.Gate("a").Release();
         await first;
         Assert.Equal(1, tool.Started);
+        await WaitUntil(() => h.Executor.InFlight == 0);
         Assert.Equal(0, h.Executor.InFlight);
     }
 

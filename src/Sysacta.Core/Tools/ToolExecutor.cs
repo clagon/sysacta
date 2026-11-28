@@ -170,6 +170,9 @@ public sealed partial class ToolExecutor
                 var d = _policy.Evaluate(caller, tool);
                 return d == AccessDecision.Allowed ? null : AccessPolicy.ToResult(d, tool);
             }, _gate);
+            // Cancellation competes atomically with the start point, even before the waiting caller resumes.
+            // The registration lives with the linked token source until the actual work has finished.
+            _ = token.UnsafeRegister(static state => { _ = ((ToolExecution)state!).TryAbandon(); }, execution);
             var work = Task.Run(() => tool.RunAsync(args, execution, token), CancellationToken.None);
             try
             {
@@ -249,6 +252,10 @@ public sealed partial class ToolExecutor
                 }
 
                 execution.Detach();
+                if (execution.AcceptedProgress is { } accepted)
+                {
+                    return call.Finish(AuditOutcome.Success, new ToolResult { Status = ToolStatus.Success, Verification = Verification.Accepted, Data = accepted });
+                }
                 return call.Finish(AuditOutcome.Unknown, ToolResult.Unknown(code, message + " Whether the change was applied is unknown.") with { Data = execution.Progress });
             }
             catch (Exception)
