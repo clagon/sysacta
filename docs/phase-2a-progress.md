@@ -11,7 +11,8 @@
 | Windows CI(build / test / smoke) | 成功(2026-11-28、PR #21)。初回は Windows テストの前提誤り 1 件(.NET の「exe」アセンブリを DLL として扱った)で失敗し、テストを修正 |
 | 専用テストプロセスによる起動・検出・強制終了 | Windows CI で成功(テスト用の `HarmlessTarget` だけ): 読み取り共有のみで保持したファイルからの `CreateProcessW`、保持中のファイル書き込み・名前変更・親フォルダー移動の拒否、内容変更・差し替えの検出、`FileVersionInfo` の読み取り、照合、古い生成時刻の拒否、同じハンドルでの強制終了と終了確認、シンボリックリンクの拒否、`CommandLineToArgvW` との往復 |
 | 実機でのアダプター確認(専用テストプロセスのみ) | 成功(2026-11-28、開発 PC。manual-tests A0) |
-| 実在のアプリの起動・通常終了・強制終了 | 確認(2026-11-28、利用者承認、`ImagingDevices.exe` で各 1 回、MCP HTTP 経由)。管理画面からの操作、固定引数、保存確認の出るアプリ、外部 MCP クライアントは未確認 |
+| 実在のアプリの起動・通常終了・強制終了 | 確認(2026-11-28、利用者承認、`ImagingDevices.exe` で各 1 回、MCP HTTP 経由)。固定引数は専用テストプロセスで確認。保存確認の出るアプリは未確認 |
+| 管理画面「アプリ」・外部 MCP クライアント・既存 DB の移行 | 確認(2026-11-28、利用者の操作と報告、manual-tests A1・A2・A10・A11・A12) |
 | MSIX/UWP・複数ユーザー・管理者起動 | 未検証(環境なし。パッケージアプリは対象外) |
 
 ## 技術調査と API の採否(2026-11-28)
@@ -182,6 +183,8 @@
 - 2026-11-28、開発 PC(Windows 11): `WindowsAppPlatformTests` 9 件が成功(manual-tests A0)。起動・終了したのはテスト用に複製した `HarmlessTarget` だけで、実在のアプリ・既存のプロセスには読み取り(スタートメニューの検出、セッションのプロセス列挙)しか行っていない。
 - 2026-11-28、利用者の承認のもと `C:\Program Files\Windows Photo Viewer\ImagingDevices.exe` だけを対象に、本番の部品を一時 DB で組み立てた検証プログラムから MCP HTTP で確認した(通常権限): 登録(ハッシュあり)→ `ready` → 起動 accepted(pid / start_time が一覧と一致)→ 2 回目は `already_running` → `app_close` verified / exited → 再起動 → 古い start_time で `TARGET_CHANGED` → 強制終了 verified / exited → 再実行で `TARGET_NOT_FOUND` → 自身は `self`。監査は `target` と `pid` だけ。`failed_count` は 0 だった。検証プログラムと一時 DB は削除済み。
 - 同日、テスト専用 `HarmlessTarget` の複製で A5(書き換え → `target_changed` → `TARGET_CHANGED` → 再承認で許可オフ → 許可して起動)と、固定引数がそのまま届くこと(Windows テストにも追加)を MCP HTTP 経由で確認した。
+- 同日、利用者が自己完結版を通常権限で起動し、管理画面(検出・登録・許可・再承認・テーマ・スクロール)と、自分の MCP クライアントからの `app_list_available` → `app_launch` → `app_close` を確認して「すべて問題なし」と報告した。DB の写しの読み取りで、schema v3 への移行、`sysacta.db.v2.bak` の作成、6 ツールが無効で追加され利用者が有効化・付与した 3 ツール以外は無効・未付与のままであること、監査に MCP 経由の成功が残ったことを確認した。
+- 未確認: 管理者として起動した場合(A9、任意)、複数ユーザー(環境なし)、保存確認の出るアプリの通常終了、DPI の変更。
 - 残りの実在のアプリでの確認は [manual-tests.md](manual-tests.md) の A1〜A11 に従い、利用者が対象アプリと操作を個別に承認した場合だけ行う。
 
 ## 仕様との差分
