@@ -89,6 +89,42 @@ public class ProcessToolTests
     }
 
     [Fact]
+    public async Task Close_refuses_a_truncated_process_list()
+    {
+        var (s, app) = WithApp();
+        s.Os.Run(app, 10);
+        s.Os.Truncated = true;
+        AssertError(await s.Close(app), ErrorCodes.OsApiError);
+        Assert.Equal(0, s.Os.CloseRequests);
+    }
+
+    [Theory]
+    [InlineData("second_instance", ErrorCodes.AmbiguousTarget)]
+    [InlineData("replaced", ErrorCodes.TargetChanged)]
+    [InlineData("exited", ErrorCodes.TargetNotFound)]
+    [InlineData("uncertain", ErrorCodes.OsApiError)]
+    public async Task Close_re_verifies_the_single_instance_after_waiting_for_the_locks(string change, string code)
+    {
+        var (s, app) = WithApp();
+        s.Os.Run(app, 10);
+        // Runs while the pending audit record is written: after resolution and locking, before execution.
+        s.H.Audit.OnWrite = e =>
+        {
+            if (e.Outcome != Sysacta.Core.Auditing.AuditOutcome.Pending) return;
+            switch (change)
+            {
+                case "second_instance": s.Os.Run(app, 11); break;
+                case "replaced": s.Os.Processes.TryRemove(10, out _); s.Os.Run(app, 12); break;
+                case "exited": s.Os.Processes.TryRemove(10, out _); break;
+                case "uncertain": s.Os.Uncertain.Add(app.Id); break;
+            }
+        };
+        var r = await s.Close(app);
+        AssertError(r, code);
+        Assert.Equal((0, 0), (s.Os.Opened, s.Os.CloseRequests));
+    }
+
+    [Fact]
     public async Task Close_reports_a_vanished_window_as_not_sent()
     {
         var (s, app) = WithApp();

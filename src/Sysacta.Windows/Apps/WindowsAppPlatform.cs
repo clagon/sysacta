@@ -62,7 +62,9 @@ public sealed class WindowsAppPlatform : IAppPlatform
                 throw Changed();
             }
 
-            return new PreparedLaunch(opened, app.Path, app.FixedArgs);
+            // Everything that can fail without side effects is done here, before the start point.
+            var expectedImage = NtPath(opened.File) ?? throw new ToolFailureException(ErrorCodes.OsApiError, "The executable could not be identified. Nothing was launched.", retryable: true);
+            return new PreparedLaunch(opened, app.Path, expectedImage, (ExecutablePolicy.BuildCommandLine(app.Path, app.FixedArgs) + "\0").ToCharArray());
         }
         catch
         {
@@ -292,6 +294,12 @@ public sealed class WindowsAppPlatform : IAppPlatform
         var uncertain = new HashSet<string>(StringComparer.Ordinal);
         var failed = 0;
         var (entries, truncated) = Snapshot();
+        if (truncated)
+        {
+            // Processes beyond the limit were not inspected: none of the apps can be known to be (not) running.
+            uncertain.UnionWith(apps.Select(a => a.AppId));
+        }
+
         foreach (var entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -392,7 +400,7 @@ public sealed class WindowsAppPlatform : IAppPlatform
         string? appId = null;
         if (candidates.Count > 0)
         {
-            var image = ImageIdentity(handle);
+            var image = ImageIdentity(handle, creation);
             imageUnknown = image is null;
             appId = image is null ? null : candidates.FirstOrDefault(a => a.Identity.SameFile(image))?.AppId;
         }
@@ -451,20 +459,27 @@ public sealed class WindowsAppPlatform : IAppPlatform
     }
 
     /// <summary>
-    /// Volume + file id of the image file named by the process: its NT path (no drive letter mapping), opened without
-    /// following reparse points (a link placed at that path is "unknown", never a match). Attribute-only open.
+    /// Volume + file id of the file at the image path the process was created from, only when that file provably is the
+    /// loaded image; null ("unknown") otherwise. Windows offers no documented way to identify the mapped image file from a
+    /// limited-rights process handle, and the image path keeps its creation-time name: a running exe can be renamed and
+    /// another file put at that path (an ordinary in-place update does exactly that). So the file now at the path counts
+    /// only when its ChangeTime is not later than the process creation: renaming, moving, linking or writing a file updates
+    /// its ChangeTime, so a file unchanged since before the process started was already that path's file when the image
+    /// was loaded. The NT path is used (no drive letter mapping) and opened without following reparse points.
     /// </summary>
-    private static ExecutableIdentity? ImageIdentity(SafeProcessHandle handle) =>
+    private static ExecutableIdentity? ImageIdentity(SafeProcessHandle handle, long creation) =>
         ImagePath(handle, native: true) is { } path && path.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase)
-            ? FileKey(@"\\?\GLOBALROOT" + path, noReparse: true)
+            ? FileKey(@"\\?\GLOBALROOT" + path, noReparse: true, unchangedSince: creation)
             : null;
 
     /// <summary>Volume + file id of a file by path (attribute-only open: no sharing conflict). Size and hash are placeholders.</summary>
-    private static ExecutableIdentity? FileKey(string path, bool noReparse = false)
+    private static ExecutableIdentity? FileKey(string path, bool noReparse = false, long? unchangedSince = null)
     {
         using var file = CreateFileW(path, FileReadAttributes, FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero, OpenExisting, noReparse ? FileFlagOpenReparsePoint : 0, IntPtr.Zero);
         return !file.IsInvalid
             && (!noReparse || (GetFileInformationByHandle(file, out var info) && (info.FileAttributes & (FileAttributeReparsePoint | FileAttributeDirectory)) == 0))
+            && (unchangedSince is not { } since
+                || (GetFileBasicInformationByHandleEx(file, FileBasicInfoClass, out var basic, (uint)Marshal.SizeOf<FileBasicInfo>()) && basic.ChangeTime > 0 && basic.ChangeTime <= since))
             && GetFileInformationByHandleEx(file, FileIdInfoClass, out var id, (uint)Marshal.SizeOf<FileIdInfo>())
             ? new ExecutableIdentity(id.VolumeSerialNumber.ToString("x16"), FileIdHex(id), 1, "")
             : null;
@@ -488,6 +503,12 @@ public sealed class WindowsAppPlatform : IAppPlatform
             }
 
             entries.Add((entry.ProcessId, entry.ParentProcessId, entry.ExeFile ?? ""));
+        }
+
+        // Only ERROR_NO_MORE_FILES is the normal end; any other failure means the list is incomplete.
+        if (Marshal.GetLastWin32Error() != ErrorNoMoreFiles)
+        {
+            throw new ToolFailureException(ErrorCodes.OsApiError, "The process list could not be read completely.", retryable: true);
         }
 
         return (entries, false);
@@ -581,11 +602,13 @@ public sealed class WindowsAppPlatform : IAppPlatform
         return length == 0 || length >= buffer.Length ? null : new string(buffer, 0, (int)length);
     }
 
-    private sealed class PreparedLaunch(OpenedExecutable opened, string path, IReadOnlyList<string> args) : IPreparedLaunch
+    private sealed class PreparedLaunch(OpenedExecutable opened, string path, string expectedImage, char[] commandLine) : IPreparedLaunch
     {
+        /// <summary>Upper bound for confirming that a suspended process this call created was removed.</summary>
+        private const uint ReclaimWaitMs = 2000;
         private int _started;
 
-        public LaunchResult Start()
+        public LaunchResult Start(Func<ToolError?> beforeResume)
         {
             if (Interlocked.Exchange(ref _started, 1) != 0)
             {
@@ -594,8 +617,6 @@ public sealed class WindowsAppPlatform : IAppPlatform
 
             // lpApplicationName is the verified path: the program never comes from parsing the command line or PATH.
             // No inherited handles, no std handles, Sysacta's own environment, the app's folder as working directory.
-            var expectedImage = NtPath(opened.File) ?? throw new ToolFailureException(ErrorCodes.OsApiError, "The executable could not be identified. Nothing was launched.", retryable: true);
-            var commandLine = (ExecutablePolicy.BuildCommandLine(path, args) + "\0").ToCharArray();
             var startup = new StartupInfoW { Cb = Marshal.SizeOf<StartupInfoW>() };
             if (!CreateProcessW(path, commandLine, IntPtr.Zero, IntPtr.Zero, false, CreateSuspended | CreateDefaultErrorMode,
                 IntPtr.Zero, Path.GetDirectoryName(path)!, ref startup, out var info))
@@ -603,7 +624,10 @@ public sealed class WindowsAppPlatform : IAppPlatform
                 return new LaunchResult(Marshal.GetLastWin32Error() == ErrorElevationRequired ? LaunchStatus.ElevationRequired : LaunchStatus.Failed);
             }
 
+            var pid = (int)info.ProcessId;
             using var process = new SafeProcessHandle(info.Process, ownsHandle: true);
+            var resumed = false;
+            var reclaimed = false;
             try
             {
                 // Defense in depth: before any of its code runs, the suspended process's image must be the held file, compared
@@ -611,23 +635,41 @@ public sealed class WindowsAppPlatform : IAppPlatform
                 if (!string.Equals(ImagePath(process, native: true), expectedImage, StringComparison.OrdinalIgnoreCase)
                     || !GetProcessTimes(process, out var creation, out _, out _, out _))
                 {
-                    _ = TerminateProcess(process, TerminatedExitCode);
-                    return new LaunchResult(LaunchStatus.ImageMismatch);
+                    reclaimed = Reclaim(process);
+                    return new LaunchResult(LaunchStatus.ImageMismatch, pid, Reclaimed: reclaimed);
+                }
+
+                // The last check before the process may run: cancellation, executor detachment, authorization, approval.
+                if (beforeResume() is { } refusal)
+                {
+                    reclaimed = Reclaim(process);
+                    return new LaunchResult(LaunchStatus.Withdrawn, pid, creation, reclaimed, refusal);
                 }
 
                 if (ResumeThread(info.Thread) == uint.MaxValue)
                 {
-                    _ = TerminateProcess(process, TerminatedExitCode);
-                    return new LaunchResult(LaunchStatus.Failed);
+                    reclaimed = Reclaim(process);
+                    return new LaunchResult(LaunchStatus.ResumeFailed, pid, creation, reclaimed);
                 }
 
-                return new LaunchResult(LaunchStatus.Started, (int)info.ProcessId, creation);
+                resumed = true;
+                return new LaunchResult(LaunchStatus.Started, pid, creation);
             }
             finally
             {
+                if (!resumed && !reclaimed)
+                {
+                    // An exception before the resume: never leave a suspended process this call created behind.
+                    _ = Reclaim(process);
+                }
+
                 _ = CloseHandle(info.Thread);
             }
         }
+
+        /// <summary>Terminates the never-resumed process this call created, through its own handle; true when its exit is confirmed.</summary>
+        private static bool Reclaim(SafeProcessHandle process) =>
+            TerminateProcess(process, TerminatedExitCode) && WaitForSingleObject(process, ReclaimWaitMs) == WaitObject0;
 
         public void Dispose() => opened.Dispose();
     }

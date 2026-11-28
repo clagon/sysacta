@@ -170,7 +170,7 @@ public sealed class AppLaunchTool(IAppRegistry registry, IAppPlatform platform) 
         }
 
         var scan = platform.ScanSession([AppMatchKey.For(app)], cancellationToken);
-        if (scan.UncertainAppIds.Contains(app.Id))
+        if (scan.Truncated || scan.UncertainAppIds.Contains(app.Id))
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "Could not determine whether the app is already running. Nothing was launched.", retryable: true);
         }
@@ -183,15 +183,25 @@ public sealed class AppLaunchTool(IAppRegistry registry, IAppPlatform platform) 
         using var prepared = platform.PrepareLaunch(app, cancellationToken);
         ReportProgress(execution, new AppLaunchData(app.Id, false, null, null, null));
         cancellationToken.ThrowIfCancellationRequested();
-        execution.BeginSideEffect(AppTargets.StillCurrent(registry, app));
-        var result = prepared.Start();
+        var stillCurrent = AppTargets.StillCurrent(registry, app);
+        execution.BeginSideEffect(stillCurrent);
+        // The process is created suspended; it runs only if the call is still not cancelled, detached or refused then.
+        var result = prepared.Start(() => execution.BeginNextSideEffect(stillCurrent, cancellationToken));
         var notStarted = new AppLaunchData(app.Id, false, false, null, null);
+        if (result.Status is (LaunchStatus.ImageMismatch or LaunchStatus.Withdrawn or LaunchStatus.ResumeFailed) && result.Reclaimed != true)
+        {
+            return Task.FromResult(ToolOutcome.Unknown(new AppLaunchData(app.Id, false, null, result.Pid, null), ErrorCodes.OsApiError,
+                "A suspended process was created but could not be confirmed removed. Whether it runs is unknown; do not retry."));
+        }
+
         return Task.FromResult(result.Status switch
         {
             LaunchStatus.Started => new ToolOutcome<AppLaunchData>(
                 new AppLaunchData(app.Id, false, true, result.Pid, result.CreationTime is { } c ? ProcessStartTime.ToText(c) : null), Verification.Accepted),
             LaunchStatus.ElevationRequired => ToolOutcome.Error(notStarted, ErrorCodes.NotSupported, "The app requires administrator rights and Sysacta never elevates. Nothing was started."),
-            LaunchStatus.ImageMismatch => ToolOutcome.Error(notStarted, ErrorCodes.TargetChanged, "The created process did not run the approved executable and was terminated before it started. Nothing ran."),
+            LaunchStatus.ImageMismatch => ToolOutcome.Error(notStarted, ErrorCodes.TargetChanged, "The created process did not run the approved executable; it was removed before it ran."),
+            LaunchStatus.Withdrawn => ToolOutcome.Error(notStarted, result.Refusal?.Code ?? ErrorCodes.PermissionDenied, "The launch was cancelled or refused before the app ran; the suspended process was removed."),
+            LaunchStatus.ResumeFailed => ToolOutcome.Error(notStarted, ErrorCodes.OsApiError, "Windows could not start the created process; it was removed before it ran."),
             _ => ToolOutcome.Error(notStarted, ErrorCodes.OsApiError, "Windows did not start the app. Nothing was started."),
         });
     }

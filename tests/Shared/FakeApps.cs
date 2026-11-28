@@ -58,12 +58,21 @@ public sealed class FakeAppPlatform : IAppPlatform
     public bool TerminateAccepted { get; set; } = true;
     public bool ExitsAfterRequest { get; set; } = true;
 
+    /// <summary>Whether removing a created but not resumed process is confirmed.</summary>
+    public bool ReclaimSucceeds { get; set; } = true;
+
+    public bool Truncated { get; set; }
+
     /// <summary>Hooks: run before the start point (prepare / open) or inside the OS write (may block or throw).</summary>
     public Action? OnPrepare { get; set; }
     public Action? OnOpen { get; set; }
     public Action? OnWrite { get; set; }
 
-    private int _scans, _prepared, _launches, _opened, _closeRequests, _terminations, _disposed;
+    private int _scans, _prepared, _launches, _opened, _closeRequests, _terminations, _disposed, _resumes, _reclaims;
+
+    /// <summary>Created processes that were resumed (could run) / removed before running.</summary>
+    public int Resumes => Volatile.Read(ref _resumes);
+    public int Reclaims => Volatile.Read(ref _reclaims);
 
     public int Scans => Volatile.Read(ref _scans);
     public int Prepared => Volatile.Read(ref _prepared);
@@ -85,7 +94,7 @@ public sealed class FakeAppPlatform : IAppPlatform
     {
         Interlocked.Increment(ref _scans);
         var facts = Processes.Values.Where(p => p.SameUser == true).OrderBy(p => p.Pid).Select(p => Facts(p, apps)).ToList();
-        return new ProcessScan(facts, FailedCount, new HashSet<string>(Uncertain), false);
+        return new ProcessScan(facts, FailedCount, new HashSet<string>(Uncertain), Truncated);
     }
 
     public IPreparedLaunch PrepareLaunch(RegisteredApp app, CancellationToken cancellationToken)
@@ -120,11 +129,26 @@ public sealed class FakeAppPlatform : IAppPlatform
 
     private sealed class PreparedLaunch(FakeAppPlatform os) : IPreparedLaunch
     {
-        public LaunchResult Start()
+        public LaunchResult Start(Func<ToolError?> beforeResume)
         {
             Interlocked.Increment(ref os._launches);
             os.OnWrite?.Invoke();
-            return os.NextLaunch;
+            var next = os.NextLaunch;
+            if (next.Status == LaunchStatus.Started && beforeResume() is { } refusal)
+            {
+                next = new LaunchResult(LaunchStatus.Withdrawn, next.Pid, next.CreationTime, os.ReclaimSucceeds, refusal);
+            }
+
+            if (next.Status == LaunchStatus.Started)
+            {
+                Interlocked.Increment(ref os._resumes);
+            }
+            else if (next.Reclaimed == true)
+            {
+                Interlocked.Increment(ref os._reclaims);
+            }
+
+            return next;
         }
 
         public void Dispose() => Interlocked.Increment(ref os._disposed);

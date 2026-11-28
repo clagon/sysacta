@@ -90,17 +90,26 @@ public static class ProcessRules
 /// <summary>Outcome of creating the process (no retry, no fallback).</summary>
 public enum LaunchStatus
 {
-    /// <summary>Created, verified suspended (same image) and resumed.</summary>
+    /// <summary>Created, verified suspended (same image), allowed by the pre-resume check and resumed.</summary>
     Started,
-    /// <summary>CreateProcess refused: nothing was started.</summary>
+    /// <summary>CreateProcess refused: no process was created.</summary>
     Failed,
-    /// <summary>The executable requires elevation (UAC); nothing was started and no elevation was requested.</summary>
+    /// <summary>The executable requires elevation (UAC); no process was created and no elevation was requested.</summary>
     ElevationRequired,
-    /// <summary>The created process did not have the verified image and was terminated while suspended (it never ran).</summary>
+    /// <summary>The created process did not have the verified image; it was not resumed (see <see cref="LaunchResult.Reclaimed"/>).</summary>
     ImageMismatch,
+    /// <summary>The pre-resume check refused (cancelled, timed out, authorization or approval changed); not resumed.</summary>
+    Withdrawn,
+    /// <summary>ResumeThread failed; the process was not resumed.</summary>
+    ResumeFailed,
 }
 
-public sealed record LaunchResult(LaunchStatus Status, int? Pid = null, long? CreationTime = null);
+/// <param name="Reclaimed">
+/// For a created but not resumed process: true when TerminateProcess on its own handle succeeded and the handle signaled
+/// exit (it never ran any of its code); false when that could not be confirmed. Null when no process remains to reclaim.
+/// </param>
+/// <param name="Refusal">For <see cref="LaunchStatus.Withdrawn"/>: the refusal of the pre-resume check.</param>
+public sealed record LaunchResult(LaunchStatus Status, int? Pid = null, long? CreationTime = null, bool? Reclaimed = null, ToolError? Refusal = null);
 
 /// <summary>
 /// An executable opened and verified for one launch. While it exists, the file is held without write/delete sharing and
@@ -109,8 +118,13 @@ public sealed record LaunchResult(LaunchStatus Status, int? Pid = null, long? Cr
 /// </summary>
 public interface IPreparedLaunch : IDisposable
 {
-    /// <summary>Creates the process once. Call only right after the start point.</summary>
-    LaunchResult Start();
+    /// <summary>
+    /// Creates the process once, suspended, and verifies its image. Then runs <paramref name="beforeResume"/> (the final
+    /// cancellation / authorization / approval check); only when it returns null is the process resumed. Otherwise the
+    /// process this call created is terminated through its own handle and waited on (bounded). Call only right after the
+    /// start point. Everything that can fail without side effects (paths, command line) is prepared before.
+    /// </summary>
+    LaunchResult Start(Func<ToolError?> beforeResume);
 }
 
 public enum CloseRequestStatus

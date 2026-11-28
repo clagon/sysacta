@@ -22,11 +22,13 @@ internal static class NativeMethods
     public const uint FileAttributeReparsePoint = 0x400;
     public const uint DriveFixed = 3;
     public const int FileIdInfoClass = 18;
+    public const int FileBasicInfoClass = 0;
 
     public const int ErrorFileNotFound = 2;
     public const int ErrorPathNotFound = 3;
     public const int ErrorAccessDenied = 5;
     public const int ErrorInvalidParameter = 87;
+    public const int ErrorNoMoreFiles = 18;
     public const int ErrorElevationRequired = 740;
 
     /// <summary>BY_HANDLE_FILE_INFORMATION. FILETIME is two DWORDs (4-byte aligned): 52 bytes.</summary>
@@ -71,6 +73,22 @@ internal static class NativeMethods
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int infoClass, out FileIdInfo info, uint size);
+
+    /// <summary>FILE_BASIC_INFO (four LARGE_INTEGER times and the attributes, padded to 40 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct FileBasicInfo
+    {
+        public long CreationTime;
+        public long LastAccessTime;
+        public long LastWriteTime;
+        public long ChangeTime;
+        public uint FileAttributes;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true, EntryPoint = "GetFileInformationByHandleEx")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetFileBasicInformationByHandleEx(SafeFileHandle file, int infoClass, out FileBasicInfo info, uint size);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]

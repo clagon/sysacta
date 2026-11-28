@@ -38,6 +38,13 @@ public sealed class AppCloseTool(IAppRegistry registry, IAppPlatform platform) :
                 : throw new ToolFailureException(ErrorCodes.TargetChanged, "The app started while the request waited. Nothing was sent.", retryable: true));
         }
 
+        // Under the locks, the instance resolved before must still be the only instance of the app.
+        var current = SingleInstance(app, cancellationToken) ?? throw new ToolFailureException(ErrorCodes.TargetNotFound, "The app's process has exited. Nothing was sent.", retryable: true);
+        if (current.Pid != pid || current.CreationTime != creation)
+        {
+            throw new ToolFailureException(ErrorCodes.TargetChanged, "The app's running instance changed while the request waited. Nothing was sent.", retryable: true);
+        }
+
         var start = ProcessStartTime.ToText(creation);
         using var process = platform.OpenProcess(pid, creation, [AppMatchKey.For(app)], terminate: false);
         if (process.Facts.AppId != app.Id || ProcessRules.Evaluate(process.Facts) is not null)
@@ -75,7 +82,7 @@ public sealed class AppCloseTool(IAppRegistry registry, IAppPlatform platform) :
     private ProcessFacts? SingleInstance(RegisteredApp app, CancellationToken cancellationToken)
     {
         var scan = platform.ScanSession([AppMatchKey.For(app)], cancellationToken);
-        if (scan.UncertainAppIds.Contains(app.Id))
+        if (scan.Truncated || scan.UncertainAppIds.Contains(app.Id))
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "Could not identify the app's processes. Nothing was sent.", retryable: true);
         }

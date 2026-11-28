@@ -92,7 +92,13 @@ public sealed class ToolExecution
     /// When this returns a non-null <see cref="ToolError"/>, the caller must NOT perform the next write and must report
     /// any already-applied changes (typically as <see cref="ToolStatus.Partial"/>) without rolling back.
     /// </summary>
-    public ToolError? BeginNextSideEffect(CancellationToken cancellationToken)
+    public ToolError? BeginNextSideEffect(CancellationToken cancellationToken) => BeginNextSideEffect(null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="BeginNextSideEffect(CancellationToken)"/> with the same kind of target-specific condition as
+    /// <see cref="BeginSideEffect(Func{ToolError?})"/>, evaluated atomically with the authorization.
+    /// </summary>
+    public ToolError? BeginNextSideEffect(Func<ToolError?>? targetCheck, CancellationToken cancellationToken)
     {
         if (Volatile.Read(ref _state) != Started)
         {
@@ -119,6 +125,11 @@ public sealed class ToolExecution
             if (_authorize() is { } refusal)
             {
                 return (refusal.Error ?? new ToolError(ErrorCodes.PermissionDenied, "Authorization was revoked.", false)) with { Retryable = false };
+            }
+
+            if (targetCheck?.Invoke() is { } targetRefusal)
+            {
+                return targetRefusal with { Retryable = false };
             }
 
             if (Volatile.Read(ref _detached) != 0 || cancellationToken.IsCancellationRequested)

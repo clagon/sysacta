@@ -257,7 +257,8 @@ public class AppToolTests
     {
         var (s, app) = WithApp();
         await s.Launch(app);
-        Assert.Equal(1, s.Registry.CurrentChecks);
+        // At the start point and again right before the created process is resumed.
+        Assert.Equal(2, s.Registry.CurrentChecks);
     }
 
     [Fact]
@@ -295,11 +296,68 @@ public class AppToolTests
     public async Task Launch_failures_report_that_nothing_was_started(LaunchStatus status, string code)
     {
         var (s, app) = WithApp();
-        s.Os.NextLaunch = new LaunchResult(status);
+        s.Os.NextLaunch = new LaunchResult(status, Reclaimed: status == LaunchStatus.ImageMismatch ? true : null);
         var r = await s.Launch(app);
         AssertError(r, code);
         Assert.False((bool)r.Data!["launched"]!);
         Assert.Equal(1, s.Os.Launches);
+    }
+
+    [Theory]
+    [MemberData(nameof(AppTestKit.RaceKinds), MemberType = typeof(AppTestKit))]
+    public async Task A_change_after_creation_but_before_resume_removes_the_suspended_process(string kind)
+    {
+        var (s, app) = WithApp();
+        s.Os.OnWrite = () => s.H.Update(() => Apply(s, app, kind));
+        var r = await s.Launch(app);
+        Assert.Equal(ToolStatus.Error, r.Status);
+        Assert.Contains(r.Error!.Code, new[] { ErrorCodes.PermissionDenied, ErrorCodes.ToolDisabled });
+        Assert.False((bool)r.Data!["launched"]!);
+        Assert.Equal((1, 0, 1), (s.Os.Launches, s.Os.Resumes, s.Os.Reclaims));
+    }
+
+    [Fact]
+    public async Task Cancellation_after_creation_never_resumes_the_process()
+    {
+        var (s, app) = WithApp();
+        using var cts = new CancellationTokenSource();
+        s.Os.OnWrite = cts.Cancel;
+        var r = await s.Call("app_launch", new { app_id = app.Id }, cts.Token);
+        Assert.Equal(ToolStatus.Unknown, r.Status);
+        await WaitUntil(() => s.Os.Reclaims == 1);
+        Assert.Equal(0, s.Os.Resumes);
+    }
+
+    [Theory]
+    [InlineData(LaunchStatus.ImageMismatch)]
+    [InlineData(LaunchStatus.ResumeFailed)]
+    [InlineData(LaunchStatus.Started)]
+    public async Task An_unconfirmed_removal_of_a_created_process_is_unknown(LaunchStatus status)
+    {
+        var (s, app) = WithApp();
+        s.Os.ReclaimSucceeds = false;
+        if (status == LaunchStatus.Started)
+        {
+            s.Os.OnWrite = () => s.H.Update(() => s.Registry.Disable(app.Id)); // withdrawn, removal not confirmed
+        }
+        else
+        {
+            s.Os.NextLaunch = new LaunchResult(status, 4242, 1, Reclaimed: false);
+        }
+
+        var r = await s.Launch(app);
+        Assert.Equal(ToolStatus.Unknown, r.Status);
+        Assert.False(r.Error!.Retryable);
+        Assert.Equal(0, s.Os.Resumes);
+    }
+
+    [Fact]
+    public async Task A_truncated_process_list_refuses_launch()
+    {
+        var (s, app) = WithApp();
+        s.Os.Truncated = true;
+        AssertError(await s.Launch(app), ErrorCodes.OsApiError);
+        Assert.Equal(0, s.Os.Launches);
     }
 
     [Fact]

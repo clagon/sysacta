@@ -17,7 +17,8 @@ public sealed class WindowsAppPlatformTests : IDisposable
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
     private readonly WindowsAppPlatform _os = new();
     private readonly string _dir;
-    private readonly List<int> _launched = [];
+    /// <summary>Processes this test created: removed by exact pid + creation time through their own handle.</summary>
+    private readonly List<(int Pid, long Creation)> _launched = [];
 
     public WindowsAppPlatformTests()
     {
@@ -29,20 +30,17 @@ public sealed class WindowsAppPlatformTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var pid in _launched)
+        foreach (var (pid, creation) in _launched)
         {
             try
             {
-                using var p = Process.GetProcessById(pid);
-                if (p.ProcessName.Equals("HarmlessTarget", StringComparison.OrdinalIgnoreCase))
-                {
-                    p.Kill();
-                    p.WaitForExit(5000);
-                }
+                using var process = _os.OpenProcess(pid, creation, [], terminate: true);
+                _ = process.Terminate();
+                _ = process.WaitForExit(TimeSpan.FromSeconds(5));
             }
-            catch (ArgumentException)
+            catch (ToolFailureException)
             {
-                // Already gone.
+                // Already gone (or the pid now belongs to another process, which is never touched).
             }
         }
 
@@ -191,11 +189,11 @@ public sealed class WindowsAppPlatformTests : IDisposable
         LaunchResult result;
         using (var prepared = _os.PrepareLaunch(app, Ct))
         {
-            result = prepared.Start();
+            result = prepared.Start(() => null);
         }
 
         Assert.Equal(LaunchStatus.Started, result.Status);
-        _launched.Add(result.Pid!.Value);
+        _launched.Add((result.Pid!.Value, result.CreationTime!.Value));
 
         // The approved fixed arguments arrive exactly as approved (through CreateProcessW and the C runtime's parsing).
         var echo = Path.Combine(Path.GetDirectoryName(app.Path)!, "args.txt");
@@ -237,11 +235,11 @@ public sealed class WindowsAppPlatformTests : IDisposable
         LaunchResult result;
         using (var prepared = _os.PrepareLaunch(app, Ct))
         {
-            result = prepared.Start();
+            result = prepared.Start(() => null);
         }
 
         Assert.Equal(LaunchStatus.Started, result.Status);
-        _launched.Add(result.Pid!.Value);
+        _launched.Add((result.Pid!.Value, result.CreationTime!.Value));
         using var process = _os.OpenProcess(result.Pid.Value, result.CreationTime!.Value, [AppMatchKey.For(app)], terminate: true);
         var windows = 0;
         for (var i = 0; i < 100 && (windows = process.FindCloseableWindows()) == 0; i++)
@@ -258,6 +256,67 @@ public sealed class WindowsAppPlatformTests : IDisposable
             Assert.True(process.Terminate());
             Assert.True(process.WaitForExit(TimeSpan.FromSeconds(5)));
         }
+    }
+
+    [Fact]
+    public void A_launch_refused_before_resume_never_runs_and_is_reclaimed()
+    {
+        RequireWindows();
+        var app = Approve(CopyTarget(), "x");
+        var echo = Path.Combine(Path.GetDirectoryName(app.Path)!, "args.txt");
+        LaunchResult result;
+        using (var prepared = _os.PrepareLaunch(app, Ct))
+        {
+            result = prepared.Start(() => new ToolError(ErrorCodes.Cancelled, "refused", false));
+        }
+
+        Assert.Equal((LaunchStatus.Withdrawn, true, ErrorCodes.Cancelled), (result.Status, result.Reclaimed, result.Refusal!.Code));
+        Assert.Equal(ErrorCodes.TargetNotFound, Assert.Throws<ToolFailureException>(() => _os.OpenProcess(result.Pid!.Value, result.CreationTime!.Value, [AppMatchKey.For(app)], terminate: false)).Code);
+        Thread.Sleep(300);
+        Assert.False(File.Exists(echo)); // its code never ran
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_running_old_image_is_not_matched_to_a_replacement_approved_later(bool renameOlderFileIntoPlace)
+    {
+        RequireWindows();
+        var exe = CopyTarget();
+        var older = Path.Combine(Path.GetDirectoryName(exe)!, "older.bin");
+        File.Copy(exe, older); // a separate file that exists before the process starts
+        var app = Approve(exe);
+        LaunchResult result;
+        using (var prepared = _os.PrepareLaunch(app, Ct))
+        {
+            result = prepared.Start(() => null);
+        }
+
+        Assert.Equal(LaunchStatus.Started, result.Status);
+        _launched.Add((result.Pid!.Value, result.CreationTime!.Value));
+        Assert.Contains(_os.ScanSession([AppMatchKey.For(app)], Ct).Processes, p => p.Pid == result.Pid && p.AppId == app.Id);
+
+        // An in-place update while the old image keeps running: the running exe is renamed away and another file takes
+        // its path (a new copy, or an older file renamed into place), and the local user approves that file.
+        File.Move(exe, exe + ".old");
+        if (renameOlderFileIntoPlace)
+        {
+            File.Move(older, exe);
+        }
+        else
+        {
+            File.Copy(exe + ".old", exe);
+        }
+
+        var replacement = Approve(exe);
+        Assert.False(replacement.Identity.SameFile(app.Identity));
+        var scan = _os.ScanSession([AppMatchKey.For(replacement)], Ct);
+        var old = Assert.Single(scan.Processes, p => p.Pid == result.Pid);
+        Assert.Null(old.AppId);
+        Assert.Contains(replacement.Id, scan.UncertainAppIds);
+        using var opened = _os.OpenProcess(old.Pid, old.CreationTime, [AppMatchKey.For(replacement)], terminate: true);
+        Assert.Null(opened.Facts.AppId);
+        Assert.NotNull(ProcessRules.Evaluate(opened.Facts));
     }
 
     [Fact]
