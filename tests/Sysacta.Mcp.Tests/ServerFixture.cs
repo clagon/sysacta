@@ -10,6 +10,7 @@ using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
 using Sysacta.Core.Tools.Power;
+using Sysacta.Core.Tools.SystemMonitoring;
 using Sysacta.Infrastructure;
 using Sysacta.Tests;
 
@@ -34,6 +35,7 @@ public sealed class ServerFixture : IAsyncDisposable
     public BlockingTool Blocking { get; } = new();
     public FakeMediaSessions Media { get; } = new();
     public FakePower Power { get; } = new();
+    public FakeSystemMonitor Monitor { get; } = new();
     public PowerTransitionGate PowerGate { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time). The executor and the store use the system clock.</summary>
@@ -42,7 +44,7 @@ public sealed class ServerFixture : IAsyncDisposable
     /// <summary>What the authentication layer sees of the store; counts its database calls.</summary>
     public CountingStore Counted { get; }
 
-    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower)
+    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower, bool includeSystem)
     {
         Database = new SysactaDatabase(Path.Combine(_dir, "sysacta.db"));
         Database.Migrate();
@@ -77,6 +79,8 @@ public sealed class ServerFixture : IAsyncDisposable
             .. includePower ? new SysactaTool[] { new PowerGetStateTool(Power), new PowerListPlansTool(Power), new PowerSetPlanTool(Power),
                 new PowerLockTool(Power), new PowerSleepTool(Power), new PowerShutdownTool(Power), new PowerRestartTool(Power),
                 new PowerReleaseGateTool(PowerGate) } : [],
+            .. includeSystem ? new SysactaTool[] { new SystemGetStatusTool(Monitor), new SystemGetHardwareTool(Monitor),
+                new SystemGetTemperaturesTool(Monitor), new SystemGetStorageTool(Monitor) } : [],
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
@@ -85,9 +89,9 @@ public sealed class ServerFixture : IAsyncDisposable
         Host = new McpServerHost(Executor, new TokenAuthenticator(Counted, Time), Audit, Time, "test");
     }
 
-    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false)
+    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false, bool includeSystem = false)
     {
-        var fixture = new ServerFixture(limits, includeMedia, includePower);
+        var fixture = new ServerFixture(limits, includeMedia, includePower, includeSystem);
         await fixture.Host.StartAsync(options ?? new ServerEndpointOptions { Port = 0 }, TestContext.Current.CancellationToken);
         return fixture;
     }
