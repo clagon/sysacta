@@ -18,8 +18,8 @@ public sealed record ExecutableIdentity(string VolumeSerial, string FileId, long
 
 /// <summary>
 /// A registered app in the current format, approved by the local user for one exact executable and fixed argument list.
-/// <see cref="Generation"/> changes whenever the approved identity or arguments change, so a call that verified one
-/// generation can never run another.
+/// <see cref="Generation"/> changes whenever the approved identity or arguments change and whenever the app is
+/// disallowed, so a call that verified one generation can never run another.
 /// </summary>
 /// <param name="Path">Canonical absolute path (the final path of the file handle at approval). Local display only.</param>
 public sealed record RegisteredApp(string Id, string DisplayName, string Path, IReadOnlyList<string> FixedArgs, bool Allowed, long Generation, ExecutableIdentity Identity)

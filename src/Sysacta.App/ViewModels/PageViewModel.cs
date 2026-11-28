@@ -70,6 +70,12 @@ public abstract partial class PageViewModel : ObservableObject
             Notify(InfoBarSeverity.Error, failureTitle, ex.Message);
             return false;
         }
+        catch (Sysacta.Core.Tools.ToolFailureException)
+        {
+            // An OS adapter refused or failed (fixed English text meant for agents); show fixed local text instead.
+            Notify(InfoBarSeverity.Error, failureTitle, "Windows から必要な情報を取得できませんでした。しばらくしてからやり直してください。");
+            return false;
+        }
         catch (Exception ex) when (ex is System.IO.IOException or Microsoft.Data.Sqlite.SqliteException or UnauthorizedAccessException or System.Security.SecurityException)
         {
             Notify(InfoBarSeverity.Error, failureTitle, SafeMessage(ex));

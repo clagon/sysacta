@@ -526,7 +526,9 @@ public sealed class WindowsAppPlatform : IAppPlatform
             }
         }
 
-        var image = Environment.ProcessPath is { } exe ? FileKey(exe) : null;
+        // Without its own file identity Sysacta could not refuse a copy of itself: fail (and retry on the next call).
+        var image = (Environment.ProcessPath is { } exe ? FileKey(exe) : null)
+            ?? throw new ToolFailureException(ErrorCodes.OsApiError, "Sysacta could not identify its own executable.", retryable: true);
         return new SelfInfo(pid, creation, session, identity.User, parentPid, parentCreation, image);
     }
 
