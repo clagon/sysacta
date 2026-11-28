@@ -220,11 +220,32 @@ public class MediaToolTests
     public async Task Seek_readback_requires_a_new_stationary_observation_on_the_same_item()
     {
         var originalTime = DateTimeOffset.UtcNow;
-        _media.State = _media.State with { MetadataFingerprint = "same", LastUpdatedTime = originalTime, PositionTicks = 100 };
+        _media.State = _media.State with { MetadataFingerprint = "same", MediaRevision = 1, LastUpdatedTime = originalTime, PositionTicks = 100 };
         _media.OnStart = () => _media.State = _media.State with { PositionTicks = 1000 * TimeSpan.TicksPerMillisecond, LastUpdatedTime = originalTime.AddSeconds(1) };
         var result = await Call("media_seek", new { position_ms = 1000 });
         Assert.Equal(Verification.Verified, result.Verification);
         Assert.True((bool)result.Data!["changed"]!);
+    }
+
+    [Theory]
+    [InlineData(2L)]
+    [InlineData(null)]
+    public async Task Seek_readback_with_changed_or_missing_item_revision_is_only_accepted(long? afterRevision)
+    {
+        var originalTime = DateTimeOffset.UtcNow;
+        _media.State = _media.State with { MetadataFingerprint = "same", MediaRevision = 1, LastUpdatedTime = originalTime, PositionTicks = 100 };
+        _media.OnStart = () => _media.State = _media.State with
+        {
+            MediaRevision = afterRevision,
+            PositionTicks = 1000 * TimeSpan.TicksPerMillisecond,
+            LastUpdatedTime = originalTime.AddSeconds(1),
+        };
+        var result = await Call("media_seek", new { position_ms = 1000 });
+        Assert.True(result.IsSuccess);
+        Assert.Equal(Verification.Accepted, result.Verification);
+        Assert.Null(result.Data!["changed"]);
+        Assert.True((bool)result.Data["accepted"]!);
+        Assert.Equal(1, _media.Starts);
     }
 
     [Fact]

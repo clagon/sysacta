@@ -137,7 +137,8 @@ public abstract class MediaChangeTool<TArgs>(IMediaSessions sessions) : SysactaT
                 || (Operation == MediaOperation.Seek && IsStationary(ready) && IsStationary(after)
                     && ready.LastUpdatedTime is not null && after.LastUpdatedTime > ready.LastUpdatedTime
                     && after.PositionTicks == ticks && ready.MetadataFingerprint is not null
-                    && ready.MetadataFingerprint == after.MetadataFingerprint));
+                    && ready.MetadataFingerprint == after.MetadataFingerprint
+                    && ready.MediaRevision is not null && ready.MediaRevision == after.MediaRevision));
             var data = progress with { AfterStatus = after?.PlaybackStatus, AfterPositionMs = after?.PositionMs, Accepted = true, Changed = verified ? true : null };
             return new(data, verified ? Verification.Verified : Verification.Accepted);
         }
