@@ -10,6 +10,7 @@ using Sysacta.Mcp;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Display;
 using Sysacta.Windows.Media;
+using Sysacta.Windows.Notification;
 using Sysacta.Windows.Power;
 
 namespace Sysacta.App;
@@ -43,7 +44,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
-        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate));
+        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate, Notifications));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
         Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate, power: PowerGate);
         // Suspend/resume evidence for a held sleep, including an unattended wake. Never releases a shutdown. Without
@@ -72,6 +73,8 @@ public sealed class SysactaRuntime : IAsyncDisposable
     /// <summary>The latest display mode change, restorable from the tray menu and the device page (app lifetime only).</summary>
     public DisplayModeRecovery DisplayModeRecovery { get; } = new();
     private WindowsMediaSessions MediaSessions { get; } = new();
+    /// <summary>Registered by the app at startup (<see cref="App"/>), not by constructing the runtime or by a tool call.</summary>
+    public WindowsDesktopNotifications Notifications { get; } = new();
     public AuditLog Audit { get; }
     public SettingsStore SettingsStore { get; }
     public ToolRegistry Registry { get; }

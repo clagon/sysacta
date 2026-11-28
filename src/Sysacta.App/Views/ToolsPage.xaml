@@ -43,7 +43,7 @@
                               <TextBlock Margin="0,4,0,0" Foreground="{DynamicResource SystemFillColorCautionBrush}" FontSize="12" Text="{Binding AvailabilityText}" TextWrapping="Wrap" Visibility="{Binding IsAvailable, Converter={StaticResource InverseBoolToVisibility}}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
-                              <ui:Button Margin="0,0,16,0" Command="{Binding TestCommand}" Content="動作確認" Icon="{ui:SymbolIcon Beaker24}" ToolTip="読み取り専用ツールを管理コンソールから実行します (監査ログに記録されます)" Visibility="{Binding CanTest, Converter={StaticResource BoolToVisibility}}" />
+                              <ui:Button Margin="0,0,16,0" Command="{Binding TestCommand}" Content="{Binding TestLabel}" Icon="{ui:SymbolIcon Beaker24}" ToolTip="{Binding TestToolTip}" Visibility="{Binding CanTest, Converter={StaticResource BoolToVisibility}}" />
                               <ui:ToggleSwitch IsChecked="{Binding IsEnabled}" IsEnabled="{Binding IsAvailable}" AutomationProperties.Name="{Binding Name}" />
                             </StackPanel>
                           </Grid>

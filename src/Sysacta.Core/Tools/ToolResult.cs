@@ -40,6 +40,7 @@ public static class ErrorCodes
     public const string TargetChanged = "TARGET_CHANGED";
     public const string DeviceDisconnected = "DEVICE_DISCONNECTED";
     public const string NoActiveSession = "NO_ACTIVE_SESSION";
+    public const string NotificationsDisabled = "NOTIFICATIONS_DISABLED";
     public const string Busy = "BUSY";
     public const string Timeout = "TIMEOUT";
     public const string Cancelled = "CANCELLED";

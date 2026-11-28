@@ -87,6 +87,31 @@ public class DisplayRecoveryUiTests
     }
 
     [Fact]
+    public void The_notification_test_button_says_that_it_sends_and_uses_fixed_valid_text()
+    {
+        var item = new ToolItem(new ToolsViewModel(null!), new Sysacta.Core.Tools.Notification.NotificationSendTool(new AvailableNotifications(), TimeProvider.System), enabled: true);
+
+        Assert.True(item.CanTest);
+        Assert.Equal("テスト通知を送る", item.TestLabel);
+        Assert.Contains("実際に", item.TestToolTip, StringComparison.Ordinal);
+        Assert.True(item.HasCaution);
+        var args = item.TestArguments!.Value;
+        Assert.True(Sysacta.Core.Tools.Notification.NotificationTextAttribute.IsAllowed(args.GetProperty("title").GetString()!, multiline: false));
+        Assert.True(Sysacta.Core.Tools.Notification.NotificationTextAttribute.IsAllowed(args.GetProperty("body").GetString()!, multiline: true));
+
+        item.ApplyAvailability(ToolAvailability.Unavailable(ErrorCodes.NotSupported, "Notification registration failed when Sysacta started."));
+        Assert.False(item.CanTest);
+        Assert.False(item.IsAvailable);
+        Assert.StartsWith("通知を登録できないため", item.AvailabilityText, StringComparison.Ordinal);
+    }
+
+    private sealed class AvailableNotifications : Sysacta.Core.Tools.Notification.IDesktopNotifications
+    {
+        public ToolAvailability GetAvailability() => ToolAvailability.Available;
+        public Action Prepare(string title, string body) => throw new InvalidOperationException("No notification is sent in tests.");
+    }
+
+    [Fact]
     public void Release_results_are_described_without_tool_messages()
     {
         static ToolResult Ok(string value) => new() { Status = ToolStatus.Success, Data = new JsonObject { ["result"] = value } };

@@ -169,7 +169,8 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 | TARGET_NOT_FOUND / AMBIGUOUS_TARGET | 対象が解決できない | ツール (`ResolveTargetAsync`) |
 | TARGET_CHANGED | ロック待機中に既定デバイスが切り替わった(副作用なし・再試行可) | ツール (`EnsureStillDefault`) |
 | DEVICE_DISCONNECTED / NO_ACTIVE_SESSION | 一時的に操作できない | ツール/アダプター |
-| BUSY | 待機キューが満杯(再試行可) | executor |
+| NOTIFICATIONS_DISABLED | Windows の設定・ポリシーで通知が無効(何も送っていない) | 通知アダプター |
+| BUSY | 待機キューが満杯、通知のレート制限(再試行可) | executor / ツール |
 | TIMEOUT / CANCELLED | 実行前なら retryable、実行中なら status=unknown | executor |
 | VERIFICATION_FAILED | 変更後の読み戻しが一致しない | ツール |
 | (任意のコード) + status=unknown | 変更を実行した後に失敗し、反映されたか分からない(読み戻し中の切断など) | ツールが `ToolOutcomeUnknownException` を投げる |
@@ -195,3 +196,8 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 - 読み取りの一部が欠けても成功として返し、欠けた値は `null` と `UnavailableReason`（`not_supported` / `permission_denied` / `unavailable` / `invalid_data` / `interrupted` / `truncated`）で表す。0・空文字・推定値で埋めない。`partial` は状態変更専用で、読み取りの欠損には使わない。全体が読めないときだけ `ToolFailureException`。
 - OS から得た数値の検証・単位変換・集計は Core（`SystemStatus` / `SystemInventory`）に置き、フェイクで単体テストする。Windows アダプターは生の値と OS の失敗理由だけを返す。
 - 測定の時刻（UTC）と測定窓（開始・終了・実測 ms）を結果に含める。PDH のカウンター・WMI のクエリ・レジストリ値は定数に固定し、引数にしない。詳細は [Phase 1F 進捗](phase-1f-progress.md)。
+
+### 通知(Phase 1G)
+
+- `notification_send` は固定の送信元でプレーンテキストだけを出す。文字列は `[NotificationText]`(Core)で検証し、XML は固定テンプレートの DOM テキストノードで作る。テンプレート・画像・アクション・起動引数を引数にしない。
+- レート制限はツールのインスタンス(プロセスに 1 つ)が持ち、`BeginSideEffect` の直後に枠を消費する。API の受理は常に `accepted` で、表示の証明ではない。詳細は [Phase 1G 進捗](phase-1g-progress.md)。

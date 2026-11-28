@@ -52,13 +52,13 @@ public sealed partial class ToolsViewModel(SysactaRuntime runtime) : PageViewMod
         Notify(InfoBarSeverity.Success, enabled ? $"{item.Name} を有効にしました" : $"{item.Name} を無効にしました", "すべてのクライアントに即時に反映されます。");
     });
 
-    /// <summary>Runs a read-only tool through the same executor as MCP (validated, globally authorized and audited).</summary>
+    /// <summary>Runs a read-only tool, or sends the fixed test notification, through the same executor as MCP (validated, globally authorized and audited).</summary>
     internal async Task TestAsync(ToolItem item)
     {
         await RunAsync(async () =>
         {
             // The executor starts with synchronous SQLite reads (authorization) and audit writes: keep them off the UI thread.
-            var result = await Task.Run(() => runtime.Executor.ExecuteAsync(Caller.LocalConsole, item.Name, null, CancellationToken.None));
+            var result = await Task.Run(() => runtime.Executor.ExecuteAsync(Caller.LocalConsole, item.Name, item.TestArguments, CancellationToken.None));
             item.TestResult = JsonSerializer.Serialize(result, IndentedJson);
             item.HasTestResult = true;
         });
@@ -111,7 +111,7 @@ public sealed partial class ToolItem : ObservableObject
     private readonly ToolsViewModel _owner;
     private readonly LatestValueSaver<bool> _saver;
     private readonly bool _readOnly;
-    /// <summary>The console test sends no arguments, so tools with a required argument cannot be tested there.</summary>
+    /// <summary>The console test has no argument input, so tools with a required argument need fixed ones.</summary>
     private readonly bool _needsArguments;
 
     public ToolItem(ToolsViewModel owner, SysactaTool tool, bool enabled, ToolAvailability? precomputedAvailability = null)
@@ -127,6 +127,13 @@ public sealed partial class ToolItem : ObservableObject
         IsExperimental = tool.Descriptor.DefaultPolicy == DefaultPolicy.Experimental;
         IsOffByDefault = tool.Descriptor.DefaultPolicy == DefaultPolicy.Off;
         Caution = CautionFor(tool.Name);
+        if (tool.Name == "notification_send")
+        {
+            // The only state-changing console test: fixed harmless text, and the button says that it really sends.
+            TestArguments = JsonSerializer.SerializeToElement(new { title = "Sysacta テスト通知", body = "管理画面から送ったテスト通知です。" });
+            TestLabel = "テスト通知を送る";
+            TestToolTip = "実際に Windows の通知を 1 件送ります (監査ログに記録されます)";
+        }
         PolicyLabel = tool.Descriptor.DefaultPolicy switch
         {
             DefaultPolicy.On => tool.Descriptor.ReadOnly ? "既定で有効・読み取り" : "既定で有効・状態変更",
@@ -135,6 +142,10 @@ public sealed partial class ToolItem : ObservableObject
         };
         ApplyAvailability(precomputedAvailability ?? tool.GetAvailability());
     }
+
+    public JsonElement? TestArguments { get; }
+    public string TestLabel { get; } = "動作確認";
+    public string TestToolTip { get; } = "読み取り専用ツールを管理コンソールから実行します (監査ログに記録されます)";
 
     public string Name { get; }
     public string Title { get; }
@@ -153,6 +164,7 @@ public sealed partial class ToolItem : ObservableObject
         "display_set_mode" => "注意: 画面が映らなくなることがあります。対象はプライマリ以外のディスプレイだけです。元に戻すには、トレイメニューまたはデバイス画面の「元に戻す」を使います（Sysacta の起動中の直近 1 件のみ）。Windows の設定には保存されないため、サインアウトでも元に戻ります。",
         "display_set_power" => "注意: オフにしたモニターは DDC/CI に応答しなくなったり Windows から消えたりして、Sysacta からはオンに戻せないことがあります。モニターの電源ボタンで戻せることを確認してから有効にしてください。すべての画面をオフにすると、物理操作でしか戻せません。",
         "display_set_input" => "注意: 切り替え先に信号がないと画面が映らず、Sysacta から戻せないことがあります。モニターのメニュー（OSD）で入力を戻せることを確認してから有効にしてください。入力名は MCCS の定義で、本体の端子表示と一致しないことがあります。",
+        "notification_send" => "注意: 通知の内容は Windows の通知センターに残り、ロック画面や画面共有中の画面に表示されることがあります。保持・同期・表示は Windows の設定に従います。",
         "power_set_plan" => "注意: 電源プランの変更は Windows に保存され、再起動後も残ります。性能・消費電力・自動スリープまでの時間が変わります。元に戻すには、Windows の設定または MCP から元のプランを指定し直します。",
         "power_lock" => "注意: Windows がロックされ、PC の前で使うにはサインインし直す必要があります。MCP の権限は変わりません。",
         "power_sleep" => "注意: PC がスリープし、MCP の接続が切れます。復帰には PC の前での操作やウェイク設定が必要で、Sysacta からは起こせません。未保存の作業は保存してから有効にしてください。",
@@ -184,8 +196,10 @@ public sealed partial class ToolItem : ObservableObject
     internal void ApplyAvailability(ToolAvailability availability)
     {
         IsAvailable = availability.IsAvailable;
-        AvailabilityText = availability.IsAvailable ? "" : $"この環境では利用できません: {availability.Reason}";
-        CanTest = _readOnly && !_needsArguments && availability.IsAvailable;
+        AvailabilityText = availability.IsAvailable ? ""
+            : Name == "notification_send" ? "通知を登録できないため利用できません。スタートメニューに Sysacta が作成していない「Sysacta」がある場合は取り除き、Sysacta を再起動してください。"
+            : $"この環境では利用できません: {availability.Reason}";
+        CanTest = (TestArguments is not null || (_readOnly && !_needsArguments)) && availability.IsAvailable;
     }
 
     /// <summary>Shows the stored value without saving it again; ignored while this switch's own save is running.</summary>

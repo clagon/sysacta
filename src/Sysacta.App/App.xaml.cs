@@ -53,6 +53,9 @@ public partial class App : Application
             return;
         }
 
+        // Does not wait: a failed or hung registration only affects notification_send.
+        _runtime.Notifications.RegisterInBackground();
+
         // Tray first: it is the only way to reach a hidden app, so later (cosmetic) failures must not prevent it.
         _tray = new TrayIcon(_runtime, ShowMainWindow, () => _ = ExitAsync());
         _window = new MainWindow(_runtime);
