@@ -10,6 +10,7 @@
 | Linux/WSL の Release build / test | 成功(警告・エラー 0)。Windows 専用テストはスキップ、App.Tests は対象外 |
 | Windows CI(build / test / smoke) | 成功(2026-11-28、PR #21)。初回は Windows テストの前提誤り 1 件(.NET の「exe」アセンブリを DLL として扱った)で失敗し、テストを修正 |
 | 専用テストプロセスによる起動・検出・強制終了 | Windows CI で成功(テスト用の `HarmlessTarget` だけ): 読み取り共有のみで保持したファイルからの `CreateProcessW`、保持中のファイル書き込み・名前変更・親フォルダー移動の拒否、内容変更・差し替えの検出、`FileVersionInfo` の読み取り、照合、古い生成時刻の拒否、同じハンドルでの強制終了と終了確認、シンボリックリンクの拒否、`CommandLineToArgvW` との往復 |
+| 実機でのアダプター確認(専用テストプロセスのみ) | 成功(2026-11-28、開発 PC。manual-tests A0) |
 | 実在のアプリの起動・通常終了・強制終了 | 未実施(利用者の個別承認が必要。[manual-tests.md](manual-tests.md) A1〜A11) |
 | MSIX/UWP・複数ユーザー・管理者起動 | 未検証(環境なし。パッケージアプリは対象外) |
 
@@ -178,7 +179,8 @@
 
 ## 実機確認
 
-未実施。実在のアプリでの確認は [manual-tests.md](manual-tests.md) の A1〜A11 に従い、利用者が対象アプリと操作を個別に承認した場合だけ行う。
+- 2026-11-28、開発 PC(Windows 11): `WindowsAppPlatformTests` 9 件が成功(manual-tests A0)。起動・終了したのはテスト用に複製した `HarmlessTarget` だけで、実在のアプリ・既存のプロセスには読み取り(スタートメニューの検出、セッションのプロセス列挙)しか行っていない。
+- 実在のアプリでの確認は [manual-tests.md](manual-tests.md) の A1〜A11 に従い、利用者が対象アプリと操作を個別に承認した場合だけ行う。
 
 ## 仕様との差分
 
