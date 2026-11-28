@@ -13,7 +13,7 @@ public sealed partial class ToolRegistry
         foreach (var tool in tools)
         {
             var d = tool.Descriptor;
-            if (!NamePattern().IsMatch(d.Name) || !d.Name.StartsWith(d.Category + "_", StringComparison.Ordinal))
+            if (!NamePattern().IsMatch(d.Name) || !ToolCategories.NamePrefixes(d.Category).Any(p => d.Name.StartsWith(p + "_", StringComparison.Ordinal)))
             {
                 throw new ArgumentException($"Tool name '{d.Name}' must be '<category>_<verb>_<object>' in lowercase and start with its category '{d.Category}'.");
             }

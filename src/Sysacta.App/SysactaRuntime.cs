@@ -7,6 +7,7 @@ using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Infrastructure;
 using Sysacta.Mcp;
+using Sysacta.Windows.Apps;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Display;
 using Sysacta.Windows.Media;
@@ -38,13 +39,15 @@ public sealed class SysactaRuntime : IAsyncDisposable
         // One gate shared by the permission store (updates) and the executor (start of state changes), SEC-01.
         var gate = new AuthorizationGate();
         Access = new AccessStore(Database, _time, gate);
+        // The app allow-list is ordered against the same start point (approval, disabling and deletion).
+        Apps = new AppRegistryStore(Database, gate);
         Audit = new AuditLog(Database);
         // Intents left by a previous process that ended mid-operation become "unknown" (SEC-06). Nothing can run yet.
         Audit.RecoverInterrupted();
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
-        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate, Notifications));
+        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate, Notifications, Apps, AppPlatform));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
         Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate, power: PowerGate);
         // Suspend/resume evidence for a held sleep, including an unattended wake. Never releases a shutdown. Without
@@ -75,6 +78,10 @@ public sealed class SysactaRuntime : IAsyncDisposable
     private WindowsMediaSessions MediaSessions { get; } = new();
     /// <summary>Registered by the app at startup (<see cref="App"/>), not by constructing the runtime or by a tool call.</summary>
     public WindowsDesktopNotifications Notifications { get; } = new();
+    /// <summary>App allow-list: read by the app tools, written only by the app page.</summary>
+    public AppRegistryStore Apps { get; }
+    /// <summary>Shared by the app/process tools and the app page (inspection, discovery).</summary>
+    public WindowsAppPlatform AppPlatform { get; } = new();
     public AuditLog Audit { get; }
     public SettingsStore SettingsStore { get; }
     public ToolRegistry Registry { get; }

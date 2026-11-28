@@ -73,4 +73,7 @@ public static class ToolCategories
     public const string Network = "network";
     public const string Bluetooth = "bluetooth";
     public const string Notification = "notification";
+
+    /// <summary>Name prefixes of a category's tools. The apps category holds both app_* and process_* tools (spec §7.6).</summary>
+    public static IReadOnlyList<string> NamePrefixes(string category) => category == Apps ? ["app", "process"] : [category];
 }

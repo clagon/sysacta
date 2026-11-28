@@ -32,6 +32,7 @@ public class XamlSmokeTests
                 new ToolsPage(new ToolsViewModel(null!)),
                 new ClientsPage(new ClientsViewModel(null!)),
                 new DevicesPage(new DevicesViewModel(null!)),
+                new AppsPage(new AppsViewModel(null!)),
                 new LogsPage(new LogsViewModel(null!)),
                 new GeneralPage(new GeneralViewModel(null!, () => null!)),
             ];

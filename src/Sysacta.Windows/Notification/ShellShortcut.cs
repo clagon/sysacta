@@ -59,6 +59,13 @@ internal static class ShellShortcut
             && ReadArguments(link).Length == 0
             && SameFile(ReadTarget(link), target));
 
+    /// <summary>
+    /// Read-only, for app discovery: the raw target path and the arguments, or null when the file is not a readable
+    /// shortcut. Never resolves the link (no search, network access or UI) and never runs anything.
+    /// </summary>
+    internal static (string Target, string Arguments)? ReadLink(string path) =>
+        Open(path, link => link is null ? ((string, string)?)null : (ReadTarget(link), ReadArguments(link)));
+
     /// <summary>Writes a new shortcut. An empty <paramref name="target"/> is only used by tests.</summary>
     internal static void Create(string path, string target, string appUserModelId, string arguments = "")
     {

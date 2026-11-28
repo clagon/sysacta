@@ -99,6 +99,21 @@ public sealed class SysactaDatabase
             WHERE scope = 'all' OR (scope = 'http' AND NEW.source = 'http');
         END;
         """,
+
+        // v3: registered apps (Phase 2A). kind marks the current format ('win32_exe'): fixed_args is then a JSON array of
+        // strings and the approved file is (volume_serial, file_id, file_size, sha256). Rows written before have an
+        // unknown format: they keep kind NULL, are never resolvable, and are disabled. generation changes on every
+        // re-approval. One executable file (volume + file id) can be registered under one id only.
+        """
+        ALTER TABLE registered_apps ADD COLUMN kind TEXT;
+        ALTER TABLE registered_apps ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE registered_apps ADD COLUMN volume_serial TEXT;
+        ALTER TABLE registered_apps ADD COLUMN file_id TEXT;
+        ALTER TABLE registered_apps ADD COLUMN file_size INTEGER;
+        ALTER TABLE registered_apps ADD COLUMN sha256 TEXT;
+        UPDATE registered_apps SET allowed = 0;
+        CREATE UNIQUE INDEX ux_registered_apps_file ON registered_apps (volume_serial, file_id) WHERE kind IS NOT NULL;
+        """,
     ];
 
     private readonly string _connectionString;

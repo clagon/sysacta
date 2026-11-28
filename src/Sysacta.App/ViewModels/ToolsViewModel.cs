@@ -170,6 +170,9 @@ public sealed partial class ToolItem : ObservableObject
         "power_sleep" => "注意: PC がスリープし、MCP の接続が切れます。復帰には PC の前での操作やウェイク設定が必要で、Sysacta からは起こせません。未保存の作業は保存してから有効にしてください。",
         "power_shutdown" => "注意: PC が停止し、MCP の接続が切れます。電源を入れ直すには PC の前での操作が必要です。保存していない作業があるアプリは停止を止めることがあります。",
         "power_restart" => "注意: PC が再起動し、MCP の接続が切れます。Sysacta はサインイン時の自動起動が有効な場合だけ再開します。保存していない作業があるアプリは再起動を止めることがあります。",
+        "app_launch" => "注意: 「アプリ」画面で登録し、起動を許可したアプリだけが、承認した実行ファイルと固定引数で起動されます。登録したアプリ自体ができること（開いたファイルの操作など）は制限できません。Sysacta を管理者として実行している間は使えません。",
+        "app_close" => "注意: アプリのウィンドウに通常の「閉じる」要求を送ります。保存確認が表示されることがあり、ダイアログは自動操作しません。対象は「アプリ」画面で許可したアプリで、プロセスとウィンドウが 1 つずつの場合だけです。",
+        "process_terminate" => "注意: 強制終了です。対象プロセスの保存していないデータは失われます。対象は「アプリ」画面で許可したアプリの、承認した実行ファイルのプロセスだけです（子プロセス・他のアプリ・保護されたプロセスは終了しません）。",
         _ => "",
     };
 
@@ -198,6 +201,7 @@ public sealed partial class ToolItem : ObservableObject
         IsAvailable = availability.IsAvailable;
         AvailabilityText = availability.IsAvailable ? ""
             : Name == "notification_send" ? "通知を登録できないため利用できません。スタートメニューの「Sysacta」がこの Sysacta のものでない場合（別の場所にあるコピーが登録したものを含む）は、そのコピーを使うか、ショートカットを取り除いて Sysacta を再起動してください。"
+            : Name == "app_launch" ? "Sysacta を管理者として実行しているため使えません。起動したアプリに管理者権限が引き継がれるのを防ぐためです。標準ユーザーとして Sysacta を起動し直してください。"
             : $"この環境では利用できません: {availability.Reason}";
         CanTest = (TestArguments is not null || (_readOnly && !_needsArguments)) && availability.IsAvailable;
     }

@@ -7,8 +7,11 @@ using Sysacta.App.ViewModels;
 using Sysacta.App.Views;
 using Sysacta.Core.Auditing;
 using Sysacta.Core.Security;
+using Sysacta.Core.Tools.Apps;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
+using Sysacta.Infrastructure;
+using Sysacta.Windows.Apps;
 using Wpf.Ui.Appearance;
 
 namespace Sysacta.App.Tests;
@@ -78,6 +81,24 @@ public class PageScreenshots
         displays.Selected = displays.Devices[0];
         displays.SelectedValues = "1920×1080 @ 165 Hz\n輝度: 60（モニター本体・DDC/CI、値域 0〜100）\nコントラスト: 取得できません（OS_API_ERROR）";
         yield return ("devices-display", new DevicesPage(displays));
+
+        var apps = new AppsViewModel(null!) { HasApps = true, HasCandidates = true, IsElevated = true, CandidateSummary = "3 件の候補。候補を登録しても、起動の許可は自動でオンになりません。" };
+        apps.Draft = new AppDraft(null, -1, @"C:\Program Files\Example\Example Editor\editor.exe", "Example Editor", "--profile\nwork space");
+        var identity = new ExecutableIdentity(new string('1', 16), new string('2', 32), 1234, new string('3', 64));
+        foreach (var (i, allowed, args) in new[] { (1, true, new[] { "--new-window" }), (2, false, Array.Empty<string>()), (3, false, Array.Empty<string>()) })
+        {
+            var app = new RegisteredApp(AppRules.NewAppId(), i == 1 ? "とても長い表示名のアプリケーション（表示確認用）" : $"App {i}", $@"C:\Program Files\Vendor {i}\app{i}.exe", args, allowed, 1, identity);
+            var item = new RegisteredAppItem(apps, new StoredApp(app.Id, app.DisplayName, allowed, app));
+            item.Status = i == 2 ? AppsViewModel.StatusText(AppStatus.TargetChanged) : AppsViewModel.StatusText(AppStatus.Ready);
+            item.NeedsAttention = i == 2;
+            apps.Apps.Add(item);
+        }
+
+        apps.Apps.Add(new RegisteredAppItem(apps, new StoredApp("legacy", "旧形式の登録", false, null)));
+        apps.Candidates.Add(new CandidateItem(apps, new AppCandidate("Example Viewer", @"C:\Program Files\Example\viewer.exe", false, new ExecutableCheck(ExecutableRefusal.None, @"C:\Program Files\Example\viewer.exe", identity))));
+        apps.Candidates.Add(new CandidateItem(apps, new AppCandidate("Chat", @"C:\Users\me\AppData\Local\Chat\Update.exe", true, ExecutableCheck.Refused(ExecutableRefusal.DeniedProgram))));
+        apps.Candidates.Add(new CandidateItem(apps, new AppCandidate("Tool", @"C:\Tools\tool.exe", true, new ExecutableCheck(ExecutableRefusal.None, @"C:\Tools\tool.exe", identity))));
+        yield return ("apps", new AppsPage(apps));
 
         var logs = new LogsViewModel(null!) { RetentionDays = 30, HasEvents = true, ResultSummary = "46 件" };
         foreach (var e in SampleEvents(now))

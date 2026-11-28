@@ -1,0 +1,198 @@
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+
+namespace Sysacta.Core.Tools.Apps;
+
+public sealed class AppNoArgs;
+
+public sealed class AppIdArgs
+{
+    [Description("Opaque app id from app_list_available (app_ followed by 32 lowercase hex digits). Names, paths and pids are not accepted.")]
+    [StringLength(36, MinimumLength = 36)]
+    [RegularExpression(AppRules.AppIdPattern)]
+    public required string AppId { get; init; }
+}
+
+/// <summary>Current state of a registered app's executable from a cheap check (no hash). The content is verified only at launch.</summary>
+public enum AppStatus
+{
+    /// <summary>Same file (volume, file id, size) as approved, and all rules pass.</summary>
+    Ready,
+    /// <summary>Another file, size or path form is now at the approved location: the local user must re-approve it.</summary>
+    TargetChanged,
+    TargetMissing,
+    /// <summary>The executable no longer passes the safety rules.</summary>
+    NotSupported,
+    /// <summary>The check could not be completed now.</summary>
+    CheckFailed,
+}
+
+public enum LaunchBlock
+{
+    /// <summary>Sysacta runs elevated; a launched app would inherit administrator rights.</summary>
+    SysactaElevated,
+}
+
+public sealed record AvailableApp(
+    [property: Description("Opaque, permanent id for app_launch / app_close.")] string AppId,
+    [property: Description("Display name set by the local user; null when it cannot be shown safely.")] string? DisplayName,
+    [property: Description("Always win32_exe (a registered local executable).")] string Kind,
+    [property: Description("ready = the approved file is in place (content is verified at launch); target_changed / target_missing / not_supported need the local user; check_failed is temporary.")] AppStatus Status,
+    [property: Description("True when status is ready and launching is available in this environment.")] bool Launchable);
+
+public sealed record AppListAvailableData(
+    IReadOnlyList<AvailableApp> Apps,
+    int Count,
+    bool Truncated,
+    [property: Description("False when app_launch is disabled in this environment (see launch_blocked_reason).")] bool LaunchAvailable,
+    LaunchBlock? LaunchBlockedReason);
+
+public sealed record RunningAppInstance(
+    string AppId,
+    string? DisplayName,
+    int Pid,
+    [property: Description("Exact process creation time (UTC, 100 ns). Pass with pid to process_terminate.")] string StartTime,
+    [property: Description("Observed now; process_terminate re-verifies everything.")] bool CanTerminate,
+    TerminateBlock? TerminateBlockedReason);
+
+public sealed record AppListRunningData(
+    IReadOnlyList<RunningAppInstance> Instances,
+    int Count,
+    bool Truncated,
+    [property: Description("Apps whose running state is unknown: a process with the same image name could not be inspected.")] IReadOnlyList<string> UncertainAppIds,
+    [property: Description("Processes of this session that could not be inspected (not listed).")] int FailedCount);
+
+public sealed record AppLaunchData(
+    string AppId,
+    [property: Description("True when an instance was already running: nothing was launched (no focus or window change).")] bool AlreadyRunning,
+    [property: Description("True when Windows created the process; false when nothing was started; null when unknown.")] bool? Launched,
+    int? Pid,
+    string? StartTime);
+
+/// <summary>Allowed registered apps (never unallowed ones, candidates, paths, arguments or hashes).</summary>
+public sealed class AppListAvailableTool(IAppRegistry registry, IAppPlatform platform) : SysactaTool<AppNoArgs, AppListAvailableData>
+{
+    public override ToolDescriptor Descriptor { get; } = new("app_list_available", ToolCategories.Apps, "List launchable apps",
+        "Lists the apps the local user registered and allowed for launching, with an opaque app_id each. Only these can be launched or closed; apps cannot be added, allowed or changed over MCP. status is a cheap check of the approved file (not a content hash): ready does not guarantee that a launch succeeds. Paths, arguments and hashes are never returned.",
+        DefaultPolicy.On, ReadOnly: true, AuditedArguments: []);
+
+    protected override Task<ToolOutcome<AppListAvailableData>> ExecuteAsync(AppNoArgs args, ToolExecution execution, CancellationToken cancellationToken)
+    {
+        var elevated = platform.IsElevated;
+        var all = registry.ListAllowed();
+        var apps = new List<AvailableApp>();
+        foreach (var app in all.Take(AppRules.MaxApps))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var status = StatusOf(platform, app, cancellationToken);
+            apps.Add(new AvailableApp(app.Id, AppTargets.SafeName(app.DisplayName), "win32_exe", status, status == AppStatus.Ready && !elevated));
+        }
+
+        return Task.FromResult(new ToolOutcome<AppListAvailableData>(
+            new AppListAvailableData(apps, apps.Count, all.Count > apps.Count, !elevated, elevated ? LaunchBlock.SysactaElevated : null),
+            Verification.NotApplicable));
+    }
+
+    /// <summary>Cheap check (no hash) of the approved file; also used by the console.</summary>
+    public static AppStatus StatusOf(IAppPlatform platform, RegisteredApp app, CancellationToken cancellationToken)
+    {
+        ExecutableCheck check;
+        try
+        {
+            check = platform.Inspect(app.Path, computeHash: false, cancellationToken);
+        }
+        catch (ToolFailureException)
+        {
+            return AppStatus.CheckFailed;
+        }
+
+        return check.Refusal switch
+        {
+            ExecutableRefusal.None => check.Identity is { } id && id.SameFile(app.Identity) && id.Size == app.Identity.Size
+                && string.Equals(check.CanonicalPath, app.Path, StringComparison.OrdinalIgnoreCase) ? AppStatus.Ready : AppStatus.TargetChanged,
+            ExecutableRefusal.NotFound => AppStatus.TargetMissing,
+            ExecutableRefusal.IdentityChanged or ExecutableRefusal.PathMismatch or ExecutableRefusal.ReparsePoint => AppStatus.TargetChanged,
+            ExecutableRefusal.Unreadable => AppStatus.CheckFailed,
+            _ => AppStatus.NotSupported,
+        };
+    }
+}
+
+/// <summary>Running instances of allowed apps, matched by the approved file object of the process image.</summary>
+public sealed class AppListRunningTool(IAppRegistry registry, IAppPlatform platform) : SysactaTool<AppNoArgs, AppListRunningData>
+{
+    public const int MaxInstances = 256;
+
+    public override ToolDescriptor Descriptor { get; } = new("app_list_running", ToolCategories.Apps, "List running apps",
+        "Lists running processes of the allowed apps in the current user's session, one entry per process, with pid and exact start_time. A process belongs to an app only when its image is the approved executable file (not by name, title or pid); child processes running other executables are not included. uncertain_app_ids lists apps whose state could not be determined. No paths, command lines, window titles or user ids are returned.",
+        DefaultPolicy.On, ReadOnly: true, AuditedArguments: []);
+
+    protected override Task<ToolOutcome<AppListRunningData>> ExecuteAsync(AppNoArgs args, ToolExecution execution, CancellationToken cancellationToken)
+    {
+        var apps = registry.ListAllowed();
+        var names = apps.ToDictionary(a => a.Id, a => AppTargets.SafeName(a.DisplayName), StringComparer.Ordinal);
+        var scan = platform.ScanSession([.. apps.Select(AppMatchKey.For)], cancellationToken);
+        var matched = scan.Processes.Where(p => p.AppId is not null && names.ContainsKey(p.AppId))
+            .OrderBy(p => p.AppId, StringComparer.Ordinal).ThenBy(p => p.CreationTime).ThenBy(p => p.Pid)
+            .ToList();
+        var instances = matched.Take(MaxInstances).Select(p =>
+        {
+            var block = ProcessRules.Evaluate(p);
+            return new RunningAppInstance(p.AppId!, names[p.AppId!], p.Pid, ProcessStartTime.ToText(p.CreationTime), block is null, block);
+        }).ToList();
+        return Task.FromResult(new ToolOutcome<AppListRunningData>(
+            new AppListRunningData(instances, instances.Count, scan.Truncated || matched.Count > instances.Count,
+                [.. scan.UncertainAppIds.Where(names.ContainsKey).Order(StringComparer.Ordinal)], scan.FailedCount),
+            Verification.NotApplicable));
+    }
+}
+
+/// <summary>Launches the approved executable of an allowed app with its approved fixed arguments, once.</summary>
+public sealed class AppLaunchTool(IAppRegistry registry, IAppPlatform platform) : SysactaTool<AppIdArgs, AppLaunchData>
+{
+    public override ToolDescriptor Descriptor { get; } = new("app_launch", ToolCategories.Apps, "Launch registered app",
+        "Launches an allowed registered app by app_id with the executable file and fixed arguments the local user approved; nothing else (path, arguments, URL, environment, working folder) can be chosen. If an instance is already running, nothing is launched and already_running=true is returned (verified; no window is focused). The executable is re-verified (same file and SHA-256) right before the launch; a changed file is refused until the local user re-approves it. status=success with verification=accepted means Windows created the process, not that the app is ready or keeps running (some apps hand over to another process and exit). Never elevates. Do not retry when status=unknown.",
+        DefaultPolicy.On, ReadOnly: false, AuditedArguments: [], Timeout: TimeSpan.FromSeconds(15));
+
+    public override ToolAvailability GetAvailability() => platform.IsElevated
+        ? ToolAvailability.Unavailable(ErrorCodes.NotSupported, "Sysacta runs elevated; launched apps would inherit administrator rights. Run Sysacta as a standard user to launch apps.")
+        : ToolAvailability.Available;
+
+    protected override ValueTask<ToolTarget> ResolveTargetAsync(AppIdArgs args, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<ToolTarget>(new AppTarget(AppTargets.FindAllowed(registry, args.AppId), null, null));
+
+    protected override Task<ToolOutcome<AppLaunchData>> ExecuteAsync(AppIdArgs args, ToolExecution execution, CancellationToken cancellationToken)
+    {
+        var app = AppTargets.Recheck(registry, ((AppTarget)execution.Target).App);
+        if (platform.IsElevated)
+        {
+            throw new ToolFailureException(ErrorCodes.NotSupported, "Sysacta runs elevated; launching apps is disabled. Nothing was launched.");
+        }
+
+        var scan = platform.ScanSession([AppMatchKey.For(app)], cancellationToken);
+        if (scan.UncertainAppIds.Contains(app.Id))
+        {
+            throw new ToolFailureException(ErrorCodes.OsApiError, "Could not determine whether the app is already running. Nothing was launched.", retryable: true);
+        }
+
+        if (scan.Processes.Any(p => p.AppId == app.Id))
+        {
+            return Task.FromResult(new ToolOutcome<AppLaunchData>(new AppLaunchData(app.Id, true, false, null, null), Verification.Verified));
+        }
+
+        using var prepared = platform.PrepareLaunch(app, cancellationToken);
+        ReportProgress(execution, new AppLaunchData(app.Id, false, null, null, null));
+        cancellationToken.ThrowIfCancellationRequested();
+        execution.BeginSideEffect(AppTargets.StillCurrent(registry, app));
+        var result = prepared.Start();
+        var notStarted = new AppLaunchData(app.Id, false, false, null, null);
+        return Task.FromResult(result.Status switch
+        {
+            LaunchStatus.Started => new ToolOutcome<AppLaunchData>(
+                new AppLaunchData(app.Id, false, true, result.Pid, result.CreationTime is { } c ? ProcessStartTime.ToText(c) : null), Verification.Accepted),
+            LaunchStatus.ElevationRequired => ToolOutcome.Error(notStarted, ErrorCodes.NotSupported, "The app requires administrator rights and Sysacta never elevates. Nothing was started."),
+            LaunchStatus.ImageMismatch => ToolOutcome.Error(notStarted, ErrorCodes.TargetChanged, "The created process did not run the approved executable and was terminated before it started. Nothing ran."),
+            _ => ToolOutcome.Error(notStarted, ErrorCodes.OsApiError, "Windows did not start the app. Nothing was started."),
+        });
+    }
+}

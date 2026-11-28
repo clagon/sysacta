@@ -42,7 +42,17 @@ public sealed class ToolExecution
     /// changed anything. Throws if the call is no longer authorized or was already abandoned (timeout/cancel).
     /// Calling it again is a no-op.
     /// </summary>
-    public void BeginSideEffect()
+    public void BeginSideEffect() => BeginSideEffect(null);
+
+    /// <summary>
+    /// <see cref="BeginSideEffect()"/> with a target-specific condition evaluated atomically with the authorization, in
+    /// the same shared side of the gate (for example: the registered app is still allowed and has the generation that was
+    /// verified). A permission or registry change committed before this point is therefore always seen, and none can
+    /// complete during the evaluation. <paramref name="targetCheck"/> returns the refusal, or null to proceed. It must be a
+    /// short read of Sysacta's own state: no OS call, hashing, UI or await, and it must never enter the authorization
+    /// gate itself (the lock does not allow recursion).
+    /// </summary>
+    public void BeginSideEffect(Func<ToolError?>? targetCheck)
     {
         _gate.Evaluate(() =>
         {
@@ -59,6 +69,11 @@ public sealed class ToolExecution
             if (_authorize() is { } refusal)
             {
                 throw new SideEffectRefusedException(refusal);
+            }
+
+            if (targetCheck?.Invoke() is { } targetRefusal)
+            {
+                throw new SideEffectRefusedException(new ToolResult { Status = ToolStatus.Error, Error = targetRefusal });
             }
 
             if (Interlocked.CompareExchange(ref _state, Started, Pending) == Abandoned)

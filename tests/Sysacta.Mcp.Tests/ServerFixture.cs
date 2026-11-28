@@ -6,6 +6,7 @@ using Microsoft.Data.Sqlite;
 using ModelContextProtocol.Client;
 using Sysacta.Core.Security;
 using Sysacta.Core.Tools;
+using Sysacta.Core.Tools.Apps;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
@@ -39,6 +40,9 @@ public sealed class ServerFixture : IAsyncDisposable
     public FakeSystemMonitor Monitor { get; } = new();
     public PowerTransitionGate PowerGate { get; } = new();
     public FakeNotifications Notifications { get; } = new();
+    /// <summary>The real SQLite allow-list (sharing the gate with the executor) and a fake OS for the app tools.</summary>
+    public AppRegistryStore Apps { get; }
+    public FakeAppPlatform AppOs { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time) and the notification limit. The executor and the store use the system clock.</summary>
     public ManualTime Time { get; } = new();
@@ -46,13 +50,14 @@ public sealed class ServerFixture : IAsyncDisposable
     /// <summary>What the authentication layer sees of the store; counts its database calls.</summary>
     public CountingStore Counted { get; }
 
-    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower, bool includeSystem, bool includeNotification)
+    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower, bool includeSystem, bool includeNotification, bool includeApps)
     {
         Database = new SysactaDatabase(Path.Combine(_dir, "sysacta.db"));
         Database.Migrate();
         Gate = new AuthorizationGate();
         Store = new AccessStore(Database, TimeProvider.System, Gate);
         Counted = new CountingStore(Store);
+        Apps = new AppRegistryStore(Database, Gate);
         Audit = new AuditLog(Database, limits);
         AudioDevice.Devices["spk"] = AudioDevice.Devices["spk"] with { VolumeScalar = 0.4f };
         DefaultWriter = new FakeDefaultEndpointWriter(AudioDevice);
@@ -84,6 +89,7 @@ public sealed class ServerFixture : IAsyncDisposable
             .. includeSystem ? new SysactaTool[] { new SystemGetStatusTool(Monitor), new SystemGetHardwareTool(Monitor),
                 new SystemGetTemperaturesTool(Monitor), new SystemGetStorageTool(Monitor) } : [],
             .. includeNotification ? new SysactaTool[] { new NotificationSendTool(Notifications, Time) } : [],
+            .. includeApps ? new SysactaTool[] { new AppListAvailableTool(Apps, AppOs), new AppListRunningTool(Apps, AppOs), new AppLaunchTool(Apps, AppOs) } : [],
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
@@ -92,9 +98,9 @@ public sealed class ServerFixture : IAsyncDisposable
         Host = new McpServerHost(Executor, new TokenAuthenticator(Counted, Time), Audit, Time, "test");
     }
 
-    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false, bool includeSystem = false, bool includeNotification = false)
+    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false, bool includeSystem = false, bool includeNotification = false, bool includeApps = false)
     {
-        var fixture = new ServerFixture(limits, includeMedia, includePower, includeSystem, includeNotification);
+        var fixture = new ServerFixture(limits, includeMedia, includePower, includeSystem, includeNotification, includeApps);
         await fixture.Host.StartAsync(options ?? new ServerEndpointOptions { Port = 0 }, TestContext.Current.CancellationToken);
         return fixture;
     }
