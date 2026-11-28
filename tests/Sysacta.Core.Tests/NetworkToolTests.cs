@@ -28,7 +28,7 @@ public partial class NetworkToolTests
         var changes = new NetworkChanges();
         var time = new SteppedTime();
         var h = new Harness(store => [new NetworkGetStatusTool(n, time), new NetworkListAdaptersTool(n, store, time),
-            new NetworkGetTrafficTool(n, store, changes, time)], power: gate);
+            new NetworkGetTrafficTool(n, store, changes, time), new NetworkSetAdapterEnabledTool(n, store, changes)], power: gate);
         var (caller, _) = h.Store.AddClient("c1", All);
         return new Setup(h, n, changes, time, caller);
     }

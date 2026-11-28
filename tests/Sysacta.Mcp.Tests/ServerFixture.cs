@@ -108,7 +108,7 @@ public sealed class ServerFixture : IAsyncDisposable
         var changes = new NetworkChanges();
         var time = new SteppedTime();
         return [new NetworkGetStatusTool(network, time), new NetworkListAdaptersTool(network, store, time),
-            new NetworkGetTrafficTool(network, store, changes, time)];
+            new NetworkGetTrafficTool(network, store, changes, time), new NetworkSetAdapterEnabledTool(network, store, changes)];
     }
 
     public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false, bool includeSystem = false, bool includeNotification = false, bool includeApps = false, bool includeNetwork = false)

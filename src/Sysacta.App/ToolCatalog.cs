@@ -76,6 +76,7 @@ internal static class ToolCatalog
             new NetworkGetStatusTool(network, TimeProvider.System),
             new NetworkListAdaptersTool(network, aliases, TimeProvider.System),
             new NetworkGetTrafficTool(network, aliases, networkChanges, TimeProvider.System),
+            new NetworkSetAdapterEnabledTool(network, aliases, networkChanges),
             // Local console only (tray menu / device page / overview); never listed or callable over MCP.
             new DisplayRestoreModeTool(displays, recovery),
             new PowerReleaseGateTool(powerGate),
