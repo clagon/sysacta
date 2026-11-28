@@ -463,7 +463,7 @@ public sealed class WindowsAppPlatform : IAppPlatform
     /// loaded image; null ("unknown") otherwise. Windows offers no documented way to identify the mapped image file from a
     /// limited-rights process handle, and the image path keeps its creation-time name: a running exe can be renamed and
     /// another file put at that path (an ordinary in-place update does exactly that). So the file now at the path counts
-    /// only when its ChangeTime is not later than the process creation: renaming, moving, linking or writing a file updates
+    /// only when its ChangeTime is earlier than the process creation: renaming, moving, linking or writing a file updates
     /// its ChangeTime, so a file unchanged since before the process started was already that path's file when the image
     /// was loaded. The NT path is used (no drive letter mapping) and opened without following reparse points.
     /// </summary>
@@ -479,7 +479,7 @@ public sealed class WindowsAppPlatform : IAppPlatform
         return !file.IsInvalid
             && (!noReparse || (GetFileInformationByHandle(file, out var info) && (info.FileAttributes & (FileAttributeReparsePoint | FileAttributeDirectory)) == 0))
             && (unchangedSince is not { } since
-                || (GetFileBasicInformationByHandleEx(file, FileBasicInfoClass, out var basic, (uint)Marshal.SizeOf<FileBasicInfo>()) && basic.ChangeTime > 0 && basic.ChangeTime <= since))
+                || (GetFileBasicInformationByHandleEx(file, FileBasicInfoClass, out var basic, (uint)Marshal.SizeOf<FileBasicInfo>()) && basic.ChangeTime > 0 && basic.ChangeTime < since))
             && GetFileInformationByHandleEx(file, FileIdInfoClass, out var id, (uint)Marshal.SizeOf<FileIdInfo>())
             ? new ExecutableIdentity(id.VolumeSerialNumber.ToString("x16"), FileIdHex(id), 1, "")
             : null;
@@ -627,29 +627,34 @@ public sealed class WindowsAppPlatform : IAppPlatform
             var pid = (int)info.ProcessId;
             using var process = new SafeProcessHandle(info.Process, ownsHandle: true);
             var resumed = false;
-            var reclaimed = false;
+            var reclaimAttempted = false;
             try
             {
                 // Defense in depth: before any of its code runs, the suspended process's image must be the held file, compared
                 // as NT device paths (not through drive letters, which a same-user process could remap).
-                if (!string.Equals(ImagePath(process, native: true), expectedImage, StringComparison.OrdinalIgnoreCase)
-                    || !GetProcessTimes(process, out var creation, out _, out _, out _))
+                if (!string.Equals(ImagePath(process, native: true), expectedImage, StringComparison.OrdinalIgnoreCase))
                 {
-                    reclaimed = Reclaim(process);
-                    return new LaunchResult(LaunchStatus.ImageMismatch, pid, Reclaimed: reclaimed);
+                    reclaimAttempted = true;
+                    return new LaunchResult(LaunchStatus.ImageMismatch, pid, Reclaimed: Reclaim(process));
+                }
+
+                if (!GetProcessTimes(process, out var creation, out _, out _, out _))
+                {
+                    reclaimAttempted = true;
+                    return new LaunchResult(LaunchStatus.ResumeFailed, pid, Reclaimed: Reclaim(process));
                 }
 
                 // The last check before the process may run: cancellation, executor detachment, authorization, approval.
                 if (beforeResume() is { } refusal)
                 {
-                    reclaimed = Reclaim(process);
-                    return new LaunchResult(LaunchStatus.Withdrawn, pid, creation, reclaimed, refusal);
+                    reclaimAttempted = true;
+                    return new LaunchResult(LaunchStatus.Withdrawn, pid, creation, Reclaim(process), refusal);
                 }
 
                 if (ResumeThread(info.Thread) == uint.MaxValue)
                 {
-                    reclaimed = Reclaim(process);
-                    return new LaunchResult(LaunchStatus.ResumeFailed, pid, creation, reclaimed);
+                    reclaimAttempted = true;
+                    return new LaunchResult(LaunchStatus.ResumeFailed, pid, creation, Reclaim(process));
                 }
 
                 resumed = true;
@@ -657,9 +662,10 @@ public sealed class WindowsAppPlatform : IAppPlatform
             }
             finally
             {
-                if (!resumed && !reclaimed)
+                if (!resumed && !reclaimAttempted)
                 {
-                    // An exception before the resume: never leave a suspended process this call created behind.
+                    // An exception before the resume: never leave a suspended process this call created behind (the
+                    // executor reports the call as unknown).
                     _ = Reclaim(process);
                 }
 
