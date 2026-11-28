@@ -23,7 +23,8 @@ public enum PowerGatePhase
     Held,
 }
 
-public sealed record PowerGateState(PowerGatePhase Phase, PowerTransition? Transition, int RunningChanges);
+/// <param name="Generation">Number of the latest admitted transition (0 before the first). A local release names it.</param>
+public sealed record PowerGateState(PowerGatePhase Phase, PowerTransition? Transition, int RunningChanges, long Generation);
 
 public enum PowerGateRelease
 {
@@ -31,6 +32,8 @@ public enum PowerGateRelease
     NotHeld,
     /// <summary>The transition's call has not ended (for example a native call isolated after a timeout).</summary>
     StillRunning,
+    /// <summary>The confirmed transition is no longer the current one (it ended and another one was admitted).</summary>
+    Changed,
 }
 
 /// <summary>
@@ -54,6 +57,7 @@ public sealed class PowerTransitionGate
     private int _changes;
     private PowerGatePhase _phase;
     private PowerTransition? _transition;
+    private long _generation;
     private bool _started;
     private bool _suspended;
     private bool _resumed;
@@ -67,7 +71,7 @@ public sealed class PowerTransitionGate
         {
             lock (_lock)
             {
-                return new(_phase, _transition, _changes);
+                return new(_phase, _transition, _changes, _generation);
             }
         }
     }
@@ -104,6 +108,7 @@ public sealed class PowerTransitionGate
             }
 
             (_phase, _transition, _started, _suspended, _resumed) = (PowerGatePhase.Running, transition, false, false, false);
+            _generation++;
         }
 
         Raise();
@@ -177,13 +182,19 @@ public sealed class PowerTransitionGate
     }
 
     /// <summary>
-    /// Explicit release by the local user (through the local-only tool, after a confirmation). Never releases a transition
-    /// whose call has not ended.
+    /// Explicit release by the local user (through the local-only tool, after a confirmation) of the transition the user
+    /// confirmed (<paramref name="generation"/>, read before the confirmation). Checked under the same lock as the release,
+    /// so a later transition is never released by an earlier confirmation. Never releases a transition whose call has not ended.
     /// </summary>
-    internal PowerGateRelease ReleaseHeld()
+    internal PowerGateRelease ReleaseHeld(long generation)
     {
         lock (_lock)
         {
+            if (generation != _generation)
+            {
+                return _phase == PowerGatePhase.Idle ? PowerGateRelease.NotHeld : PowerGateRelease.Changed;
+            }
+
             switch (_phase)
             {
                 case PowerGatePhase.Running:

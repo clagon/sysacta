@@ -44,7 +44,7 @@ internal sealed class TrayIcon : IDisposable
         DisplayModeRecovery? recovery = null,
         Func<Task<ToolResult>>? restoreMode = null,
         PowerTransitionGate? powerGate = null,
-        Func<Task<ToolResult>>? releasePower = null)
+        Func<long, Task<ToolResult>>? releasePower = null)
     {
         _host = host;
         _endpointUrl = endpointUrl;
@@ -140,9 +140,11 @@ internal sealed class TrayIcon : IDisposable
         _releasePower.ToolTip = state is null ? null : PowerGateText.Describe(state);
     }
 
-    private async Task ReleasePowerAsync(Func<Task<ToolResult>>? release)
+    private async Task ReleasePowerAsync(Func<long, Task<ToolResult>>? release)
     {
-        if (release is null || !_releasePower.IsEnabled)
+        // The confirmation applies to the transition shown now; a later one is refused by the tool (TARGET_CHANGED).
+        var confirmed = _powerGate?.State;
+        if (release is null || confirmed?.Phase != PowerGatePhase.Held || !_releasePower.IsEnabled)
         {
             return;
         }
@@ -155,7 +157,7 @@ internal sealed class TrayIcon : IDisposable
                 return;
             }
 
-            var (ok, title, message) = PowerGateText.DescribeRelease(await release());
+            var (ok, title, message) = PowerGateText.DescribeRelease(await release(confirmed.Generation));
             if (_disposed)
             {
                 return;

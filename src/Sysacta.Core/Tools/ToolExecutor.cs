@@ -116,7 +116,9 @@ public sealed partial class ToolExecutor
         // Before target resolution, locks and the slot: a state change is admitted only while no power transition runs or
         // is held, and a power transition only while no other state change is admitted (one atomic check each).
         var transition = tool.Descriptor.Transition;
-        if (!tool.Descriptor.ReadOnly && !(transition is { } kind ? _power.TryEnterTransition(kind) : _power.TryEnterChange()))
+        // The local-only release of a held transition is the single exception (ToolDescriptor.ReleasesPowerGate).
+        var gated = !tool.Descriptor.ReadOnly && !tool.Descriptor.ReleasesPowerGate;
+        if (gated && !(transition is { } kind ? _power.TryEnterTransition(kind) : _power.TryEnterChange()))
         {
             Interlocked.Decrement(ref _admitted);
             return call.Finish(AuditOutcome.Denied, ToolResult.Fail(ErrorCodes.Busy, transition is null
@@ -127,7 +129,7 @@ public sealed partial class ToolExecutor
         // From here on, Release() must run exactly once: either in finally, or after an isolated native call completes.
         var resources = new HeldResources(this, CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            Gate = tool.Descriptor.ReadOnly ? GateRole.None : transition is null ? GateRole.Change : GateRole.Transition,
+            Gate = !gated ? GateRole.None : transition is null ? GateRole.Change : GateRole.Transition,
         };
         resources.Cancellation.CancelAfter(tool.Descriptor.EffectiveTimeout);
         var token = resources.Cancellation.Token;

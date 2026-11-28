@@ -39,7 +39,7 @@
 | ツール | 入力 | 出力 `data` |
 |---|---|---|
 | power_get_state | なし | `ac_power`: online/offline/unknown、`battery`: present/absent/unknown、`battery_charging`、`battery_percent`(0–100)、`battery_seconds_remaining`、`battery_full_seconds`、`battery_saver`、`active_plan_id`、`sleep_supported`(S1–S3)、`hibernate_supported`(S4 かつ hiberfile)、`modern_standby`、`unavailable`: [power_status, active_plan, capabilities]。不明は null（0 や満充電に置換しない）。バッテリーなしは `absent` で異常扱いしない。全部取得不能なら OS_API_ERROR(retryable) |
-| power_list_plans | なし | `plans[]`: `{plan_id, name, is_active}`（最大 64）、`active_plan_id`、`active_plan_read_failed`、`total_count`(列挙数、最大 256)、`truncated`、`failed_count`(名前取得失敗)。名前は信頼しない外部データ: `@`・`\`・`%` を含むものは null、制御・format 文字除去、64 文字まで |
+| power_list_plans | なし | `plans[]`: `{plan_id, name, is_active}`（最大 64）、`active_plan_id`、`active_plan_read_failed`、`total_count`(列挙数、最大 256)、`truncated`、`failed_count`(名前取得失敗)。名前は信頼しない外部データ: メディアと共通の `UntrustedText`（制御・format 文字を除去した**後の値**に `/`・`\`・ドライブ文字・絶対 URI・既知スキームがあれば null）に加え、`@` で始まる間接文字列と `%` を含むものも null、64 文字まで |
 | power_set_plan | `plan_id`: 36 文字、`^[0-9a-f]{8}-…-[0-9a-f]{12}$`（小文字 D 形式のみ） | `previous_plan_id`、`requested_plan_id`、`current_plan_id`（読み戻し、失敗時 null）、`changed`（不明 null） |
 | power_lock / sleep / shutdown / restart | なし | `operation`: lock/sleep/shutdown/restart、`accepted`（不明 null） |
 
@@ -63,7 +63,7 @@
 
 `WindowsPower.WithShutdownPrivilege`（スリープ・シャットダウン・再起動のみ。ロックは特権不要）:
 
-1. `OpenThreadToken` で呼び出しスレッドが既に偽装中なら拒否（RevertToSelf で元の偽装を失わないため）。
+1. `OpenThreadToken` で呼び出しスレッドの偽装を確認する。失敗直後に last error を取得し、`ERROR_NO_TOKEN`(1008) の場合だけ続行する。トークンがある場合とそれ以外の失敗（アクセス拒否など、偽装がないと断定できない）は、開始点より前に固定エラーで拒否する（RevertToSelf で元の偽装を失わないため）。
 2. `OpenProcessToken(TOKEN_DUPLICATE|TOKEN_QUERY)` → `DuplicateTokenEx(TokenImpersonation, SecurityImpersonation)`。
 3. 複製トークンだけに `AdjustTokenPrivileges(SeShutdownPrivilege, ENABLED)`。失敗または `ERROR_NOT_ALL_ASSIGNED` なら OS_API_ERROR で拒否（要求なし）。P/Invoke の `SetLastError=true` はランタイムが呼び出し前に last error をクリアする。
 4. `beginSideEffect()` = `ToolExecution.BeginSideEffect`（最終認可・開始点）。DB 読み取りを含むため偽装の前に行う。拒否・放棄なら例外で抜け、複製トークンを閉じる（偽装していない）。
@@ -114,8 +114,9 @@
 | シャットダウン/再起動の受理または不明 | なし（OS の中止通知は確実な証拠にならない） | 要求の実終了後に可 |
 
 - 経過時間・HTTP 切断・ホスト再開・単独の resume 通知はいずれも解除条件にしない。
+- ローカル解除は**確認した遷移だけ**を解除する。遷移ごとに世代番号（`PowerGateState.Generation`、受付ごとに +1）を振り、UI は確認ダイアログを出す前に表示中の世代を取得して `power_release_gate` の引数 `generation` に渡す。ゲートは同じロックの下で世代と状態を照合し、別の遷移に置き換わっていれば `TARGET_CHANGED`（Held の遷移はそのまま）、終了済みで次がなければ `not_held`、実行中なら BUSY。例: スリープ A の確認中に A が復帰で解除され、シャットダウン B が Held になっても、A の確認で B は解除されない（同種の遷移でも世代で区別）。
 - ローカル解除: 概要画面の「状態変更を再開」またはトレイメニューの「電源操作の後の状態変更を再開」（表示モード変更で概要画面のある画面が映らない場合のため。トレイはプライマリ画面の通知領域）→ 確認ダイアログ → `power_release_gate`（LocalOnly、MCP には存在しない、executor 経由・最終監査あり）。実行中（Running）は拒否（BUSY）。OS に送った停止要求は取り消さない（AbortSystemShutdown は使わない）。
-- `power_release_gate` は OS 状態を変えないため pipeline 上は ReadOnly（ゲートを通らず、ロックも pending もない）。最終監査は記録される。これは「ローカル利用者の明示的な解除経路」で、MCP から到達できない（AccessPolicy の LocalOnly 判定）。
+- `power_release_gate` は状態変更ツール（ReadOnly ではない）で、ロック・pending 監査・開始点（`BeginSideEffect`）・最終監査を通る。開始点より前にキャンセル/タイムアウトした解除は放棄され、後から解除されることはない。Held 中に受け付ける唯一の状態変更で、その例外は `ToolDescriptor.ReleasesPowerGate`（`ToolRegistry` が LocalOnly・非 ReadOnly・非遷移を必須にする）だけで表す。監査には `generation`（数値）だけを残す。MCP からは到達できない（AccessPolicy の LocalOnly 判定）。
 - アプリを再起動するとゲートは Idle に戻る。OS に残っている停止要求まで制御できないのは限界（アプリ終了 = 停止処理中の可能性が高い）。
 
 ## 5. 監査・タイムアウト
@@ -170,3 +171,10 @@
 - `LockWorkStation` などの受理は完了を意味しない。結果は常に `accepted` で、実際の状態は観測しない。
 - 偽装中の RevertToSelf 失敗時はプロセスを即時終了する（文書の推奨。監査は次回起動で unknown）。
 - プラン名のサニタイズは既知のパス・間接文字列を除外するだけで、名前に含まれ得る任意の情報を完全には検出できない。
+
+## 11. PR レビュー対応（2026-11-28）
+
+- Codex P1 / 追加レビュー[高]: プラン名の `/` 形式のパス（`C:/Users/...`、相対パス、URL、スキーム）が MCP 応答に含まれ得た → メディアのサニタイズを Core の `UntrustedText` に移して共通化し、サニタイズ後の値を検査する。単体テスト（スラッシュ形式の絶対/相対パス、URL、mailto、ドライブ文字、制御文字付きの間接文字列、正常名）と MCP 応答にパスが含まれないことの統合テストを追加。
+- 追加レビュー[中]: ローカル解除が確認した遷移と別の遷移を解除し得た、ReadOnly のためキャンセル後に遅延解除し得た → 世代番号で照合（§4）、解除ツールを開始点・pending 監査付きの状態変更に変更し、ゲートの例外を `ReleasesPowerGate` に限定。回帰テスト: A の確認中に復帰→B が Held、同種の別遷移、Running の拒否、開始点前のキャンセルで遅延解除ゼロ、pending と generation だけの監査、世代の指定必須、MCP 非公開、登録時の制約。
+- 追加レビュー[中]: `OpenThreadToken` の失敗理由を区別していなかった → `ERROR_NO_TOKEN` のときだけ続行（§3）。判定関数の単体テスト（全 OS）と、既存の偽装がある場合に開始点前に拒否して偽装を保つ Windows テスト（電源 API は呼ばない）を追加。
+- Linux: build 警告ゼロ、test は Core 607、Infrastructure 50、MCP 116、Windows 64 成功（Windows 実機専用 26 件スキップ）。

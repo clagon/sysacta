@@ -46,7 +46,7 @@ public class PowerServerTests
         }
 
         Assert.Contains("not that it completed", tools["power_shutdown"].Description, StringComparison.Ordinal);
-        await Assert.ThrowsAsync<McpProtocolException>(() => client.CallToolAsync("power_release_gate", new Dictionary<string, object?>(), cancellationToken: Ct).AsTask());
+        await Assert.ThrowsAsync<McpProtocolException>(() => client.CallToolAsync("power_release_gate", new Dictionary<string, object?> { ["generation"] = 1 }, cancellationToken: Ct).AsTask());
     }
 
     [Theory]
@@ -100,7 +100,7 @@ public class PowerServerTests
         await f.Host.StartAsync(new ServerEndpointOptions { Port = 0 }, Ct);
         Assert.Equal(PowerGatePhase.Held, f.PowerGate.State.Phase);
 
-        Assert.True((await f.Executor.ExecuteAsync(Caller.LocalConsole, "power_release_gate", null, Ct)).IsSuccess);
+        Assert.True((await f.Executor.ExecuteAsync(Caller.LocalConsole, "power_release_gate", JsonSerializer.SerializeToElement(new { generation = f.PowerGate.State.Generation }), Ct)).IsSuccess);
         await using var again = await f.ClientAsync(f.Issue("audio_set_volume").Token);
         Assert.False((await again.CallToolAsync("audio_set_volume", new Dictionary<string, object?> { ["level"] = 10 }, cancellationToken: Ct)).IsError);
 
@@ -117,8 +117,11 @@ public class PowerServerTests
         await SetEnabled(f, "power_set_plan", "power_list_plans", "power_restart");
         await using var client = await f.ClientAsync(f.Issue("power_set_plan", "power_list_plans", "power_restart").Token);
 
+        f.Power.Plans.Add(new(Guid.CreateVersion7(), "C:/Users/example/private-plan"));
         var list = await client.CallToolAsync("power_list_plans", new Dictionary<string, object?>(), cancellationToken: Ct);
-        Assert.Contains("secret plan name", Assert.IsType<JsonElement>(list.StructuredContent).GetRawText(), StringComparison.Ordinal);
+        var listed = Assert.IsType<JsonElement>(list.StructuredContent).GetRawText();
+        Assert.Contains("secret plan name", listed, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-plan", listed, StringComparison.Ordinal); // no path in an MCP response
         var set = await client.CallToolAsync("power_set_plan", ArgsFor("power_set_plan"), cancellationToken: Ct);
         Assert.False(set.IsError);
         Assert.False((await client.CallToolAsync("power_restart", new Dictionary<string, object?>(), cancellationToken: Ct)).IsError);

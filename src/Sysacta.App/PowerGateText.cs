@@ -15,6 +15,7 @@ internal static class PowerGateText
     {
         { IsSuccess: true } when (result.Data?["result"] as System.Text.Json.Nodes.JsonValue)?.TryGetValue<string>(out var r) == true && r == "not_held" => (true, "解除は不要です", "状態変更はすでに受け付けています。"),
         { IsSuccess: true } => (true, "状態変更を再開しました", ""),
+        { Error.Code: ErrorCodes.TargetChanged } => (false, "解除しませんでした", "確認した後に別の電源操作が始まりました。表示を確認してからやり直してください。"),
         { Error.Code: ErrorCodes.Busy } => (false, "解除できませんでした", "電源操作の処理がまだ終わっていません。しばらくしてからやり直してください。"),
         _ => (false, "解除できませんでした", "操作をやり直してください。続く場合は監査ログを確認してください。"),
     };

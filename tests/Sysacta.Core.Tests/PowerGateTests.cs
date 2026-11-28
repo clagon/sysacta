@@ -49,6 +49,10 @@ public class PowerGateTests
 
         public Task<ToolResult> Local(string tool) => H.Executor.ExecuteAsync(Caller.LocalConsole, tool, null, Ct);
 
+        /// <summary>The local release, confirming <paramref name="generation"/> (default: the transition shown now).</summary>
+        public Task<ToolResult> Release(long? generation = null, CancellationToken? ct = null) =>
+            H.Executor.ExecuteAsync(Caller.LocalConsole, "power_release_gate", TestJson.Args(new { generation = generation ?? Gate.State.Generation }), ct ?? Ct);
+
         /// <summary>Starts the blocking state change and waits until its side effect has started.</summary>
         public async Task<Task<ToolResult>> StartChangeAsync(string resource = "a", CancellationToken? ct = null)
         {
@@ -76,6 +80,12 @@ public class PowerGateTests
         }
 
         Assert.True(condition());
+    }
+
+    private static void AssertIdle(PowerTransitionGate gate)
+    {
+        var state = gate.State;
+        Assert.Equal((PowerGatePhase.Idle, (PowerTransition?)null, 0), (state.Phase, state.Transition, state.RunningChanges));
     }
 
     private static void AssertBusy(ToolResult result)
@@ -163,16 +173,16 @@ public class PowerGateTests
         Assert.Equal(PowerGatePhase.Held, r.Gate.State.Phase); // no OS signal releases a shutdown
 
         // MCP clients cannot see or call the release.
-        var mcp = await r.Call("power_release_gate");
+        var mcp = await r.Call("power_release_gate", new { generation = r.Gate.State.Generation });
         Assert.Equal(ToolExecutor.UnknownToolCode, mcp.Error!.Code);
         Assert.Equal(PowerGatePhase.Held, r.Gate.State.Phase);
 
-        var released = await r.Local("power_release_gate");
+        var released = await r.Release();
         Assert.True(released.IsSuccess);
         Assert.Equal("released", released.Data!["result"]!.GetValue<string>());
         Assert.Equal(AuditOutcome.Success, r.H.Audit.Final(released.RequestId).Outcome);
         Assert.Equal(PowerGatePhase.Idle, r.Gate.State.Phase);
-        Assert.Equal("not_held", (await r.Local("power_release_gate")).Data!["result"]!.GetValue<string>());
+        Assert.Equal("not_held", (await r.Release()).Data!["result"]!.GetValue<string>());
     }
 
     [Theory]
@@ -291,7 +301,7 @@ public class PowerGateTests
         Assert.False(result.Error!.Retryable);
         Assert.Equal(PowerGatePhase.Running, r.Gate.State.Phase);
         AssertBusy(await r.Call(r.Change.Name, new { resource = "a" }));
-        var early = await r.Local("power_release_gate");
+        var early = await r.Release();
         Assert.Equal(ErrorCodes.Busy, early.Error!.Code); // never released while the native call runs
         Assert.Equal(PowerGatePhase.Running, r.Gate.State.Phase);
         // The privilege scope lives exactly as long as the native request (none for lock).
@@ -387,9 +397,78 @@ public class PowerGateTests
         await r.Call("power_sleep");
         Assert.Equal(PowerGatePhase.Held, r.Gate.State.Phase);
 
-        Assert.True((await r.Local("power_release_gate")).IsSuccess);
+        Assert.True((await r.Release()).IsSuccess);
 
         Assert.Equal(PowerGatePhase.Idle, r.Gate.State.Phase);
+    }
+
+    [Theory]
+    [InlineData("power_sleep", "power_shutdown")]
+    [InlineData("power_shutdown", "power_shutdown")]
+    [InlineData("power_restart", "power_sleep")]
+    public async Task A_release_confirmed_for_one_transition_never_releases_a_later_one(string first, string second)
+    {
+        var r = new Rig();
+        await r.Call(first);
+        var confirmed = r.Gate.State.Generation; // the dialog shows transition A
+        if (first == "power_sleep")
+        {
+            r.Gate.NotifySuspend();
+            r.Gate.NotifyResume(); // A ends while the dialog is open
+        }
+        else
+        {
+            Assert.True((await r.Release(confirmed)).IsSuccess); // released from the other UI path
+        }
+
+        await r.Call(second); // B is held now
+        Assert.Equal(PowerGatePhase.Held, r.Gate.State.Phase);
+
+        var stale = await r.Release(confirmed);
+
+        Assert.Equal(ErrorCodes.TargetChanged, stale.Error!.Code);
+        Assert.Equal(PowerGatePhase.Held, r.Gate.State.Phase); // B stays held
+        Assert.True((await r.Release()).IsSuccess);
+        AssertIdle(r.Gate);
+    }
+
+    [Fact]
+    public async Task A_release_cancelled_before_its_start_point_never_releases_later()
+    {
+        var r = new Rig();
+        await r.Call("power_shutdown");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var cancelled = await r.Release(ct: cts.Token);
+
+        Assert.Equal(ErrorCodes.Cancelled, cancelled.Error!.Code);
+        await Task.Delay(50, Ct);
+        Assert.Equal(PowerGatePhase.Held, r.Gate.State.Phase);
+        Assert.DoesNotContain(r.H.Audit.Events, e => e.ToolName == "power_release_gate" && e.Outcome == AuditOutcome.Success);
+    }
+
+    [Fact]
+    public async Task The_release_writes_a_pending_record_and_audits_only_the_generation()
+    {
+        var r = new Rig();
+        await r.Call("power_restart");
+        var generation = r.Gate.State.Generation;
+
+        var released = await r.Release();
+
+        Assert.True(released.IsSuccess);
+        var records = r.H.Audit.Events.Where(e => e.RequestId == released.RequestId).ToList();
+        Assert.Equal([AuditOutcome.Pending, AuditOutcome.Success], records.Select(e => e.Outcome));
+        Assert.All(records, e => Assert.Equal("{\"generation\":" + generation + "}", e.Arguments));
+        Assert.Equal(ErrorCodes.InvalidArgument, (await r.Local("power_release_gate")).Error!.Code); // the confirmed transition is required
+    }
+
+    [Fact]
+    public void Only_a_local_only_state_change_can_release_the_gate()
+    {
+        Assert.Throws<ArgumentException>(() => new ToolRegistry([new BadRelease(localOnly: false, readOnly: false)]));
+        Assert.Throws<ArgumentException>(() => new ToolRegistry([new BadRelease(localOnly: true, readOnly: true)]));
     }
 
     [Theory]
@@ -406,7 +485,7 @@ public class PowerGateTests
         Assert.Equal(ErrorCodes.PermissionDenied, denied.Error!.Code);
         Assert.Equal(ErrorCodes.InvalidArgument, invalid.Error!.Code);
         Assert.Equal(ErrorCodes.InvalidArgument, delayed.Error!.Code);
-        Assert.Equal(new PowerGateState(PowerGatePhase.Idle, null, 0), r.Gate.State);
+        AssertIdle(r.Gate);
         Assert.Equal(0, r.Power.Requests);
     }
 
@@ -421,7 +500,7 @@ public class PowerGateTests
 
         r.Change.Gate("a").Release();
         await change;
-        Assert.Equal(new PowerGateState(PowerGatePhase.Idle, null, 0), r.Gate.State);
+        AssertIdle(r.Gate);
         Assert.True((await r.Call("power_lock")).IsSuccess);
     }
 
@@ -464,7 +543,7 @@ public class PowerGateTests
         Assert.All(results, x => Assert.True(x.IsSuccess || x.Error!.Code == ErrorCodes.Busy));
         Assert.Contains(results, x => x.IsSuccess);
         await Until(() => r.H.Executor.InFlight == 0);
-        Assert.Equal(new PowerGateState(PowerGatePhase.Idle, null, 0), r.Gate.State);
+        AssertIdle(r.Gate);
     }
 
     [Fact]
@@ -512,6 +591,14 @@ public class PowerGateTests
             Body?.Invoke();
             return Task.FromResult(new ToolOutcome<EchoData>(new EchoData(args.Value), Verification.Verified));
         }
+    }
+
+    private sealed class BadRelease(bool localOnly, bool readOnly) : SysactaTool<PowerNoArgs, EchoData>
+    {
+        public override ToolDescriptor Descriptor { get; } = new("power_bad_release", ToolCategories.Power, "x", "x", DefaultPolicy.Off, readOnly, [], LocalOnly: localOnly, ReleasesPowerGate: true);
+
+        protected override Task<ToolOutcome<EchoData>> ExecuteAsync(PowerNoArgs args, ToolExecution execution, CancellationToken cancellationToken) =>
+            Task.FromResult(new ToolOutcome<EchoData>(new EchoData(0), Verification.NotApplicable));
     }
 
     private sealed class BadTransition(bool readOnly, bool localOnly) : SysactaTool<PowerNoArgs, EchoData>

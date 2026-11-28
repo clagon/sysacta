@@ -115,7 +115,9 @@ public sealed partial class OverviewViewModel(SysactaRuntime runtime) : PageView
     [RelayCommand]
     private async Task ReleasePowerGateAsync()
     {
-        if (!await ConfirmAsync(Sysacta.App.PowerGateText.ConfirmTitle, Sysacta.App.PowerGateText.ConfirmMessage, Sysacta.App.PowerGateText.ConfirmAction))
+        // The confirmation applies to the transition shown now; a later one is refused by the tool (TARGET_CHANGED).
+        var confirmed = runtime.PowerGate.State;
+        if (confirmed.Phase != PowerGatePhase.Held || !await ConfirmAsync(Sysacta.App.PowerGateText.ConfirmTitle, Sysacta.App.PowerGateText.ConfirmMessage, Sysacta.App.PowerGateText.ConfirmAction))
         {
             return;
         }
@@ -123,7 +125,7 @@ public sealed partial class OverviewViewModel(SysactaRuntime runtime) : PageView
         await RunAsync(async () =>
         {
             ClearMessage();
-            var (ok, title, message) = Sysacta.App.PowerGateText.DescribeRelease(await runtime.ReleasePowerGateAsync());
+            var (ok, title, message) = Sysacta.App.PowerGateText.DescribeRelease(await runtime.ReleasePowerGateAsync(confirmed.Generation));
             Notify(ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning, title, message);
 
             ApplyPowerGate(runtime.PowerGate.State);

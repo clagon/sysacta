@@ -112,6 +112,50 @@ public class WindowsPowerTests
         Assert.False(HasThreadToken());
     }
 
+    [Theory]
+    [InlineData(false, 1008, true)]   // ERROR_NO_TOKEN: not impersonating, continue
+    [InlineData(true, 0, false)]      // a thread token exists: refuse
+    [InlineData(false, 5, false)]     // access denied: an impersonation cannot be ruled out, refuse
+    [InlineData(false, 0, false)]     // failure without a reason: refuse
+    public void Only_ERROR_NO_TOKEN_lets_the_privilege_preparation_continue(bool opened, int error, bool continues)
+    {
+        var ex = Record.Exception(() => WindowsPower.EnsureNotImpersonating(opened, error));
+        Assert.Equal(continues, ex is null);
+        if (!continues)
+        {
+            Assert.Equal(ErrorCodes.InternalError, Assert.IsType<ToolFailureException>(ex).Code);
+        }
+    }
+
+    [Fact]
+    public void An_existing_impersonation_is_refused_before_the_start_point_and_kept()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
+        Assert.True(Native.OpenProcessToken(Native.GetCurrentProcess(), Native.TokenDuplicate | Native.TokenQuery, out var process));
+        using (process)
+        {
+            Assert.True(Native.DuplicateTokenEx(process, Native.TokenImpersonate | Native.TokenQuery, IntPtr.Zero, Native.SecurityImpersonation, Native.TokenTypeImpersonation, out var token));
+            using (token)
+            {
+                Assert.True(Native.SetThreadToken(IntPtr.Zero, token));
+                try
+                {
+                    var started = false;
+                    var ex = Assert.Throws<ToolFailureException>(() => WindowsPower.WithShutdownPrivilege(() => started = true, () => PowerRequestResult.Accepted));
+                    Assert.Equal(ErrorCodes.InternalError, ex.Code);
+                    Assert.False(started);
+                    Assert.True(HasThreadToken()); // the caller's impersonation is left as it was
+                }
+                finally
+                {
+                    Assert.True(Native.RevertToSelf());
+                }
+            }
+        }
+
+        Assert.False(HasThreadToken());
+    }
+
     [Fact]
     public void Suspend_resume_notifications_register_and_unregister_without_a_window()
     {

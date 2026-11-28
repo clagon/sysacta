@@ -95,6 +95,9 @@ public class DisplayRecoveryUiTests
         var busy = PowerGateText.DescribeRelease(ToolResult.Fail(ErrorCodes.Busy, "The power transition is still running."));
         Assert.False(busy.Ok);
         Assert.Contains("まだ終わっていません", busy.Message, StringComparison.Ordinal);
+        var changed = PowerGateText.DescribeRelease(ToolResult.Fail(ErrorCodes.TargetChanged, "Another power transition replaced the confirmed one."));
+        Assert.False(changed.Ok);
+        Assert.Contains("別の電源操作", changed.Message, StringComparison.Ordinal);
         var other = PowerGateText.DescribeRelease(ToolResult.Fail(ErrorCodes.InternalError, "secret detail"));
         Assert.DoesNotContain("まだ終わっていません", other.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("secret", other.Title + other.Message, StringComparison.Ordinal);

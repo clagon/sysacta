@@ -39,6 +39,10 @@ public enum DefaultPolicy
 /// refused while it runs or is held. Never derived from client input. Such a tool may return <c>status: error</c> after its
 /// start point only when the OS definitely did not execute the request (the gate is then released).
 /// </param>
+/// <param name="ReleasesPowerGate">
+/// Only for the local-only release of a held power transition: the one state-changing call that is admitted while the
+/// gate is held. It still has locks, a pending audit record and a start point. The registry requires LocalOnly.
+/// </param>
 public sealed record ToolDescriptor(
     string Name,
     string Category,
@@ -49,7 +53,8 @@ public sealed record ToolDescriptor(
     IReadOnlyList<string> AuditedArguments,
     TimeSpan? Timeout = null,
     bool LocalOnly = false,
-    PowerTransition? Transition = null)
+    PowerTransition? Transition = null,
+    bool ReleasesPowerGate = false)
 {
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
 

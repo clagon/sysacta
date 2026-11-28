@@ -202,6 +202,15 @@ public class PowerToolTests
     [InlineData("C:\\plans\\x", null)]
     [InlineData("%TEMP%", null)]
     [InlineData("@powrprof.dll,-1", null)]
+    [InlineData("C:/Users/example/private-plan", null)]
+    [InlineData("/home/example/plan", null)]
+    [InlineData("plans/private", null)]
+    [InlineData("https://example.invalid/plan", null)]
+    [InlineData("mailto:someone@example.invalid", null)]
+    [InlineData("C:plan", null)]
+    [InlineData("\u0007@powrprof.dll,-1", null)]
+    [InlineData("Lenovo Default", "Lenovo Default")]
+    [InlineData("高パフォーマンス", "高パフォーマンス")]
     public void Plan_names_are_sanitized(string raw, string? expected) => Assert.Equal(expected, PowerStatus.Name(raw));
 
     // ---- power_set_plan -----------------------------------------------------------------------------------------

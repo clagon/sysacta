@@ -166,13 +166,10 @@ public sealed class WindowsPower : IPower
     internal static PowerRequestResult WithShutdownPrivilege(Action beginSideEffect, Func<PowerRequestResult> request)
     {
         // A thread that already impersonates would lose that context on RevertToSelf; never expected on a pool thread.
-        if (Native.OpenThreadToken(Native.GetCurrentThread(), Native.TokenQuery, true, out var existing))
-        {
-            existing.Dispose();
-            throw new ToolFailureException(ErrorCodes.InternalError, "The power request could not be prepared.");
-        }
-
+        var opened = Native.OpenThreadToken(Native.GetCurrentThread(), Native.TokenQuery, true, out var existing);
+        var error = Marshal.GetLastPInvokeError(); // before anything else can overwrite it
         existing.Dispose();
+        EnsureNotImpersonating(opened, error);
         if (!Native.OpenProcessToken(Native.GetCurrentProcess(), Native.TokenDuplicate | Native.TokenQuery, out var process))
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "The power request could not be prepared.");
@@ -224,6 +221,18 @@ public sealed class WindowsPower : IPower
         }
     }
 
+    /// <summary>
+    /// Continues only when OpenThreadToken reported ERROR_NO_TOKEN: a token, or any other failure (access denied, ...),
+    /// means an existing impersonation cannot be ruled out, so the request is refused before the start point.
+    /// </summary>
+    internal static void EnsureNotImpersonating(bool opened, int error)
+    {
+        if (opened || error != Native.ErrorNoToken)
+        {
+            throw new ToolFailureException(ErrorCodes.InternalError, "The power request could not be prepared.");
+        }
+    }
+
     internal static PowerRequestResult Map(int error) => error switch
     {
         Native.ErrorSuccess => PowerRequestResult.Accepted,
@@ -259,6 +268,7 @@ public sealed class WindowsPower : IPower
         public const int ErrorSuccess = 0;
         public const int ErrorAccessDenied = 5;
         public const int ErrorNoMoreItems = 259;
+        public const int ErrorNoToken = 1008;
         public const int ErrorShutdownInProgress = 1115;
         public const int ErrorShutdownIsScheduled = 1190;
         public const int ErrorShutdownUsersLoggedOn = 1191;

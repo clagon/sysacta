@@ -80,9 +80,13 @@ public sealed class SysactaRuntime : IAsyncDisposable
     /// <summary>The single power transition gate of this process (executor admission, console status and release).</summary>
     public PowerTransitionGate PowerGate { get; } = new();
 
-    /// <summary>Releases a held power transition through the executor, as the local console (validated, audited).</summary>
-    public Task<ToolResult> ReleasePowerGateAsync() =>
-        Task.Run(() => Executor.ExecuteAsync(Caller.LocalConsole, "power_release_gate", null, CancellationToken.None));
+    /// <summary>
+    /// Releases the held power transition the local user confirmed (<paramref name="generation"/>, read before the
+    /// confirmation) through the executor, as the local console (validated, audited, start point).
+    /// </summary>
+    public Task<ToolResult> ReleasePowerGateAsync(long generation) =>
+        Task.Run(() => Executor.ExecuteAsync(Caller.LocalConsole, "power_release_gate",
+            System.Text.Json.JsonSerializer.SerializeToElement(new { generation }), CancellationToken.None));
 
     private readonly SuspendResumeNotifications? _powerNotifications;
     public McpServerHost Host { get; }

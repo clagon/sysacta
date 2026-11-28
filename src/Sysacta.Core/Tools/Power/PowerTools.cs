@@ -70,22 +70,14 @@ public static class PowerStatus
 
     public static string Id(Guid id) => id.ToString("D");
 
-    /// <summary>OS plan names are untrusted: drop indirect resource strings and path-like text, control characters and length.</summary>
+    /// <summary>
+    /// OS plan names are untrusted: the shared <see cref="UntrustedText"/> rules (no path, URI or scheme after cleaning),
+    /// plus no indirect resource string (<c>@file,-id</c>) or environment variable reference.
+    /// </summary>
     public static string? Name(string? raw)
     {
-        if (raw is null || raw.StartsWith('@') || raw.Contains('\\') || raw.Contains('%'))
-        {
-            return null;
-        }
-
-        var cleaned = new string([.. raw.Where(c => !char.IsControl(c) && char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format)]).Trim();
-        if (cleaned.Length > MaxNameLength)
-        {
-            var cut = char.IsHighSurrogate(cleaned[MaxNameLength - 1]) ? MaxNameLength - 1 : MaxNameLength;
-            cleaned = cleaned[..cut];
-        }
-
-        return cleaned.Length == 0 ? null : cleaned;
+        var cleaned = UntrustedText.Sanitize(raw, MaxNameLength);
+        return cleaned is null || cleaned.StartsWith('@') || cleaned.Contains('%') ? null : cleaned;
     }
 
     public static PowerStateData Interpret(PowerStatusReading? s, Guid? plan, PowerCapabilitiesReading? caps)
@@ -379,26 +371,37 @@ public sealed class PowerRestartTool(IPower power) : PowerTransitionTool(power)
     public override ToolAvailability GetAvailability() => PrivilegeAvailability();
 }
 
+public sealed class PowerReleaseGateArgs
+{
+    [Description("Generation of the held transition the local user confirmed (PowerTransitionGate.State.Generation).")]
+    [Range(typeof(long), "1", "9223372036854775807")]
+    public required long Generation { get; init; }
+}
+
 public sealed record PowerReleaseGateData(PowerGateRelease Result);
 
 /// <summary>
-/// Local console only: releases a held power transition after the local user confirmed that the stop did not happen
-/// (cancelled shutdown, sleep without a resume notification). Refuses while the transition's call is still running.
-/// It changes no OS state, only the process's gate, so it is read-only for the pipeline (never gated, no lock).
+/// Local console only: releases the held power transition the local user confirmed (by generation) after checking that
+/// the stop did not happen (cancelled shutdown, sleep without a resume notification). Refuses while the transition's
+/// call is still running, and when another transition replaced the confirmed one. It is the only state change admitted
+/// while the gate is held (<see cref="ToolDescriptor.ReleasesPowerGate"/>); it has a pending audit record and a start
+/// point, so a cancellation or timeout before the start point can never release the gate later.
 /// </summary>
-public sealed class PowerReleaseGateTool(PowerTransitionGate gate) : SysactaTool<PowerNoArgs, PowerReleaseGateData>
+public sealed class PowerReleaseGateTool(PowerTransitionGate gate) : SysactaTool<PowerReleaseGateArgs, PowerReleaseGateData>
 {
     public override ToolDescriptor Descriptor { get; } = new("power_release_gate", ToolCategories.Power, "Release power transition",
-        "Local console: allows state changes again after a power transition that did not stop the PC.", DefaultPolicy.Off, true, [], LocalOnly: true);
+        "Local console: allows state changes again after a confirmed power transition that did not stop the PC.", DefaultPolicy.Off, false, ["generation"],
+        LocalOnly: true, ReleasesPowerGate: true);
 
-    protected override Task<ToolOutcome<PowerReleaseGateData>> ExecuteAsync(PowerNoArgs args, ToolExecution execution, CancellationToken cancellationToken)
+    protected override Task<ToolOutcome<PowerReleaseGateData>> ExecuteAsync(PowerReleaseGateArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
-        var result = gate.ReleaseHeld();
-        if (result == PowerGateRelease.StillRunning)
+        cancellationToken.ThrowIfCancellationRequested();
+        execution.BeginSideEffect();
+        return gate.ReleaseHeld(args.Generation) switch
         {
-            throw new ToolFailureException(ErrorCodes.Busy, "The power transition is still running.", retryable: true);
-        }
-
-        return Task.FromResult(new ToolOutcome<PowerReleaseGateData>(new(result), Verification.Verified));
+            PowerGateRelease.StillRunning => throw new ToolFailureException(ErrorCodes.Busy, "The power transition is still running.", retryable: true),
+            PowerGateRelease.Changed => throw new ToolFailureException(ErrorCodes.TargetChanged, "Another power transition replaced the confirmed one."),
+            var result => Task.FromResult(new ToolOutcome<PowerReleaseGateData>(new(result), Verification.Verified)),
+        };
     }
 }
