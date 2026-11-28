@@ -354,12 +354,12 @@ public class ProcessToolTests
             if (s.Os.Terminations == 1 && s.Os.Launches == 0)
             {
                 entered.TrySetResult();
-                release.Wait(Ct);
+                Assert.True(release.Wait(TimeSpan.FromSeconds(30), Ct)); // bounded: a broken test fails instead of hanging
             }
         };
 
         var terminate = s.Terminate(p);
-        await entered.Task.WaitAsync(Ct);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
         var scans = s.Os.Scans;
         var closeA = s.Close(a);            // same app: waits for the app lock
         var launchB = await s.Launch(b);    // other app: independent

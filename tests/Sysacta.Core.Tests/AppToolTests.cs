@@ -300,7 +300,7 @@ public class AppToolTests
         var (s, app) = WithApp();
         using var cts = new CancellationTokenSource();
         var released = new ManualResetEventSlim();
-        s.Os.OnPrepare = () => { cts.Cancel(); released.Wait(Ct); };
+        s.Os.OnPrepare = () => { cts.Cancel(); released.Wait(TimeSpan.FromSeconds(30), Ct); };
         var call = s.Call("app_launch", new { app_id = app.Id }, cts.Token);
         var r = await call;
         AssertError(r, ErrorCodes.Cancelled);
