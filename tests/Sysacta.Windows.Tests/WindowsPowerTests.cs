@@ -22,6 +22,20 @@ public class WindowsPowerTests
         Assert.Equal(8, Marshal.SizeOf<Native.Luid>());
     }
 
+    [Theory]
+    [InlineData(0, PowerRequestResult.Accepted, PowerRequestResult.Failed)]
+    [InlineData(5, PowerRequestResult.Refused, PowerRequestResult.Refused)]
+    [InlineData(1314, PowerRequestResult.Refused, PowerRequestResult.Refused)]
+    [InlineData(1191, PowerRequestResult.Refused, PowerRequestResult.Refused)]
+    [InlineData(1115, PowerRequestResult.Busy, PowerRequestResult.Busy)]
+    [InlineData(1190, PowerRequestResult.Busy, PowerRequestResult.Busy)]
+    [InlineData(87, PowerRequestResult.Failed, PowerRequestResult.Failed)]
+    public void Error_codes_map_and_a_false_return_is_never_accepted(int error, PowerRequestResult mapped, PowerRequestResult afterFalse)
+    {
+        Assert.Equal(mapped, WindowsPower.Map(error));
+        Assert.Equal(afterFalse, WindowsPower.Failure(error));
+    }
+
     [Fact]
     public void Reads_status_capabilities_and_plans_without_changing_them()
     {

@@ -144,11 +144,11 @@ public sealed class WindowsPower : IPower
         {
             case PowerTransition.Lock:
                 beginSideEffect();
-                return Native.LockWorkStation() ? PowerRequestResult.Accepted : Map(Marshal.GetLastPInvokeError());
+                return Native.LockWorkStation() ? PowerRequestResult.Accepted : Failure(Marshal.GetLastPInvokeError());
             case PowerTransition.Sleep:
                 // bHibernate=FALSE (sleep, never hibernate), bForce has no effect, bWakeupEventsDisabled=FALSE (keep wake events).
                 return WithShutdownPrivilege(beginSideEffect, static () =>
-                    Native.SetSuspendState(false, false, false) ? PowerRequestResult.Accepted : Map(Marshal.GetLastPInvokeError()));
+                    Native.SetSuspendState(false, false, false) ? PowerRequestResult.Accepted : Failure(Marshal.GetLastPInvokeError()));
             case PowerTransition.Shutdown:
                 return WithShutdownPrivilege(beginSideEffect, static () => Map((int)Native.InitiateShutdownW(null, null, 0, Native.ShutdownPowerOff, Native.ReasonOtherPlanned)));
             case PowerTransition.Restart:
@@ -224,13 +224,16 @@ public sealed class WindowsPower : IPower
         }
     }
 
-    private static PowerRequestResult Map(int error) => error switch
+    internal static PowerRequestResult Map(int error) => error switch
     {
         Native.ErrorSuccess => PowerRequestResult.Accepted,
         Native.ErrorAccessDenied or Native.ErrorPrivilegeNotHeld or Native.ErrorShutdownUsersLoggedOn => PowerRequestResult.Refused,
         Native.ErrorShutdownInProgress or Native.ErrorShutdownIsScheduled => PowerRequestResult.Busy,
         _ => PowerRequestResult.Failed,
     };
+
+    /// <summary>A BOOL API returned FALSE: never report acceptance, even if the last error was left at 0.</summary>
+    internal static PowerRequestResult Failure(int error) => Map(error) is PowerRequestResult.Accepted ? PowerRequestResult.Failed : Map(error);
 
     private static string? ReadName(Guid plan)
     {

@@ -109,28 +109,13 @@ public sealed partial class OverviewViewModel(SysactaRuntime runtime) : PageView
     {
         IsPowerGateActive = state.Phase != PowerGatePhase.Idle;
         CanReleasePowerGate = state.Phase == PowerGatePhase.Held;
-        var name = state.Transition switch
-        {
-            PowerTransition.Lock => "ロック",
-            PowerTransition.Sleep => "スリープ",
-            PowerTransition.Shutdown => "シャットダウン",
-            PowerTransition.Restart => "再起動",
-            _ => "電源操作",
-        };
-        PowerGateText = state.Phase switch
-        {
-            PowerGatePhase.Running => $"{name}を実行しています。終わるまで、ほかの状態変更は受け付けません。",
-            PowerGatePhase.Held when state.Transition == PowerTransition.Sleep =>
-                "スリープを要求しました。Windows の復帰を検知するまで、状態変更は受け付けません。PC がスリープしなかった場合や、復帰後もこの表示が残る場合は解除できます。",
-            PowerGatePhase.Held => $"{name}を要求しました。状態変更は受け付けていません。{name}が取り消されて PC が動き続ける場合は、解除すると状態変更を再開できます。",
-            _ => "",
-        };
+        PowerGateText = Sysacta.App.PowerGateText.Describe(state);
     }
 
     [RelayCommand]
     private async Task ReleasePowerGateAsync()
     {
-        if (!await ConfirmAsync("状態変更を再開しますか?", "PC が停止・スリープしないことを確認してから解除してください。解除すると、MCP クライアントからの状態変更を再び受け付けます。Windows に送った停止要求は取り消されません。", "解除"))
+        if (!await ConfirmAsync(Sysacta.App.PowerGateText.ConfirmTitle, Sysacta.App.PowerGateText.ConfirmMessage, Sysacta.App.PowerGateText.ConfirmAction))
         {
             return;
         }
