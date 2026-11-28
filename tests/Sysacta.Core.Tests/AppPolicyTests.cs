@@ -294,6 +294,37 @@ public class AppPolicyTests
         Assert.Equal(TerminateBlock.Elevated, ProcessRules.Evaluate(ok with { IntegrityRid = 0x3000 }));
         Assert.Equal(TerminateBlock.Elevated, ProcessRules.Evaluate(ok with { IntegrityRid = 0x4000 }));
         Assert.Equal(TerminateBlock.LowIntegrity, ProcessRules.Evaluate(ok with { IntegrityRid = 0x1000 }));
-        Assert.Equal(TerminateBlock.NotRegistered, ProcessRules.Evaluate(ok with { AppId = null }));
+        Assert.Equal(TerminateBlock.NotRegistered, ProcessRules.Evaluate(ok with { EstimatedAppId = null }));
+    }
+
+    [Fact]
+    public void Managed_processes_count_only_with_the_same_pid_creation_and_approval_generation()
+    {
+        var managed = new ManagedProcesses();
+        var app = new RegisteredApp(AppRules.NewAppId(), "A", @"C:\a\a.exe", [], true, 3, new ExecutableIdentity(new string('1', 16), new string('2', 32), 1, new string('3', 64)));
+        var facts = new ProcessFacts(10, 100, "a.exe", true, 0x2000, false, false, false, false, null);
+        Assert.Null(managed.View(facts, [app]).Match);
+        Assert.Equal(TerminateBlock.NotRegistered, managed.View(facts, [app]).Block);
+        Assert.Equal((AppMatch.Estimated, TerminateBlock.NotManaged), (managed.View(facts with { EstimatedAppId = app.Id }, [app]).Match, managed.View(facts with { EstimatedAppId = app.Id }, [app]).Block));
+
+        managed.Add(app.Id, 3, 10, 100);
+        Assert.Equal((AppMatch.Managed, (TerminateBlock?)null, app.Id), (managed.View(facts, [app]).Match, managed.View(facts, [app]).Block, managed.View(facts, [app]).AppId));
+        Assert.Null(managed.View(facts with { CreationTime = 101 }, [app]).Match);          // pid reused
+        Assert.Null(managed.ManagedAppId(facts, [app with { Generation = 4 }]));            // re-approved or disabled
+        Assert.Null(managed.ManagedAppId(facts, []));                                        // not allowed
+        Assert.Equal(TerminateBlock.Protected, managed.View(facts with { Protected = true }, [app]).Block);
+
+        managed.Prune(new ProcessScan([], 0, new HashSet<string>(), Truncated: true));   // incomplete: kept
+        Assert.Equal(1, managed.Count);
+        managed.Prune(new ProcessScan([], 0, new HashSet<string>(), Truncated: false));  // exited: dropped
+        Assert.Equal(0, managed.Count);
+
+        for (var i = 0; i < ManagedProcesses.Capacity + 5; i++)
+        {
+            managed.Add(app.Id, 3, i, 1);
+        }
+
+        Assert.Equal(ManagedProcesses.Capacity, managed.Count);
+        Assert.Null(managed.ManagedAppId(facts with { Pid = 0, CreationTime = 1 }, [app])); // oldest dropped
     }
 }

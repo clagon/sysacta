@@ -43,6 +43,7 @@ public sealed class ServerFixture : IAsyncDisposable
     /// <summary>The real SQLite allow-list (sharing the gate with the executor) and a fake OS for the app tools.</summary>
     public AppRegistryStore Apps { get; }
     public FakeAppPlatform AppOs { get; } = new();
+    public ManagedProcesses Managed { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time) and the notification limit. The executor and the store use the system clock.</summary>
     public ManualTime Time { get; } = new();
@@ -89,8 +90,8 @@ public sealed class ServerFixture : IAsyncDisposable
             .. includeSystem ? new SysactaTool[] { new SystemGetStatusTool(Monitor), new SystemGetHardwareTool(Monitor),
                 new SystemGetTemperaturesTool(Monitor), new SystemGetStorageTool(Monitor) } : [],
             .. includeNotification ? new SysactaTool[] { new NotificationSendTool(Notifications, Time) } : [],
-            .. includeApps ? new SysactaTool[] { new AppListAvailableTool(Apps, AppOs), new AppListRunningTool(Apps, AppOs), new AppLaunchTool(Apps, AppOs),
-                new AppCloseTool(Apps, AppOs), new ProcessListRunningTool(Apps, AppOs), new ProcessTerminateTool(Apps, AppOs) } : [],
+            .. includeApps ? new SysactaTool[] { new AppListAvailableTool(Apps, AppOs), new AppListRunningTool(Apps, AppOs, Managed), new AppLaunchTool(Apps, AppOs, Managed),
+                new AppCloseTool(Apps, AppOs, Managed), new ProcessListRunningTool(Apps, AppOs, Managed), new ProcessTerminateTool(Apps, AppOs, Managed) } : [],
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");

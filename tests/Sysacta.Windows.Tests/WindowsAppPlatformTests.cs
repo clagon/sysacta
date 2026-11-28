@@ -206,7 +206,7 @@ public sealed class WindowsAppPlatformTests : IDisposable
         Assert.Equal(fixedArgs, File.ReadAllLines(echo));
         var key = AppMatchKey.For(app);
         var scan = _os.ScanSession([key], Ct);
-        var facts = Assert.Single(scan.Processes, p => p.AppId == app.Id);
+        var facts = Assert.Single(scan.Processes, p => p.EstimatedAppId == app.Id);
         Assert.Equal((result.Pid, result.CreationTime), (facts.Pid, (long?)facts.CreationTime));
         Assert.Equal("HarmlessTarget.exe", facts.Name, ignoreCase: true);
         Assert.Equal(_os.IsElevated ? TerminateBlock.Elevated : null, ProcessRules.Evaluate(facts));
@@ -214,7 +214,7 @@ public sealed class WindowsAppPlatformTests : IDisposable
         Assert.Equal(ErrorCodes.TargetChanged, Assert.Throws<ToolFailureException>(() => _os.OpenProcess(facts.Pid, facts.CreationTime + 1, [key], terminate: true)).Code);
         using (var process = _os.OpenProcess(facts.Pid, facts.CreationTime, [key], terminate: true))
         {
-            Assert.Equal(app.Id, process.Facts.AppId);
+            Assert.Equal(app.Id, process.Facts.EstimatedAppId);
             Assert.Equal(0, process.FindCloseableWindows());
             Assert.Equal(CloseRequestStatus.WindowGone, process.RequestClose());
             Assert.True(process.Terminate());
@@ -222,7 +222,7 @@ public sealed class WindowsAppPlatformTests : IDisposable
         }
 
         Assert.Equal(ErrorCodes.TargetNotFound, Assert.Throws<ToolFailureException>(() => _os.OpenProcess(facts.Pid, facts.CreationTime, [key], terminate: true)).Code);
-        Assert.DoesNotContain(_os.ScanSession([key], Ct).Processes, p => p.AppId == app.Id);
+        Assert.DoesNotContain(_os.ScanSession([key], Ct).Processes, p => p.EstimatedAppId == app.Id);
     }
 
     [Theory]
@@ -294,7 +294,7 @@ public sealed class WindowsAppPlatformTests : IDisposable
 
         Assert.Equal(LaunchStatus.Started, result.Status);
         _launched.Add((result.Pid!.Value, result.CreationTime!.Value));
-        Assert.Contains(_os.ScanSession([AppMatchKey.For(app)], Ct).Processes, p => p.Pid == result.Pid && p.AppId == app.Id);
+        Assert.Contains(_os.ScanSession([AppMatchKey.For(app)], Ct).Processes, p => p.Pid == result.Pid && p.EstimatedAppId == app.Id);
 
         // An in-place update while the old image keeps running: the running exe is renamed away and another file takes
         // its path (a new copy, or an older file renamed into place), and the local user approves that file.
@@ -312,10 +312,10 @@ public sealed class WindowsAppPlatformTests : IDisposable
         Assert.False(replacement.Identity.SameFile(app.Identity));
         var scan = _os.ScanSession([AppMatchKey.For(replacement)], Ct);
         var old = Assert.Single(scan.Processes, p => p.Pid == result.Pid);
-        Assert.Null(old.AppId);
+        Assert.Null(old.EstimatedAppId);
         Assert.Contains(replacement.Id, scan.UncertainAppIds);
         using var opened = _os.OpenProcess(old.Pid, old.CreationTime, [AppMatchKey.For(replacement)], terminate: true);
-        Assert.Null(opened.Facts.AppId);
+        Assert.Null(opened.Facts.EstimatedAppId);
         Assert.NotNull(ProcessRules.Evaluate(opened.Facts));
     }
 

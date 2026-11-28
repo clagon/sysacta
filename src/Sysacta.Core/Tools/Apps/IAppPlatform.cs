@@ -23,7 +23,10 @@ public sealed record AppMatchKey(string AppId, string FileName, ExecutableIdenti
 /// <param name="CreationTime">UTC FILETIME from GetProcessTimes.</param>
 /// <param name="Name">Image file name (e.g. <c>notepad.exe</c>), from the OS snapshot. Display only.</param>
 /// <param name="IntegrityRid">Mandatory integrity level RID of the process token (0x2000 = medium).</param>
-/// <param name="AppId">The allowed app whose approved file object (volume + file id) is the process image; null otherwise.</param>
+/// <param name="EstimatedAppId">
+/// The allowed app whose approved file the image path currently names, when that file looks unchanged since the process
+/// started; null otherwise. An estimate (see <see cref="AppMatch.Estimated"/>): authorization uses <see cref="ManagedProcesses"/>.
+/// </param>
 public sealed record ProcessFacts(
     int Pid,
     long CreationTime,
@@ -34,7 +37,7 @@ public sealed record ProcessFacts(
     bool? Critical,
     bool IsSelf,
     bool IsParent,
-    string? AppId);
+    string? EstimatedAppId);
 
 /// <param name="Processes">Inspected processes of the current user in the current session, in snapshot order.</param>
 /// <param name="FailedCount">Processes of the session whose user, creation time or state could not be read (not listed).</param>
@@ -48,8 +51,10 @@ public sealed record ProcessScan(IReadOnlyList<ProcessFacts> Processes, int Fail
 /// <summary>Why a process cannot be terminated or closed by Sysacta (wire names are snake_case).</summary>
 public enum TerminateBlock
 {
-    /// <summary>Its image is not the approved executable of an allowed app.</summary>
+    /// <summary>Not associated with an allowed app.</summary>
     NotRegistered,
+    /// <summary>Looks like an allowed app's process, but Sysacta did not start it under the current approval.</summary>
+    NotManaged,
     Self,
     /// <summary>The process that started Sysacta.</summary>
     SysactaParent,
@@ -70,8 +75,9 @@ public static class ProcessRules
     private const int HighRid = 0x3000;
 
     /// <summary>
-    /// Null when the process may be closed/terminated: an allowed app's exact image, same user and session, medium
-    /// integrity, not protected or critical, not Sysacta or its parent. Unknown facts refuse.
+    /// Null when the process may be closed/terminated: same user and session, medium integrity, not protected or critical,
+    /// not Sysacta or its parent, and <see cref="ProcessFacts.EstimatedAppId"/> set (the tools pass the managed app id here,
+    /// see <see cref="ManagedProcesses.View"/>). Unknown facts refuse.
     /// </summary>
     public static TerminateBlock? Evaluate(ProcessFacts f) =>
         f.IsSelf ? TerminateBlock.Self
@@ -83,7 +89,7 @@ public static class ProcessRules
         : critical ? TerminateBlock.Critical
         : rid >= HighRid ? TerminateBlock.Elevated
         : rid < MediumRid ? TerminateBlock.LowIntegrity
-        : f.AppId is null ? TerminateBlock.NotRegistered
+        : f.EstimatedAppId is null ? TerminateBlock.NotRegistered
         : null;
 }
 

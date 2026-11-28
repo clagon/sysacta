@@ -11,19 +11,19 @@ public sealed record AppCloseData(
     [property: Description("True when the process handle signaled exit within 2 seconds; false when still running (the app may ask to save); null when unknown.")] bool? Exited);
 
 /// <summary>Asks the single top-level window of the single running instance to close (WM_CLOSE). Never forces.</summary>
-public sealed class AppCloseTool(IAppRegistry registry, IAppPlatform platform) : SysactaTool<AppIdArgs, AppCloseData>
+public sealed class AppCloseTool(IAppRegistry registry, IAppPlatform platform, ManagedProcesses managed) : SysactaTool<AppIdArgs, AppCloseData>
 {
     public static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(2);
 
     public override ToolDescriptor Descriptor { get; } = new("app_close", ToolCategories.Apps, "Close registered app",
-        "Asks a running allowed app to close normally, like clicking its close button: posts one close request to its window. Only when the app has exactly one running process (of the current user, normal integrity) with exactly one top-level window; otherwise nothing is sent (AMBIGUOUS_TARGET / NOT_SUPPORTED). The app may ask to save, refuse or close later: verification=accepted with exited=false means the request was delivered but the process is still running. Never forces termination (that is process_terminate). If no instance is running, returns was_running=false.",
+        "Asks a running allowed app to close normally, like clicking its close button: posts one close request to its window. Only when the app has exactly one running process, that process was launched by Sysacta (app_match=managed: since Sysacta started and under the current approval), runs as the current user at normal integrity and has exactly one top-level window; otherwise nothing is sent (AMBIGUOUS_TARGET / PERMISSION_DENIED / NOT_SUPPORTED). An instance the user started is never closed. The app may ask to save, refuse or close later: verification=accepted with exited=false means the request was delivered but the process is still running. Never forces termination (that is process_terminate). If no instance is running, returns was_running=false.",
         DefaultPolicy.Off, ReadOnly: false, AuditedArguments: []);
 
     protected override ValueTask<ToolTarget> ResolveTargetAsync(AppIdArgs args, CancellationToken cancellationToken)
     {
         var app = AppTargets.FindAllowed(registry, args.AppId);
         var instance = SingleInstance(app, cancellationToken);
-        return ValueTask.FromResult<ToolTarget>(new AppTarget(app, instance?.Pid, instance?.CreationTime));
+        return ValueTask.FromResult<ToolTarget>(new AppTarget(app, instance?.Facts.Pid, instance?.Facts.CreationTime));
     }
 
     protected override Task<ToolOutcome<AppCloseData>> ExecuteAsync(AppIdArgs args, ToolExecution execution, CancellationToken cancellationToken)
@@ -40,14 +40,15 @@ public sealed class AppCloseTool(IAppRegistry registry, IAppPlatform platform) :
 
         // Under the locks, the instance resolved before must still be the only instance of the app.
         var current = SingleInstance(app, cancellationToken) ?? throw new ToolFailureException(ErrorCodes.TargetNotFound, "The app's process has exited. Nothing was sent.", retryable: true);
-        if (current.Pid != pid || current.CreationTime != creation)
+        if (current.Facts.Pid != pid || current.Facts.CreationTime != creation)
         {
             throw new ToolFailureException(ErrorCodes.TargetChanged, "The app's running instance changed while the request waited. Nothing was sent.", retryable: true);
         }
 
         var start = ProcessStartTime.ToText(creation);
         using var process = platform.OpenProcess(pid, creation, [AppMatchKey.For(app)], terminate: false);
-        if (process.Facts.AppId != app.Id || ProcessRules.Evaluate(process.Facts) is not null)
+        // Only a process Sysacta launched under this approval, judged on the facts read through this handle.
+        if (managed.View(process.Facts, [app]) is not { Match: AppMatch.Managed, Block: null } view || view.AppId != app.Id)
         {
             throw new ToolFailureException(ErrorCodes.PermissionDenied, "This process cannot be closed by Sysacta. Nothing was sent.");
         }
@@ -73,26 +74,35 @@ public sealed class AppCloseTool(IAppRegistry registry, IAppPlatform platform) :
 
         var accepted = unknown with { CloseRequested = true };
         ReportAccepted(execution, accepted);
-        return Task.FromResult(process.WaitForExit(ExitWait)
-            ? new ToolOutcome<AppCloseData>(accepted with { Exited = true }, Verification.Verified)
-            : new ToolOutcome<AppCloseData>(accepted with { Exited = false }, Verification.Accepted));
+        if (process.WaitForExit(ExitWait))
+        {
+            managed.Remove(pid, creation);
+            return Task.FromResult(new ToolOutcome<AppCloseData>(accepted with { Exited = true }, Verification.Verified));
+        }
+
+        return Task.FromResult(new ToolOutcome<AppCloseData>(accepted with { Exited = false }, Verification.Accepted));
     }
 
-    /// <summary>The only instance, null when none runs; refuses when several run or the state is unknown.</summary>
-    private ProcessFacts? SingleInstance(RegisteredApp app, CancellationToken cancellationToken)
+    /// <summary>
+    /// The only instance (managed or estimated), null when none runs; refuses when several run, the only one is not
+    /// managed, or the state is unknown.
+    /// </summary>
+    private ProcessView? SingleInstance(RegisteredApp app, CancellationToken cancellationToken)
     {
         var scan = platform.ScanSession([AppMatchKey.For(app)], cancellationToken);
+        managed.Prune(scan);
         if (scan.Truncated || scan.UncertainAppIds.Contains(app.Id))
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "Could not identify the app's processes. Nothing was sent.", retryable: true);
         }
 
-        var instances = scan.Processes.Where(p => p.AppId == app.Id).Take(2).ToList();
+        var instances = scan.Processes.Select(p => managed.View(p, [app])).Where(v => v.AppId == app.Id).Take(2).ToList();
         return instances.Count switch
         {
             0 => null,
-            1 => instances[0],
-            _ => throw new ToolFailureException(ErrorCodes.AmbiguousTarget, "The app has several running processes; app_close supports exactly one. Nothing was sent. Use app_list_running and process_terminate only if data loss is acceptable."),
+            1 when instances[0].Match == AppMatch.Managed => instances[0],
+            1 => throw new ToolFailureException(ErrorCodes.PermissionDenied, "The running instance was not launched by Sysacta under the current approval; it is never closed by Sysacta. Nothing was sent."),
+            _ => throw new ToolFailureException(ErrorCodes.AmbiguousTarget, "The app has several running processes; app_close supports exactly one. Nothing was sent."),
         };
     }
 }

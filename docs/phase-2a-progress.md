@@ -14,6 +14,7 @@
 | 実在のアプリの起動・通常終了・強制終了 | 確認(2026-11-28、利用者承認、`ImagingDevices.exe` で各 1 回、MCP HTTP 経由)。固定引数は専用テストプロセスで確認。保存確認の出るアプリは未確認 |
 | 管理画面「アプリ」・外部 MCP クライアント・既存 DB の移行 | 確認(2026-11-28、利用者の操作と報告、manual-tests A1・A2・A10・A11・A12) |
 | MSIX/UWP・複数ユーザー・管理者起動 | 未検証(環境なし。パッケージアプリは対象外) |
+| 終了対象を Sysacta が起動したプロセスに限定(2026-11-29) | Core・MCP のテストと CI で確認。変更後の実在アプリでの再確認は未実施(上の実在アプリ確認は、起動 → 通常終了・強制終了とも Sysacta が起動したプロセスに対するもので、新しい方針の範囲内) |
 
 ## 技術調査と API の採否(2026-11-28)
 
@@ -123,7 +124,7 @@
 
 - セッションの確認は pid で `ProcessIdToSessionId` を呼んでからハンドルを開くが、続けて同じハンドルで生成時刻を照合するため、確認した pid は開いたプロセスと同じ(ハンドルを開いている間 pid は再利用されず、生成時刻が一致すればその間ずっと同じプロセスだった)。
 - 一覧の範囲: 現在のセッションのプロセスのうち、トークンのユーザー SID が Sysacta と同じもの。他ユーザー(同じセッションの `dwm` 等を含む)は出さない。ユーザー・生成時刻を読めないプロセスは出さず `failed_count` に数える(SYSTEM のプロセスなど、通常いくつかある)。スナップショットの内部上限は 4096。上限で切り詰めた場合は全アプリを「不明」にし、起動と通常終了は拒否する。`Process32NextW` の失敗は正常な終端(`ERROR_NO_MORE_FILES`)と区別し、途中の失敗は列挙全体の失敗(`OS_API_ERROR`)にする(PR レビュー P2)。
-- 終了可否(`ProcessRules.Evaluate`、Core): 自己 → `self`、起動元(親 pid、かつ生成時刻が Sysacta より前)→ `sysacta_parent`、他ユーザー、保護レベルあり → `protected`、critical、integrity が high 以上 → `elevated`、medium 未満 → `low_integrity`、承認済みファイルでない → `not_registered`、読めない事実がある → `unverified`。
+- 終了可否(`ProcessRules.Evaluate`、Core): 自己 → `self`、起動元(親 pid、かつ生成時刻が Sysacta より前)→ `sysacta_parent`、他ユーザー、保護レベルあり → `protected`、critical、integrity が high 以上 → `elevated`、medium 未満 → `low_integrity`、アプリと関係ない → `not_registered`、アプリらしいが Sysacta が現在の承認で起動していない → `not_managed`、読めない事実がある → `unverified`。終了・通常終了できるのは管理対象(`managed`)だけ(上の「終了対象を Sysacta が起動したプロセスに限定」)。
 - 強制終了の手順: 列挙で pid + 生成時刻(+ 照合した app_id)を固定 → ロック(`app:{id}`、`process:{pid}:{FILETIME}`)→ 世代の再確認 → 最小権限でプロセスを開き生成時刻・終了状態・すべての事実を再検証 → 開始点(許可・世代の照合)→ 同じハンドルに `TerminateProcess` 1 回 → 同じハンドルで最大 2 秒待つ(verified / accepted)。pid が再利用されていれば `TARGET_CHANGED`、消えていれば `TARGET_NOT_FOUND`。子プロセス・他のインスタンスは終了しない。
 - 通常終了: 解決時にプロセスが 1 件であること(0 件は was_running=false の no-op、複数は `AMBIGUOUS_TARGET`)。**ロック取得後に再列挙し**、解決時と同じ pid・生成時刻のインスタンスが唯一であることを確かめる(追加起動は `AMBIGUOUS_TARGET`、置き換わりは `TARGET_CHANGED`、消失は `TARGET_NOT_FOUND`、不明・切り詰めは `OS_API_ERROR`。PR レビューで追加)。そのうえでハンドルを開いて再検証し、可視・所有者なし・ツールウィンドウでないトップレベルウィンドウがちょうど 1 つのときだけ、投函の直前にそのウィンドウがまだそのプロセスのものかを確認して `WM_CLOSE` を投函する(ハンドルを開いている間 pid は再利用されない)。保存確認・拒否・遅延はアプリの正常な挙動で、ダイアログを操作しない。投函後 2 秒以内に同じハンドルが終了を示したときだけ verified。強制終了へフォールバックしない。
 - ウィンドウハンドルの限界: 最終確認から `PostMessageW` までの間にウィンドウが破棄され、同じハンドル値が同じプロセスの別のウィンドウに再割り当てされる可能性は排除できない(ハンドル値の再利用カウンターにより極めてまれ。送るのは同じプロセスへの通常の閉じる要求)。
@@ -133,10 +134,10 @@
 | ツール | 引数 | 主な結果 |
 |---|---|---|
 | `app_list_available` | なし | `apps[] {app_id, display_name, kind:"win32_exe", status: ready/target_changed/target_missing/not_supported/check_failed, launchable}`, `count`, `truncated`, `launch_available`, `launch_blocked_reason: sysacta_elevated|null` |
-| `app_list_running` | なし | `instances[] {app_id, display_name, pid, start_time, can_terminate, terminate_blocked_reason}`, `count`, `truncated`, `uncertain_app_ids[]`, `failed_count` |
-| `app_launch` | `app_id`(`^app_[0-9a-f]{32}$`) | `{app_id, already_running, launched, pid, start_time}`。起動: accepted、既存: verified |
+| `app_list_running` | なし | `instances[] {app_id, display_name, app_match: managed/estimated, pid, start_time, can_terminate, terminate_blocked_reason}`, `count`, `truncated`, `uncertain_app_ids[]`, `failed_count` |
+| `app_launch` | `app_id`(`^app_[0-9a-f]{32}$`) | `{app_id, already_running, launched, pid, start_time}`。起動: accepted(生成したプロセスを管理対象に記録)、管理対象が稼働中: verified の no-op、推定のインスタンスだけ: `AMBIGUOUS_TARGET` |
 | `app_close` | `app_id` | `{app_id, was_running, pid, start_time, close_requested, exited}`。終了確認: verified、投函のみ: accepted |
-| `process_list_running` | `limit?`(1〜256、既定 100)、`filter?`(1〜64 文字、制御文字不可、名前の大文字小文字を区別しない部分一致) | `processes[] {pid, start_time, name, app_id, can_terminate, terminate_blocked_reason}`, `total`, `truncated`, `failed_count` |
+| `process_list_running` | `limit?`(1〜256、既定 100)、`filter?`(1〜64 文字、制御文字不可、名前の大文字小文字を区別しない部分一致) | `processes[] {pid, start_time, name, app_id, app_match, can_terminate, terminate_blocked_reason}`, `total`, `truncated`, `failed_count` |
 | `process_terminate` | `pid`(1〜2147483647)、`start_time`(`yyyy-MM-ddTHH:mm:ss.fffffffZ`、28 文字) | `{pid, start_time, app_id, terminated, exited}`。終了確認: verified、受理のみ: accepted |
 
 - `start_time` は FILETIME(100 ns)をそのまま表す固定書式で、解析後に書式化し直して入力と完全一致する場合だけ受け付ける(精度違い・オフセット・全角数字などを拒否)。
@@ -181,6 +182,20 @@
 修正後の再レビューでは不具合はなく、低リスクの 2 点を追加で対応した: 自身の実行ファイルの識別に失敗した状態をキャッシュしない(次回再試行)、アダプターの `ToolFailureException` を管理画面で固定の日本語文言にする。残した低リスク: 管理画面で、許可の保存と同時に走った一覧の再読み込みが古い値を表示し得る(次の操作が「変更されました」で拒否されて再読み込みされるだけで、誤った許可にはならない)。
 
 記録だけにしたもの(上の各節と残存リスクに記載): exe 以外の隣接ファイル、禁止一覧の不完全さ、ハードリンクを使った照合のすり替え(同一ユーザーのコードが必要)、タイムアウト 15 秒の根拠、`WinVerifyTrust` の不採用、SQLite の読み取りが開始点のゲート内で行われること(既存の認可評価と同じ。SQLite の待ちの間だけ権限変更が待たされる)。
+
+## 終了対象を Sysacta が起動したプロセスに限定(PR 再レビュー、2026-11-28)
+
+再レビューで、ChangeTime による照合は通常のファイル置換は検出できても、親フォルダーごとの置換・時計の補正など通常の操作でも外れ得るため、破壊的操作の許可境界にしないよう求められた。制限付きのプロセスハンドルからロード済みイメージのファイルを証明する文書化された API は見つからないため、次の方式に変更した。
+
+- **管理対象(`managed`)**: Sysacta が `app_launch` で承認済みの exe から `CREATE_SUSPENDED` で生成し、再開前に保持中のファイルと同じイメージであることを確認したプロセスだけを、プロセス内の有限な表(`ManagedProcesses`、最大 256 件、古いものから外す)に pid + 正確な生成時刻 + 登録 ID + 承認の世代で記録する。終了済みの項目は一覧のたびに除く(完全な列挙のときだけ)。永続化しない。
+- `app_close` / `process_terminate` は管理対象で、そのアプリが今も同じ世代で許可されているものだけを対象にする。終了直前の同一ハンドルによる生成時刻・保護・integrity の検証、最終認可、ロックはそのまま。
+- **推定(`estimated`)**: イメージのパスにある承認済みファイル(ChangeTime の条件付き)との一致は、一覧の表示(`app_match: "estimated"`、`terminate_blocked_reason: "not_managed"`)と、`app_launch` が「起動済みかもしれない」と判断して起動しない側にだけ使い、終了の許可には使わない。
+- `app_launch`: 管理対象のインスタンスが動いていれば no-op(verified)。推定のインスタンスしかなければ `AMBIGUOUS_TARGET`(起動もしないし verified ともしない)。状態不明・切り詰めは `OS_API_ERROR`。
+- 管理対象にならないもの: 利用者・他のプログラムが起動したプロセス、Sysacta の起動前(再起動を含む)に起動したプロセス、再承認・無効化(世代が変わる)より前に起動したプロセス、表があふれて外れたプロセス。いずれも一覧には出るが終了できない。
+
+**仕様との差分(利便性の低下)**: spec §7.6 / phase-2a.md は登録アプリの通常終了・強制終了を想定しているが、本実装では自分で起動したアプリや Sysacta 再起動前のインスタンスを MCP から閉じられない。安全性を優先した判断として記録する(公式 API でロード済みイメージの同一性を証明できる方法が見つかれば拡張を検討する)。
+
+テスト: 追跡外(利用者が起動)・再承認後・Sysacta 再起動相当(表が空)のプロセスは一覧のみで終了・通常終了が拒否されること、pid 再利用、管理対象の通常終了・強制終了、表の上限と除去(Core・Mcp)。Windows の専用テストプロセスでの起動・終了は従来どおり。
 
 ## PR レビュー(2026-11-28)への対応
 

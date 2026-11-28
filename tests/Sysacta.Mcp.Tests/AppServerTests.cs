@@ -47,8 +47,9 @@ public class AppServerTests
         var dir = Path.GetDirectoryName(f.Database.Path)!;
         var registry = new FakeAppRegistry();
         var os = new FakeAppPlatform();
-        SysactaTool[] appTools = [new AppListAvailableTool(registry, os), new AppListRunningTool(registry, os), new AppLaunchTool(registry, os),
-            new AppCloseTool(registry, os), new ProcessListRunningTool(registry, os), new ProcessTerminateTool(registry, os)];
+        var managed = new ManagedProcesses();
+        SysactaTool[] appTools = [new AppListAvailableTool(registry, os), new AppListRunningTool(registry, os, managed), new AppLaunchTool(registry, os, managed),
+            new AppCloseTool(registry, os, managed), new ProcessListRunningTool(registry, os, managed), new ProcessTerminateTool(registry, os, managed)];
         var oldDb = new SysactaDatabase(Path.Combine(dir, "apps-upgrade.db"));
         oldDb.Migrate();
         var old = new AccessStore(oldDb, TimeProvider.System, new AuthorizationGate());
@@ -128,6 +129,22 @@ public class AppServerTests
     }
 
     [Fact]
+    public async Task Processes_sysacta_did_not_launch_are_never_closed_or_terminated_over_mcp()
+    {
+        await using var f = await ServerFixture.StartAsync(includeApps: true);
+        await Task.Run(() => { foreach (var t in Tools) f.Store.SetToolEnabled(t, true); }, Ct);
+        var app = await Task.Run(() => Register(f, 1, []), Ct);
+        var p = f.AppOs.Run(app, 10); // started by the user
+        await using var client = await f.ClientAsync(f.Issue(Tools).Token);
+        var running = Body(await client.CallToolAsync("app_list_running", cancellationToken: Ct)).GetProperty("data").GetProperty("instances")[0];
+        Assert.Equal(("estimated", false, "not_managed"), (running.GetProperty("app_match").GetString(), running.GetProperty("can_terminate").GetBoolean(), running.GetProperty("terminate_blocked_reason").GetString()));
+        Assert.Equal(ErrorCodes.PermissionDenied, Code(await client.CallToolAsync("process_terminate", new Dictionary<string, object?> { ["pid"] = 10, ["start_time"] = ProcessStartTime.ToText(p.Creation) }, cancellationToken: Ct)));
+        Assert.Equal(ErrorCodes.PermissionDenied, Code(await client.CallToolAsync("app_close", new Dictionary<string, object?> { ["app_id"] = app.Id }, cancellationToken: Ct)));
+        Assert.Equal(ErrorCodes.AmbiguousTarget, Code(await client.CallToolAsync("app_launch", new Dictionary<string, object?> { ["app_id"] = app.Id }, cancellationToken: Ct)));
+        Assert.Equal((0, 0, 0), (f.AppOs.Launches, f.AppOs.CloseRequests, f.AppOs.Terminations));
+    }
+
+    [Fact]
     public async Task Disabling_in_the_console_during_preparation_refuses_the_launch()
     {
         await using var f = await ServerFixture.StartAsync(includeApps: true);
@@ -158,6 +175,7 @@ public class AppServerTests
         await Task.Run(() => { foreach (var t in Tools) f.Store.SetToolEnabled(t, true); }, Ct);
         var app = await Task.Run(() => Register(f, 1, ["synthetic-arg"]), Ct);
         var p = f.AppOs.Run(app, 10);
+        f.Managed.Add(app.Id, app.Generation, p.Pid, p.Creation); // as if launched by Sysacta, so the close/terminate paths run
         await using var client = await f.ClientAsync(f.Issue(Tools).Token);
         var responses = new List<string>();
         async Task Call(string tool, Dictionary<string, object?>? args = null) =>

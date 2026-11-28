@@ -12,7 +12,7 @@ internal static class AppTestKit
 
     public static readonly string[] All = ["app_list_available", "app_list_running", "app_launch", "app_close", "process_list_running", "process_terminate"];
 
-    public sealed record Setup(Harness H, FakeAppRegistry Registry, FakeAppPlatform Os, Caller Caller)
+    public sealed record Setup(Harness H, FakeAppRegistry Registry, FakeAppPlatform Os, ManagedProcesses Managed, Caller Caller)
     {
         public Task<ToolResult> Call(string tool, object? args = null, CancellationToken? ct = null) =>
             H.Executor.ExecuteAsync(Caller, tool, args is null ? null : TestJson.Args(args), ct ?? Ct);
@@ -26,19 +26,28 @@ internal static class AppTestKit
         public Task<ToolResult> Terminate(FakeProcess p) => Call("process_terminate", new { pid = p.Pid, start_time = ProcessStartTime.ToText(p.Creation) });
 
         public int OsWrites => Os.Launches + Os.CloseRequests + Os.Terminations;
+
+        /// <summary>A process of the app as if Sysacta had launched it under the current approval (managed).</summary>
+        public FakeProcess RunManaged(RegisteredApp app, int pid)
+        {
+            var p = Os.Run(app, pid);
+            Managed.Add(app.Id, Registry.Apps[app.Id].Generation, p.Pid, p.Creation);
+            return p;
+        }
     }
 
     public static Setup Create()
     {
         var registry = new FakeAppRegistry();
         var os = new FakeAppPlatform();
+        var managed = new ManagedProcesses();
         var h = new Harness(_ =>
         [
-            new AppListAvailableTool(registry, os), new AppListRunningTool(registry, os), new AppLaunchTool(registry, os),
-            new AppCloseTool(registry, os), new ProcessListRunningTool(registry, os), new ProcessTerminateTool(registry, os),
+            new AppListAvailableTool(registry, os), new AppListRunningTool(registry, os, managed), new AppLaunchTool(registry, os, managed),
+            new AppCloseTool(registry, os, managed), new ProcessListRunningTool(registry, os, managed), new ProcessTerminateTool(registry, os, managed),
         ]);
         var (caller, _) = h.Store.AddClient("c1", All);
-        return new(h, registry, os, caller);
+        return new(h, registry, os, managed, caller);
     }
 
     public static (Setup S, RegisteredApp App) WithApp(params string[] args)

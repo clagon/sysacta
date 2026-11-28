@@ -24,6 +24,8 @@ internal static class ToolCatalog
         var sessions = new CoreAudioSessions();
         var defaultEndpoints = new PolicyConfigDefaultEndpoints();
         var monitor = new WindowsSystemMonitor();
+        // The processes Sysacta launched (one per process): the only ones app_close / process_terminate act on.
+        var managed = new ManagedProcesses();
         return
         [
             new AudioGetStateTool(audio, aliases),
@@ -63,11 +65,11 @@ internal static class ToolCatalog
             new SystemGetStorageTool(monitor),
             new NotificationSendTool(notifications, TimeProvider.System),
             new AppListAvailableTool(apps, appPlatform),
-            new AppListRunningTool(apps, appPlatform),
-            new AppLaunchTool(apps, appPlatform),
-            new AppCloseTool(apps, appPlatform),
-            new ProcessListRunningTool(apps, appPlatform),
-            new ProcessTerminateTool(apps, appPlatform),
+            new AppListRunningTool(apps, appPlatform, managed),
+            new AppLaunchTool(apps, appPlatform, managed),
+            new AppCloseTool(apps, appPlatform, managed),
+            new ProcessListRunningTool(apps, appPlatform, managed),
+            new ProcessTerminateTool(apps, appPlatform, managed),
             // Local console only (tray menu / device page / overview); never listed or callable over MCP.
             new DisplayRestoreModeTool(displays, recovery),
             new PowerReleaseGateTool(powerGate),

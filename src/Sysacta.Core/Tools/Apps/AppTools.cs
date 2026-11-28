@@ -50,6 +50,7 @@ public sealed record AppListAvailableData(
 public sealed record RunningAppInstance(
     string AppId,
     string? DisplayName,
+    [property: Description("managed = Sysacta launched this process under the current approval (it can be closed or terminated); estimated = its image looks like the approved file but Sysacta did not start it (observation only, never closed or terminated).")] AppMatch AppMatch,
     int Pid,
     [property: Description("Exact process creation time (UTC, 100 ns). Pass with pid to process_terminate.")] string StartTime,
     [property: Description("Observed now; process_terminate re-verifies everything.")] bool CanTerminate,
@@ -118,13 +119,13 @@ public sealed class AppListAvailableTool(IAppRegistry registry, IAppPlatform pla
     }
 }
 
-/// <summary>Running instances of allowed apps, matched by the approved file object of the process image.</summary>
-public sealed class AppListRunningTool(IAppRegistry registry, IAppPlatform platform) : SysactaTool<AppNoArgs, AppListRunningData>
+/// <summary>Running instances of allowed apps: managed (launched by Sysacta) or estimated (observed).</summary>
+public sealed class AppListRunningTool(IAppRegistry registry, IAppPlatform platform, ManagedProcesses managed) : SysactaTool<AppNoArgs, AppListRunningData>
 {
     public const int MaxInstances = 256;
 
     public override ToolDescriptor Descriptor { get; } = new("app_list_running", ToolCategories.Apps, "List running apps",
-        "Lists running processes of the allowed apps in the current user's session, one entry per process, with pid and exact start_time. A process belongs to an app only when its image is the approved executable file (not by name, title or pid); child processes running other executables are not included. uncertain_app_ids lists apps whose state could not be determined. No paths, command lines, window titles or user ids are returned.",
+        "Lists running processes of the allowed apps in the current user's session, one entry per process, with pid and exact start_time. app_match=managed: Sysacta launched the process from the approved executable under the current approval (since Sysacta started); only these can be closed or terminated. app_match=estimated: its image looks like the approved executable but Sysacta did not start it (started by the user, before Sysacta started, or before a re-approval); listed for information only. Never matched by name, title or pid; child processes running other executables are not included. uncertain_app_ids lists apps whose state could not be determined. No paths, command lines, window titles or user ids are returned.",
         DefaultPolicy.On, ReadOnly: true, AuditedArguments: []);
 
     protected override Task<ToolOutcome<AppListRunningData>> ExecuteAsync(AppNoArgs args, ToolExecution execution, CancellationToken cancellationToken)
@@ -132,14 +133,12 @@ public sealed class AppListRunningTool(IAppRegistry registry, IAppPlatform platf
         var apps = registry.ListAllowed();
         var names = apps.ToDictionary(a => a.Id, a => AppTargets.SafeName(a.DisplayName), StringComparer.Ordinal);
         var scan = platform.ScanSession([.. apps.Select(AppMatchKey.For)], cancellationToken);
-        var matched = scan.Processes.Where(p => p.AppId is not null && names.ContainsKey(p.AppId))
-            .OrderBy(p => p.AppId, StringComparer.Ordinal).ThenBy(p => p.CreationTime).ThenBy(p => p.Pid)
+        managed.Prune(scan);
+        var matched = scan.Processes.Select(p => managed.View(p, apps)).Where(v => v.AppId is not null && names.ContainsKey(v.AppId))
+            .OrderBy(v => v.AppId, StringComparer.Ordinal).ThenBy(v => v.Facts.CreationTime).ThenBy(v => v.Facts.Pid)
             .ToList();
-        var instances = matched.Take(MaxInstances).Select(p =>
-        {
-            var block = ProcessRules.Evaluate(p);
-            return new RunningAppInstance(p.AppId!, names[p.AppId!], p.Pid, ProcessStartTime.ToText(p.CreationTime), block is null, block);
-        }).ToList();
+        var instances = matched.Take(MaxInstances).Select(v => new RunningAppInstance(v.AppId!, names[v.AppId!], v.Match!.Value, v.Facts.Pid,
+            ProcessStartTime.ToText(v.Facts.CreationTime), v.Block is null, v.Block)).ToList();
         return Task.FromResult(new ToolOutcome<AppListRunningData>(
             new AppListRunningData(instances, instances.Count, scan.Truncated || matched.Count > instances.Count,
                 [.. scan.UncertainAppIds.Where(names.ContainsKey).Order(StringComparer.Ordinal)], scan.FailedCount),
@@ -148,10 +147,10 @@ public sealed class AppListRunningTool(IAppRegistry registry, IAppPlatform platf
 }
 
 /// <summary>Launches the approved executable of an allowed app with its approved fixed arguments, once.</summary>
-public sealed class AppLaunchTool(IAppRegistry registry, IAppPlatform platform) : SysactaTool<AppIdArgs, AppLaunchData>
+public sealed class AppLaunchTool(IAppRegistry registry, IAppPlatform platform, ManagedProcesses managed) : SysactaTool<AppIdArgs, AppLaunchData>
 {
     public override ToolDescriptor Descriptor { get; } = new("app_launch", ToolCategories.Apps, "Launch registered app",
-        "Launches an allowed registered app by app_id with the executable file and fixed arguments the local user approved; nothing else (path, arguments, URL, environment, working folder) can be chosen. If an instance is already running, nothing is launched and already_running=true is returned (verified; no window is focused). The executable is re-verified (same file and SHA-256) right before the launch; a changed file is refused until the local user re-approves it. status=success with verification=accepted means Windows created the process, not that the app is ready or keeps running (some apps hand over to another process and exit). Never elevates. Do not retry when status=unknown.",
+        "Launches an allowed registered app by app_id with the executable file and fixed arguments the local user approved; nothing else (path, arguments, URL, environment, working folder) can be chosen. If an instance that Sysacta launched is still running, nothing is launched and already_running=true is returned (verified; no window is focused). If an instance that Sysacta did not launch appears to be running (app_match=estimated in app_list_running), nothing is launched and AMBIGUOUS_TARGET is returned. The launched process becomes managed: app_close and process_terminate act only on such processes. The executable is re-verified (same file and SHA-256) right before the launch; a changed file is refused until the local user re-approves it. status=success with verification=accepted means Windows created the process, not that the app is ready or keeps running (some apps hand over to another process and exit). Never elevates. Do not retry when status=unknown.",
         DefaultPolicy.On, ReadOnly: false, AuditedArguments: [], Timeout: TimeSpan.FromSeconds(15));
 
     public override ToolAvailability GetAvailability() => platform.IsElevated
@@ -170,14 +169,22 @@ public sealed class AppLaunchTool(IAppRegistry registry, IAppPlatform platform) 
         }
 
         var scan = platform.ScanSession([AppMatchKey.For(app)], cancellationToken);
+        managed.Prune(scan);
+        var views = scan.Processes.Select(p => managed.View(p, [app])).Where(v => v.AppId == app.Id).ToList();
+        if (views.Any(v => v.Match == AppMatch.Managed))
+        {
+            return Task.FromResult(new ToolOutcome<AppLaunchData>(new AppLaunchData(app.Id, true, false, null, null), Verification.Verified));
+        }
+
         if (scan.Truncated || scan.UncertainAppIds.Contains(app.Id))
         {
             throw new ToolFailureException(ErrorCodes.OsApiError, "Could not determine whether the app is already running. Nothing was launched.", retryable: true);
         }
 
-        if (scan.Processes.Any(p => p.AppId == app.Id))
+        if (views.Count > 0)
         {
-            return Task.FromResult(new ToolOutcome<AppLaunchData>(new AppLaunchData(app.Id, true, false, null, null), Verification.Verified));
+            // Never reported as verified, never launched a second time without knowing.
+            throw new ToolFailureException(ErrorCodes.AmbiguousTarget, "An instance of the app that Sysacta did not launch appears to be running (started by the user, before Sysacta started, or before a re-approval). Nothing was launched.");
         }
 
         using var prepared = platform.PrepareLaunch(app, cancellationToken);
@@ -192,6 +199,11 @@ public sealed class AppLaunchTool(IAppRegistry registry, IAppPlatform platform) 
         {
             return Task.FromResult(ToolOutcome.Unknown(new AppLaunchData(app.Id, false, null, result.Pid, null), ErrorCodes.OsApiError,
                 "A suspended process was created but could not be confirmed removed. Whether it runs is unknown; do not retry."));
+        }
+
+        if (result.Status == LaunchStatus.Started && result.Pid is { } pid && result.CreationTime is { } created)
+        {
+            managed.Add(app.Id, app.Generation, pid, created);
         }
 
         return Task.FromResult(result.Status switch

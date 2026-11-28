@@ -177,12 +177,45 @@ public class AppToolTests
     public async Task Launch_is_a_verified_no_op_when_an_instance_already_runs()
     {
         var (s, app) = WithApp();
-        s.Os.Run(app, 100);
+        s.RunManaged(app, 100);
         var r = await s.Launch(app);
         Assert.True(r.IsSuccess);
         Assert.Equal(Verification.Verified, r.Verification);
         Assert.True((bool)r.Data!["already_running"]!);
         Assert.Equal((0, 0), (s.Os.Prepared, s.Os.Launches));
+    }
+
+    [Fact]
+    public async Task An_instance_sysacta_did_not_launch_is_neither_verified_nor_launched_again()
+    {
+        var (s, app) = WithApp();
+        s.Os.Run(app, 100); // started by the user: only estimated
+        var r = await s.Launch(app);
+        AssertError(r, ErrorCodes.AmbiguousTarget);
+        Assert.Equal((0, 0), (s.Os.Prepared, s.Os.Launches));
+
+        // Launched by Sysacta under a previous approval: no longer managed after a re-approval.
+        s.Os.Processes.Clear();
+        s.RunManaged(app, 101);
+        s.Registry.Reapprove(app.Id);
+        AssertError(await s.Launch(app), ErrorCodes.AmbiguousTarget);
+        Assert.Equal(0, s.Os.Launches);
+    }
+
+    [Fact]
+    public async Task A_launched_process_becomes_managed_and_can_then_be_terminated()
+    {
+        var (s, app) = WithApp();
+        var r = await s.Launch(app);
+        Assert.True((bool)r.Data!["launched"]!);
+        var p = s.Os.Run(app, 4242, creation: s.Os.NextLaunch.CreationTime!.Value);
+        var listed = (await s.Call("app_list_running")).Data!["instances"]![0]!;
+        Assert.Equal(("managed", true), ((string)listed["app_match"]!, (bool)listed["can_terminate"]!));
+        Assert.True((await s.Launch(app)).IsSuccess); // already running (managed): no-op
+        Assert.Equal(1, s.Os.Launches);
+        var t = await s.Terminate(p);
+        Assert.Equal(Verification.Verified, t.Verification);
+        Assert.Equal(0, s.Managed.Count);
     }
 
     [Fact]
@@ -379,19 +412,21 @@ public class AppToolTests
         var s = Create();
         var a = s.Registry.Add(1);
         var b = s.Registry.Add(2, allowed: false);
-        s.Os.Run(a, 10);
-        s.Os.Run(a, 11);
+        s.RunManaged(a, 10);
+        s.RunManaged(a, 11);
         s.Os.Run(b, 12);
         s.Os.Processes[13] = new FakeProcess(13, 5, a.FileName, FakeAppRegistry.Identity(7));   // same name, other file
         s.Os.Processes[14] = new FakeProcess(14, 5, "x.exe", a.Identity, SameUser: false);    // other user
-        s.Os.Processes[15] = s.Os.Run(a, 15) with { Rid = 0x3000 };
+        s.Os.Processes[15] = s.RunManaged(a, 15) with { Rid = 0x3000 };
+        s.Os.Run(a, 16); // started by the user
         s.Os.Uncertain.Add(a.Id);
         var r = await s.Call("app_list_running");
         var instances = r.Data!["instances"]!.AsArray();
-        Assert.Equal([10, 11, 15], instances.Select(i => (int)i!["pid"]!));
+        Assert.Equal([10, 11, 15, 16], instances.Select(i => (int)i!["pid"]!));
         Assert.All(instances, i => Assert.Equal(a.Id, (string)i!["app_id"]!));
         Assert.True((bool)instances[0]!["can_terminate"]!);
         Assert.Equal("elevated", (string)instances[2]!["terminate_blocked_reason"]!);
+        Assert.Equal(("estimated", false, "not_managed"), ((string)instances[3]!["app_match"]!, (bool)instances[3]!["can_terminate"]!, (string)instances[3]!["terminate_blocked_reason"]!));
         Assert.Equal([a.Id], r.Data["uncertain_app_ids"]!.AsArray().Select(x => (string)x!));
     }
 }
