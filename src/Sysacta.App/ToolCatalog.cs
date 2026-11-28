@@ -4,8 +4,10 @@ using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
 using Sysacta.Core.Tools.Power;
+using Sysacta.Core.Tools.SystemMonitoring;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Experimental.Audio;
+using Sysacta.Windows.SystemMonitoring;
 
 namespace Sysacta.App;
 
@@ -19,6 +21,7 @@ internal static class ToolCatalog
     {
         var sessions = new CoreAudioSessions();
         var defaultEndpoints = new PolicyConfigDefaultEndpoints();
+        var monitor = new WindowsSystemMonitor();
         return
         [
             new AudioGetStateTool(audio, aliases),
@@ -52,6 +55,10 @@ internal static class ToolCatalog
             new PowerSleepTool(power),
             new PowerShutdownTool(power),
             new PowerRestartTool(power),
+            new SystemGetStatusTool(monitor),
+            new SystemGetHardwareTool(monitor),
+            new SystemGetTemperaturesTool(monitor),
+            new SystemGetStorageTool(monitor),
             // Local console only (tray menu / device page / overview); never listed or callable over MCP.
             new DisplayRestoreModeTool(displays, recovery),
             new PowerReleaseGateTool(powerGate),

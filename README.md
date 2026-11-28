@@ -37,16 +37,21 @@ Sysacta is a Windows 11 desktop utility that exposes structured system-managemen
 | `power_lock` | Locks the Windows session (accepted only; the lock state cannot be read) | Enabled |
 | `power_sleep` | Requests normal sleep (never hibernation or forced) | Disabled |
 | `power_shutdown` / `power_restart` | Request a normal, non-forced shutdown / restart; apps with unsaved work or the user can stop it | Disabled |
+| `system_get_status` | CPU usage (all processor groups, ~1 s window), physical memory, uptime, per-GPU utilization (busiest engine and per engine) and GPU memory in use | Enabled |
+| `system_get_hardware` | Windows edition/version/build, processors and core topology, installed and OS-usable RAM, GPUs (name, PCI ids, 64-bit memory sizes), PC manufacturer/model; no serials or names | Enabled |
+| `system_get_temperatures` | GPU driver temperature and ACPI thermal zones; CPU, GPU hotspot/memory and drive temperatures are reported as not collected | Enabled |
+| `system_get_storage` | Logical volume capacity of local fixed drives (total, free, available to the user, used) | Enabled |
 
 "Enabled" applies to new installations. Experimental tools and newly added tools on upgrade start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console. Display support depends on the monitor, cable, dock and the monitor's DDC/CI setting; mirrored displays cannot be adjusted over DDC/CI. `display_get_state` with `include_switching: true` reports the power state and the `input_id` values (the capabilities query can take several seconds). A monitor that is switched off or to an input without a signal may stop answering, so Sysacta cannot always switch it back: make sure the monitor's power button and menu are within reach before enabling these tools.
 
 Power transitions report `verification: "accepted"`: Windows accepted the request, which does not prove that the PC locked, slept or stopped. While a transition runs every other state change is refused with `BUSY`. After an accepted sleep, state changes resume when Windows reports the resume; after an accepted shutdown or restart that did not happen, the local user resumes them from the **概要** (Overview) page. No power operation has been verified on real hardware yet ([progress](docs/phase-1e-progress.md)).
 
+System monitoring is read-only and uses documented Windows APIs only (PDH, DXGI, WDDM adapter performance data, Win32, fixed WMI queries); no driver is installed or loaded. Values that cannot be read are `null` with a reason and are never estimated: CPU temperatures need a kernel driver and are not available ([progress](docs/phase-1f-progress.md)).
+
 ## Planned features
 
 | Category | Capabilities |
 | --- | --- |
-| System | CPU, GPU, memory, storage and supported hardware sensors |
 | Apps & processes | App discovery, allowlisted launch and process management |
 | Network | Connection information, traffic and adapter management |
 | Bluetooth | Device discovery and supported connection controls |

@@ -19,6 +19,7 @@
 | 固定の許可リストに限った低レベル操作・通信消失時の `accepted` | Core + Windows | `src/Sysacta.Core/Tools/Display/DisplaySwitchTools.cs`, `Mccs.cs`, `src/Sysacta.Windows/Display/DdcCiSwitchControl.cs` |
 
 | PC 全体の電源遷移（他の状態変更との排他、ローカル解除） | Core + Windows + App | `src/Sysacta.Core/Tools/Power/PowerTools.cs`, `src/Sysacta.Core/Tools/PowerTransitionGate.cs`, `src/Sysacta.Windows/Power/WindowsPower.cs` |
+| 読み取りの欠損を値 null + 型付き理由で返す・OS 由来の数値の検証 | Core + Windows | `src/Sysacta.Core/Tools/SystemMonitoring/`, `src/Sysacta.Windows/SystemMonitoring/WindowsSystemMonitor.cs` |
 
 ## 1 回の呼び出しで起きること
 
@@ -189,3 +190,8 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 - 開始点後に OS が未実行を返した場合は例外ではなく `ToolOutcome.Error` を返す（executor はそれを「未実行確定」としてゲートを解放する。例外は未確定扱い）。
 - 受理は完了ではない。遷移は常に `accepted`。詳細は [Phase 1E 進捗](phase-1e-progress.md)。
 
+### システム監視（Phase 1F）
+
+- 読み取りの一部が欠けても成功として返し、欠けた値は `null` と `UnavailableReason`（`not_supported` / `permission_denied` / `unavailable` / `invalid_data` / `interrupted` / `truncated`）で表す。0・空文字・推定値で埋めない。`partial` は状態変更専用で、読み取りの欠損には使わない。全体が読めないときだけ `ToolFailureException`。
+- OS から得た数値の検証・単位変換・集計は Core（`SystemStatus` / `SystemInventory`）に置き、フェイクで単体テストする。Windows アダプターは生の値と OS の失敗理由だけを返す。
+- 測定の時刻（UTC）と測定窓（開始・終了・実測 ms）を結果に含める。PDH のカウンター・WMI のクエリ・レジストリ値は定数に固定し、引数にしない。詳細は [Phase 1F 進捗](phase-1f-progress.md)。

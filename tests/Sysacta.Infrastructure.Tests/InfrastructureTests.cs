@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Sysacta.Core.Auditing;
 using Sysacta.Core.Security;
 using Sysacta.Core.Tools;
+using Sysacta.Core.Tools.SystemMonitoring;
 
 namespace Sysacta.Infrastructure.Tests;
 
@@ -110,6 +111,36 @@ public class AccessStoreTests
         Assert.False(store.IsToolEnabled("media_play"));
         Assert.True(store.IsToolEnabled("audio_get_state"));
         Assert.False(store.IsToolEnabled("unknown_tool"));
+    }
+
+    [Fact]
+    public void Phase_1f_monitoring_tools_are_on_for_new_installs_but_disabled_and_ungranted_when_added_later()
+    {
+        ToolDescriptor[] monitoring =
+        [
+            new SystemGetStatusTool(null!).Descriptor, new SystemGetHardwareTool(null!).Descriptor,
+            new SystemGetTemperaturesTool(null!).Descriptor, new SystemGetStorageTool(null!).Descriptor,
+        ];
+
+        using (var fresh = new TempDatabase())
+        {
+            fresh.Database.Migrate();
+            var store = new AccessStore(fresh.Database, TimeProvider.System, new AuthorizationGate());
+            store.SyncTools([Tool("audio_get_state", DefaultPolicy.On), .. monitoring], "0.1.0");
+            Assert.All(monitoring, d => Assert.True(store.IsToolEnabled(d.Name)));
+        }
+
+        using var existing = new TempDatabase();
+        existing.Database.Migrate();
+        var upgraded = new AccessStore(existing.Database, TimeProvider.System, new AuthorizationGate());
+        upgraded.SyncTools([Tool("audio_get_state", DefaultPolicy.On)], "0.1.0");
+        var client = upgraded.IssueClient("Agent", null, ["audio_get_state"]);
+        upgraded.SyncTools([Tool("audio_get_state", DefaultPolicy.On), .. monitoring], "0.2.0");
+        Assert.All(monitoring, d =>
+        {
+            Assert.False(upgraded.IsToolEnabled(d.Name));
+            Assert.False(upgraded.IsClientToolAllowed(client.Client.Id, d.Name));
+        });
     }
 
     [Fact]
