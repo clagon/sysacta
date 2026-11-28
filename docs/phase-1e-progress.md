@@ -154,8 +154,9 @@
 
 ## 9. 実機検証の範囲
 
-- 実機では何も実行していない（開発環境は WSL2。Windows 実機での読み取り確認も未実施）。Windows CI で `WindowsPowerTests`（読み取り・構造体サイズ・特権スコープ）が実行される。
-- 未検証: 各電源 API の実際の受理と結果、SetSuspendState の戻るタイミングと偽装トークンでの特権、suspend/resume 通知の実際の順序と欠落（特に Modern Standby）、Modern Standby・ノート PC・バッテリーでの読み取り、リモートデスクトップでの挙動、プラン変更の永続性。manual-tests.md の Phase 1E 表を参照。
+- 2026-11-28、利用者の承認（読み取りのみ）を得て、通常権限の Windows 11 デスクトップ（AC、バッテリーなし、S3 機）で `WindowsPower` の読み取りメソッドだけを呼ぶ一時コンソールを実行した（`Request` / `SetActivePlan` は呼んでいない）。状態・能力・プラン一覧・アクティブプラン・特権保持（true）が `powercfg /list` `/a` と一致し、SYSTEM_POWER_CAPABILITIES のオフセットと PowerReadFriendlyName のローカライズ済み名を実機で確認した（manual-tests P1・P2）。
+- 実機での状態変更（ロック・スリープ・シャットダウン・再起動・プラン変更）と特権スコープの実機実行は行っていない。Windows CI で `WindowsPowerTests`（読み取り・構造体サイズ・特権スコープ・通知登録）が成功している。
+- 未検証: ノート PC・Modern Standby 機での読み取り、各電源 API の実際の受理と結果、SetSuspendState の戻るタイミングと偽装トークンでの特権、suspend/resume 通知の実際の順序と欠落（特に Modern Standby）、Modern Standby・ノート PC・バッテリーでの読み取り、リモートデスクトップでの挙動、プラン変更の永続性。manual-tests.md の Phase 1E 表を参照。
 
 ## 10. 残存リスク
 

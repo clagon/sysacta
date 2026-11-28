@@ -186,8 +186,8 @@ dotnet test tests/Sysacta.Windows.Tests -c Release --filter WindowsDisplaysTests
 
 | # | 項目 | 手順と期待結果 | 状況 |
 |---|---|---|---|
-| P1 | 状態の読み取り | 通常権限で `power_get_state`。デスクトップ(バッテリーなし)は `battery: absent`、AC は `online`。ノート PC では AC/DC 切替・充電中・残量・残り時間を比較。Modern Standby 機の `modern_standby` / `sleep_supported` を `powercfg /a` と比較(powercfg は手動の比較だけに使う) | 未実施(ノート PC・Modern Standby 機がなければ未検証と記録) |
-| P2 | プラン一覧 | `power_list_plans` の ID・名前・is_active が Windows の電源オプションと一致。名前に制御文字・パスがないこと。組み込みプラン名が null（間接文字列 `@…` が返る）にならないこと | 未実施 |
+| P1 | 状態の読み取り | 通常権限で `power_get_state`。デスクトップ(バッテリーなし)は `battery: absent`、AC は `online`。ノート PC では AC/DC 切替・充電中・残量・残り時間を比較。Modern Standby 機の `modern_standby` / `sleep_supported` を `powercfg /a` と比較(powercfg は手動の比較だけに使う) | 一部確認 (2026-11-28、利用者承認の読み取りのみ): 通常権限の Windows 11 デスクトップ(AC、バッテリーなし、S3 機)で `ac_power: online`、`battery: absent`、残量・時間・充電は null、`battery_saver: false`、`sleep_supported: true`、`hibernate_supported: true`、`modern_standby: false`、`unavailable: []`。`powercfg /a`(S3・休止状態は利用可、S1/S2/S0 低電力アイドルは不可)と一致し、能力のバイトオフセットを実機で確認。ノート PC(AC/DC・充電・残量)と Modern Standby 機は未検証 |
+| P2 | プラン一覧 | `power_list_plans` の ID・名前・is_active が Windows の電源オプションと一致。名前に制御文字・パスがないこと。組み込みプラン名が null（間接文字列 `@…` が返る）にならないこと | 確認 (2026-11-28、読み取りのみ): 4 プラン(組み込み 3 + OEM 1)の ID・名前・アクティブが `powercfg /list` と一致。PowerReadFriendlyName は日本語の表示名を解決済みで返し、間接文字列は返らなかった。`truncated: false`、名前の取得失敗 0。読み取りの前後でアクティブプランは不変 |
 | P3 | プラン変更 | 現在のプランと復元先を記録し、承認後に別プランへ変更 → `verified`、電源オプションで確認 → 元のプランへ戻す。再起動後の永続性は承認がある場合のみ | 未実施 |
 | P4 | ロック | 承認後に `power_lock` → `accepted`、実際にロックされること、ロック中も MCP の読み取りが動くこと、サインインで戻ること。概要画面の表示が消えること | 未実施 |
 | P5 | スリープ | 承認後(S3 機)。`accepted` または 5 秒で `unknown` になること、ネイティブ呼び出しが戻るタイミング、復帰後に概要画面の「電源操作中」が自動で消えるか(消えなければ解除ボタンで戻せること)、無人ウェイク(ウェイクタイマー等、承認がある場合のみ)でも消えるか、監査・MCP 再接続・権限の保持。特権が拒否される場合(OS_API_ERROR)も記録する | 未実施 |
