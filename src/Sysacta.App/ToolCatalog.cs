@@ -3,6 +3,7 @@ using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
+using Sysacta.Core.Tools.Notification;
 using Sysacta.Core.Tools.Power;
 using Sysacta.Core.Tools.SystemMonitoring;
 using Sysacta.Windows.Audio;
@@ -17,7 +18,7 @@ namespace Sysacta.App;
 /// </summary>
 internal static class ToolCatalog
 {
-    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery, IMediaSessions media, IPower power, PowerTransitionGate powerGate)
+    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery, IMediaSessions media, IPower power, PowerTransitionGate powerGate, IDesktopNotifications notifications)
     {
         var sessions = new CoreAudioSessions();
         var defaultEndpoints = new PolicyConfigDefaultEndpoints();
@@ -59,6 +60,7 @@ internal static class ToolCatalog
             new SystemGetHardwareTool(monitor),
             new SystemGetTemperaturesTool(monitor),
             new SystemGetStorageTool(monitor),
+            new NotificationSendTool(notifications, TimeProvider.System),
             // Local console only (tray menu / device page / overview); never listed or callable over MCP.
             new DisplayRestoreModeTool(displays, recovery),
             new PowerReleaseGateTool(powerGate),

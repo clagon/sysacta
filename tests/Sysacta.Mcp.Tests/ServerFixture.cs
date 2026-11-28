@@ -9,6 +9,7 @@ using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
+using Sysacta.Core.Tools.Notification;
 using Sysacta.Core.Tools.Power;
 using Sysacta.Core.Tools.SystemMonitoring;
 using Sysacta.Infrastructure;
@@ -37,14 +38,15 @@ public sealed class ServerFixture : IAsyncDisposable
     public FakePower Power { get; } = new();
     public FakeSystemMonitor Monitor { get; } = new();
     public PowerTransitionGate PowerGate { get; } = new();
+    public FakeNotifications Notifications { get; } = new();
 
-    /// <summary>Clock of the HTTP layer (budgets, last-used time). The executor and the store use the system clock.</summary>
+    /// <summary>Clock of the HTTP layer (budgets, last-used time) and the notification limit. The executor and the store use the system clock.</summary>
     public ManualTime Time { get; } = new();
 
     /// <summary>What the authentication layer sees of the store; counts its database calls.</summary>
     public CountingStore Counted { get; }
 
-    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower, bool includeSystem)
+    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower, bool includeSystem, bool includeNotification)
     {
         Database = new SysactaDatabase(Path.Combine(_dir, "sysacta.db"));
         Database.Migrate();
@@ -81,6 +83,7 @@ public sealed class ServerFixture : IAsyncDisposable
                 new PowerReleaseGateTool(PowerGate) } : [],
             .. includeSystem ? new SysactaTool[] { new SystemGetStatusTool(Monitor), new SystemGetHardwareTool(Monitor),
                 new SystemGetTemperaturesTool(Monitor), new SystemGetStorageTool(Monitor) } : [],
+            .. includeNotification ? new SysactaTool[] { new NotificationSendTool(Notifications, Time) } : [],
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
@@ -89,9 +92,9 @@ public sealed class ServerFixture : IAsyncDisposable
         Host = new McpServerHost(Executor, new TokenAuthenticator(Counted, Time), Audit, Time, "test");
     }
 
-    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false, bool includeSystem = false)
+    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false, bool includeSystem = false, bool includeNotification = false)
     {
-        var fixture = new ServerFixture(limits, includeMedia, includePower, includeSystem);
+        var fixture = new ServerFixture(limits, includeMedia, includePower, includeSystem, includeNotification);
         await fixture.Host.StartAsync(options ?? new ServerEndpointOptions { Port = 0 }, TestContext.Current.CancellationToken);
         return fixture;
     }
@@ -160,6 +163,8 @@ public sealed class ManualTime : TimeProvider
     private TimeSpan _offset;
 
     public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
+
+    public override long GetTimestamp() => base.GetTimestamp() + (long)(_offset.TotalSeconds * TimestampFrequency);
 
     public void Advance(TimeSpan by) => _offset += by;
 }

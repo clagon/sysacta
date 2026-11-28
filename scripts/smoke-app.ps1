@@ -32,6 +32,13 @@ function Get-Status {
 
 function Get-MainWindow([System.Diagnostics.Process]$p) { $p.Refresh(); return $p.MainWindowHandle }
 
+# The app registers its notification shortcut at startup. A placeholder that is not Sysacta's stands in its place, so
+# this test registers nothing and checks that an existing file is left alone and startup does not depend on it.
+$shortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "Sysacta.lnk"
+if (Test-Path $shortcut) { throw "Refusing to run: $shortcut already exists." }
+Set-Content -Path $shortcut -Value "smoke test placeholder" -Encoding ascii
+$placeholder = (Get-FileHash $shortcut).Hash
+
 $app = Start-Process -FilePath $Exe -PassThru
 try {
     Wait-Until { if ($app.HasExited) { throw "Sysacta exited early ($($app.ExitCode))." }; (Get-Status) -eq 401 } "MCP server (401 without token)"
@@ -82,10 +89,13 @@ try {
     $app = Start-Process -FilePath $Exe -ArgumentList "--minimized" -PassThru
     Wait-Until { if ($app.HasExited) { throw "Sysacta exited early ($($app.ExitCode))." }; (Get-Status) -eq 401 } "server after restart with a saved Dark theme"
     Write-Host "Restart with a saved Dark theme completes startup (server running)."
+    if ((Get-FileHash $shortcut).Hash -ne $placeholder) { throw "The app overwrote a Start menu file it does not own." }
+    Write-Host "A foreign notification shortcut was left unchanged."
 }
 finally {
     if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit(10000) | Out-Null }
     # The profile did not exist before this script, so everything in it was created here.
     Start-Sleep -Milliseconds 500
     Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
+    Remove-Item -Force $shortcut -ErrorAction SilentlyContinue
 }
