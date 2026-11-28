@@ -153,7 +153,7 @@ public sealed partial class AppsViewModel(SysactaRuntime runtime) : PageViewMode
     {
         if (item.App is { } app)
         {
-            Draft = new AppDraft(app.Id, item.Generation, app.Path, app.DisplayName, string.Join(Environment.NewLine, app.FixedArgs));
+            Draft = new AppDraft(app.Id, item.Generation, app.Path, app.DisplayName, AppDraft.FormatArguments(app.FixedArgs));
         }
     }
 
@@ -276,6 +276,13 @@ public sealed partial class AppDraft(string? reapproveId, long generation, strin
     private string _arguments = arguments;
 
     /// <summary>Each line is one argument; a single trailing line break is ignored; empty text means no arguments.</summary>
+    /// <summary>
+    /// The inverse of <see cref="ParseArguments"/>: every argument on its own line, each line ended by a line break, so
+    /// empty arguments (also a trailing or a single empty one) survive re-approval unchanged.
+    /// </summary>
+    public static string FormatArguments(IReadOnlyList<string> args) =>
+        args.Count == 0 ? "" : string.Concat(args.Select(a => a + Environment.NewLine));
+
     public static IReadOnlyList<string> ParseArguments(string text)
     {
         if (text.Length == 0)
