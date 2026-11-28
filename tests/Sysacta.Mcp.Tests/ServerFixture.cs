@@ -10,6 +10,7 @@ using Sysacta.Core.Tools.Apps;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
+using Sysacta.Core.Tools.Network;
 using Sysacta.Core.Tools.Notification;
 using Sysacta.Core.Tools.Power;
 using Sysacta.Core.Tools.SystemMonitoring;
@@ -44,6 +45,7 @@ public sealed class ServerFixture : IAsyncDisposable
     public AppRegistryStore Apps { get; }
     public FakeAppPlatform AppOs { get; } = new();
     public ManagedProcesses Managed { get; } = new();
+    public FakeNetwork Network { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time) and the notification limit. The executor and the store use the system clock.</summary>
     public ManualTime Time { get; } = new();
@@ -51,7 +53,7 @@ public sealed class ServerFixture : IAsyncDisposable
     /// <summary>What the authentication layer sees of the store; counts its database calls.</summary>
     public CountingStore Counted { get; }
 
-    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower, bool includeSystem, bool includeNotification, bool includeApps)
+    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower, bool includeSystem, bool includeNotification, bool includeApps, bool includeNetwork)
     {
         Database = new SysactaDatabase(Path.Combine(_dir, "sysacta.db"));
         Database.Migrate();
@@ -92,6 +94,7 @@ public sealed class ServerFixture : IAsyncDisposable
             .. includeNotification ? new SysactaTool[] { new NotificationSendTool(Notifications, Time) } : [],
             .. includeApps ? new SysactaTool[] { new AppListAvailableTool(Apps, AppOs), new AppListRunningTool(Apps, AppOs, Managed), new AppLaunchTool(Apps, AppOs, Managed),
                 new AppCloseTool(Apps, AppOs, Managed), new ProcessListRunningTool(Apps, AppOs, Managed), new ProcessTerminateTool(Apps, AppOs, Managed) } : [],
+            .. includeNetwork ? NetworkTools(Network, Store) : [],
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
@@ -100,9 +103,17 @@ public sealed class ServerFixture : IAsyncDisposable
         Host = new McpServerHost(Executor, new TokenAuthenticator(Counted, Time), Audit, Time, "test");
     }
 
-    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false, bool includeSystem = false, bool includeNotification = false, bool includeApps = false)
+    public static SysactaTool[] NetworkTools(FakeNetwork network, AccessStore store)
     {
-        var fixture = new ServerFixture(limits, includeMedia, includePower, includeSystem, includeNotification, includeApps);
+        var changes = new NetworkChanges();
+        var time = new SteppedTime();
+        return [new NetworkGetStatusTool(network, time), new NetworkListAdaptersTool(network, store, time),
+            new NetworkGetTrafficTool(network, store, changes, time)];
+    }
+
+    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false, bool includeSystem = false, bool includeNotification = false, bool includeApps = false, bool includeNetwork = false)
+    {
+        var fixture = new ServerFixture(limits, includeMedia, includePower, includeSystem, includeNotification, includeApps, includeNetwork);
         await fixture.Host.StartAsync(options ?? new ServerEndpointOptions { Port = 0 }, TestContext.Current.CancellationToken);
         return fixture;
     }

@@ -2,6 +2,7 @@ using System.IO;
 using Sysacta.App.ViewModels;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
+using Sysacta.Core.Tools.Network;
 
 namespace Sysacta.App.Tests;
 
@@ -176,5 +177,30 @@ public class DevicesViewModelTests
             {
             }
         }
+    }
+
+    [Fact]
+    public void Network_adapters_show_kind_states_speed_addresses_and_why_a_change_is_refused()
+    {
+        var list = new NetworkAdapterListData(DateTimeOffset.UnixEpoch,
+        [
+            new("net-11111111111111111111111111111111", "Ethernet", ["uplink"], NetworkAdapterKind.Wired, NetworkAdminState.Enabled, NetworkOperState.Up,
+                NetworkMediaState.Connected, 1_000_000_000, 1_000_000_000, [new("192.0.2.10", 24, NetworkAddressScope.Unicast)], false, [], false,
+                NetworkChangeBlock.ActiveAdapter),
+            new("net-22222222222222222222222222222222", null, [], NetworkAdapterKind.Wired, NetworkAdminState.Disabled, NetworkOperState.Down,
+                NetworkMediaState.Disconnected, null, null, [], false, [], false, null),
+        ], 2, false, 0, null);
+        var items = DeviceItem.BuildNetwork(list, [new("uplink", "net-11111111111111111111111111111111"), new("old", "net-33333333333333333333333333333333")]);
+
+        Assert.Equal("有線 · 有効・稼働中", items[0].Summary);
+        Assert.Contains("送信 1 Gbps", items[0].Level, StringComparison.Ordinal);
+        Assert.Contains("192.0.2.10/24", items[0].Level, StringComparison.Ordinal);
+        Assert.Contains("使用中", items[0].Level, StringComparison.Ordinal);
+        Assert.Equal("network_get_traffic", items[0].Operations);
+        Assert.Equal("無効・停止・メディア未接続", items[1].State);
+        Assert.Equal("（名前なし）", items[1].Name);
+        Assert.False(items[2].Found);
+        Assert.Equal("見つかりません", items[2].State);
+        Assert.Equal("状態を取得できません", DeviceItem.BuildNetwork(null, [new("old", "net-33333333333333333333333333333333")])[0].State);
     }
 }

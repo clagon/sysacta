@@ -4,6 +4,7 @@ using Sysacta.Core.Tools.Apps;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
+using Sysacta.Core.Tools.Network;
 using Sysacta.Core.Tools.Notification;
 using Sysacta.Core.Tools.Power;
 using Sysacta.Core.Tools.SystemMonitoring;
@@ -19,13 +20,15 @@ namespace Sysacta.App;
 /// </summary>
 internal static class ToolCatalog
 {
-    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery, IMediaSessions media, IPower power, PowerTransitionGate powerGate, IDesktopNotifications notifications, IAppRegistry apps, IAppPlatform appPlatform)
+    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery, IMediaSessions media, IPower power, PowerTransitionGate powerGate, IDesktopNotifications notifications, IAppRegistry apps, IAppPlatform appPlatform, INetworkPlatform network)
     {
         var sessions = new CoreAudioSessions();
         var defaultEndpoints = new PolicyConfigDefaultEndpoints();
         var monitor = new WindowsSystemMonitor();
         // The processes Sysacta launched (one per process): the only ones app_close / process_terminate act on.
         var managed = new ManagedProcesses();
+        // Administrative changes made by Sysacta; a traffic window overlapping one reports no rate.
+        var networkChanges = new NetworkChanges();
         return
         [
             new AudioGetStateTool(audio, aliases),
@@ -70,6 +73,9 @@ internal static class ToolCatalog
             new AppCloseTool(apps, appPlatform, managed),
             new ProcessListRunningTool(apps, appPlatform, managed),
             new ProcessTerminateTool(apps, appPlatform, managed),
+            new NetworkGetStatusTool(network, TimeProvider.System),
+            new NetworkListAdaptersTool(network, aliases, TimeProvider.System),
+            new NetworkGetTrafficTool(network, aliases, networkChanges, TimeProvider.System),
             // Local console only (tray menu / device page / overview); never listed or callable over MCP.
             new DisplayRestoreModeTool(displays, recovery),
             new PowerReleaseGateTool(powerGate),

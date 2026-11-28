@@ -5,6 +5,7 @@ using Sysacta.Core.Devices;
 using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
+using Sysacta.Core.Tools.Network;
 using Wpf.Ui.Controls;
 
 namespace Sysacta.App.ViewModels;
@@ -13,8 +14,9 @@ namespace Sysacta.App.ViewModels;
 public sealed record DeviceCategory(string Id, string Label);
 
 /// <summary>
-/// Audio devices, displays and their aliases. The lists come from <see cref="AudioDeviceCatalog"/> and
-/// <see cref="DisplayCatalog"/>, the same code as audio_list_devices / display_list_devices. Display values are read
+/// Audio devices, displays, network adapters and their aliases. The lists come from <see cref="AudioDeviceCatalog"/>,
+/// <see cref="DisplayCatalog"/> and <see cref="NetworkAdapters"/>, the same code as the list tools. Network adapters are
+/// never enabled or disabled from this page. Display values are read
 /// only for the selected display. Aliases are changed only here (never through MCP); nothing is re-bound automatically.
 /// </summary>
 public sealed partial class DevicesViewModel : PageViewModel
@@ -74,11 +76,13 @@ public sealed partial class DevicesViewModel : PageViewModel
     }, "表示モードを元に戻せませんでした");
 
     public IReadOnlyList<DeviceCategory> Categories { get; } =
-        [new(ToolCategories.Audio, "オーディオ"), new(ToolCategories.Display, "ディスプレイ")];
+        [new(ToolCategories.Audio, "オーディオ"), new(ToolCategories.Display, "ディスプレイ"), new(ToolCategories.Network, "ネットワーク")];
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(EmptyText))]
+    [NotifyPropertyChangedFor(nameof(EmptyText), nameof(IsNetwork))]
     private DeviceCategory _category;
+
+    public bool IsNetwork => Category.Id == ToolCategories.Network;
 
     public string EmptyText => $"{Category.Label}デバイスがありません。";
 
@@ -158,12 +162,20 @@ public sealed partial class DevicesViewModel : PageViewModel
                     Show(list, aliases);
                 }
             }
-            else
+            else if (category == ToolCategories.Display)
             {
                 var (list, aliases) = await Task.Run(() => Listed(category, () => DisplayCatalog.List(runtime.Displays, runtime.Access)));
                 if (!_loadAgain && Category.Id == category)
                 {
                     ShowDisplays(list, aliases);
+                }
+            }
+            else
+            {
+                var (list, aliases) = await Task.Run(() => Listed(category, () => NetworkAdapters.List(runtime.Network, runtime.Access, DateTimeOffset.UtcNow)));
+                if (!_loadAgain && Category.Id == category)
+                {
+                    ShowNetwork(list, aliases);
                 }
             }
         }
@@ -209,6 +221,20 @@ public sealed partial class DevicesViewModel : PageViewModel
         else if (list.UnidentifiedCount > 0 || list.Truncated || list.Devices.Any(d => d.ErrorCode is not null))
         {
             Notify(InfoBarSeverity.Warning, "一部の情報を取得できませんでした", $"識別できなかったディスプレイ {list.UnidentifiedCount} 件 / 検出 {list.TotalCount} 件{(list.Truncated ? "（表示件数の上限を超えています）" : "")}");
+        }
+    }
+
+    /// <param name="list">Null when the enumeration failed.</param>
+    internal void ShowNetwork(NetworkAdapterListData? list, IReadOnlyList<DeviceAlias> aliases)
+    {
+        Replace(DeviceItem.BuildNetwork(list, aliases));
+        if (list is null)
+        {
+            Notify(InfoBarSeverity.Error, "ネットワークアダプターを取得できませんでした", "登録済みの別名のみを表示しています。再読み込みしてください。");
+        }
+        else if (list.UnidentifiedCount > 0 || list.Truncated || list.AddressesUnavailableReason is not null)
+        {
+            Notify(InfoBarSeverity.Warning, "一部の情報を取得できませんでした", $"識別できなかったインターフェース {list.UnidentifiedCount} 件 / 検出 {list.Count} 件{(list.Truncated ? "（表示件数の上限を超えています）" : "")}{(list.AddressesUnavailableReason is null ? "" : "（IP アドレスの一覧が不完全です）")}");
         }
     }
 
@@ -438,6 +464,89 @@ public sealed record DeviceItem(string Id, string Name, string Direction, string
 
         return AddMissing(items, aliases, list is null, list is { UnidentifiedCount: > 0 } or { Truncated: true }, isDisplay: true);
     }
+
+    public static IReadOnlyList<DeviceItem> BuildNetwork(NetworkAdapterListData? list, IReadOnlyList<DeviceAlias> aliases)
+    {
+        var items = (list?.Adapters ?? []).Select(d => new DeviceItem(
+            d.Id,
+            d.Name ?? "（名前なし）",
+            NetworkKindLabel(d.Kind),
+            $"{AdminLabel(d.AdminState)}・{OperLabel(d.OperState)}{(d.MediaState == NetworkMediaState.Connected ? "" : d.MediaState == NetworkMediaState.Disconnected ? "・メディア未接続" : "")}",
+            "",
+            string.Join('\n', NetworkLines(d)),
+            d.AdminChangeBlockedReason is null ? "network_get_traffic, network_set_adapter_enabled" : "network_get_traffic",
+            Found: true,
+            d.Aliases)).ToList();
+
+        return AddMissing(items, aliases, list is null, list is { UnidentifiedCount: > 0 } or { Truncated: true }, isDisplay: false);
+    }
+
+    private static IEnumerable<string> NetworkLines(NetworkAdapterEntry d)
+    {
+        yield return d.TransmitLinkSpeedBps is null && d.ReceiveLinkSpeedBps is null
+            ? "リンク速度: —"
+            : $"リンク速度: 送信 {Speed(d.TransmitLinkSpeedBps)} / 受信 {Speed(d.ReceiveLinkSpeedBps)}";
+        foreach (var a in d.Ipv4Addresses.Concat(d.Ipv6Addresses))
+        {
+            yield return $"{a.Address}/{a.PrefixLength}";
+        }
+
+        if (d.Ipv4Truncated || d.Ipv6Truncated)
+        {
+            yield return "（IP アドレスは一部のみ表示）";
+        }
+
+        yield return d.AdminChangeBlockedReason is { } reason ? $"有効/無効の切り替え: できません（{BlockLabel(reason)}）" : "有効/無効の切り替え: 実行時の安全確認を通れば可能";
+    }
+
+    internal static string Speed(long? bps) => bps switch
+    {
+        null => "—",
+        >= 1_000_000_000 => string.Create(System.Globalization.CultureInfo.CurrentCulture, $"{bps.Value / 1e9:0.##} Gbps"),
+        >= 1_000_000 => string.Create(System.Globalization.CultureInfo.CurrentCulture, $"{bps.Value / 1e6:0.##} Mbps"),
+        >= 1_000 => string.Create(System.Globalization.CultureInfo.CurrentCulture, $"{bps.Value / 1e3:0.##} kbps"),
+        _ => $"{bps} bps",
+    };
+
+    private static string NetworkKindLabel(NetworkAdapterKind kind) => kind switch
+    {
+        NetworkAdapterKind.Wired => "有線",
+        NetworkAdapterKind.Wifi => "Wi-Fi",
+        NetworkAdapterKind.Loopback => "ループバック",
+        NetworkAdapterKind.Tunnel => "トンネル/VPN",
+        NetworkAdapterKind.Virtual => "仮想",
+        _ => "種類不明",
+    };
+
+    private static string AdminLabel(NetworkAdminState state) => state switch
+    {
+        NetworkAdminState.Enabled => "有効",
+        NetworkAdminState.Disabled => "無効",
+        _ => "管理状態不明",
+    };
+
+    private static string OperLabel(NetworkOperState state) => state switch
+    {
+        NetworkOperState.Up => "稼働中",
+        NetworkOperState.Down => "停止",
+        NetworkOperState.Dormant => "待機中",
+        NetworkOperState.NotPresent => "存在しない",
+        NetworkOperState.LowerLayerDown => "下位層停止",
+        NetworkOperState.Testing => "テスト中",
+        _ => "稼働状態不明",
+    };
+
+    private static string BlockLabel(NetworkChangeBlock reason) => reason switch
+    {
+        NetworkChangeBlock.NotElevated => "管理者として起動していません",
+        NetworkChangeBlock.Unsupported => "対象外の種類です",
+        NetworkChangeBlock.ActiveAdapter => "使用中です",
+        NetworkChangeBlock.AddressAssigned => "IP アドレスが割り当てられています",
+        NetworkChangeBlock.RouteInUse => "経路で使われています",
+        NetworkChangeBlock.DependencyPresent => "他のインターフェースと依存関係があります",
+        NetworkChangeBlock.InformationIncomplete => "情報を完全に取得できません",
+        _ => "識別情報が一致しません",
+    };
 
     private static List<DeviceItem> AddMissing(List<DeviceItem> items, IReadOnlyList<DeviceAlias> aliases, bool failed, bool incomplete, bool isDisplay)
     {
