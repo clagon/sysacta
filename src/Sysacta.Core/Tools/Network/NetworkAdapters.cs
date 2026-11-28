@@ -255,7 +255,10 @@ public static partial class NetworkAdapters
                 v4.Count > MaxAddressesPerFamily,
                 [.. v6.Take(MaxAddressesPerFamily).Select(Address)],
                 v6.Count > MaxAddressesPerFamily,
-                elevated ? NetworkGuard.Check(a, a.AdminState != NetworkAdminState.Enabled, set, snapshot) : NetworkChangeBlock.NotElevated);
+                !elevated ? NetworkChangeBlock.NotElevated
+                    // Not present (unplugged, or possibly disabled): only the provider can tell, at call time.
+                    : a.AdminState == NetworkAdminState.Unknown && a.OperState == NetworkOperState.NotPresent ? NetworkChangeBlock.InformationIncomplete
+                    : NetworkGuard.Check(a, a.AdminState != NetworkAdminState.Enabled, set, snapshot));
         }).ToList();
         return new NetworkAdapterListData(now, entries, set.Adapters.Count, !set.Complete || set.Adapters.Count > entries.Count, set.UnidentifiedCount, snapshot.Addresses.Problem);
     }

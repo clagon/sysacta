@@ -77,7 +77,10 @@ public class WindowsNetworkTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
         var data = await NetworkTraffic.MeasureAsync(new WindowsNetwork(), new NetworkChanges(), TimeProvider.System, null, false, TestContext.Current.CancellationToken);
         Assert.InRange(data.ElapsedMs, 900, 4000);
-        Assert.NotEmpty(data.Adapters);
+        var ids = NetworkAdapters.Identify(new WindowsNetwork().ReadInterfaces()).Adapters.Select(a => a.Id).ToHashSet();
+        Assert.All(data.Adapters, a => Assert.Contains(a.AdapterId, ids));
+        var loopback = Assert.Single(data.Adapters, a => a.Kind == NetworkAdapterKind.Loopback);
+        Assert.Null(loopback.RateUnavailableReason); // a stable interface always gets a rate (0 is a measurement)
         Assert.All(data.Adapters.Where(a => a.RateUnavailableReason is null), a =>
         {
             Assert.NotNull(a.ReceivedBitsPerSecond);

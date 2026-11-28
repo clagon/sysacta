@@ -33,6 +33,8 @@ public sealed class NetworkSetAdapterEnabledTool(INetworkPlatform platform, IDev
 {
     private const int ReadBackAttempts = 10;
     private static readonly TimeSpan ReadBackDelay = TimeSpan.FromMilliseconds(300);
+    /// <summary>No new read-back starts after this, so the call ends near its 15 s timeout even with slow WMI reads.</summary>
+    private static readonly TimeSpan ReadBackBudget = TimeSpan.FromSeconds(6);
 
     public override ToolDescriptor Descriptor { get; } = new("network_set_adapter_enabled", ToolCategories.Network, "Enable or disable a network adapter",
         "DANGEROUS: changes the administrative state of one physical wired or Wi-Fi adapter through MSFT_NetAdapter Enable/Disable and verifies it by reading the state back. Requires Sysacta to be started as administrator. Disabling is allowed only for an adapter that is not in use: link down and media disconnected, no IP address, no route and no stacked interface; active adapters, the adapters of the current connection, loopback, VPN/tunnel (e.g. Tailscale), Hyper-V/WSL and other virtual adapters are refused with blocked_reason. Enabling may change routes and VPN behaviour; connectivity is never guaranteed. Recover from Windows Settings > Network & internet on the PC itself.",
@@ -78,8 +80,10 @@ public sealed class NetworkSetAdapterEnabledTool(INetworkPlatform platform, IDev
             return Task.FromResult(new ToolOutcome<NetworkSetAdapterEnabledData>(Data(previous, false), Verification.Verified));
         }
 
-        var block = (adapter is null ? null : NetworkGuard.Check(adapter, args.Enabled, set, snapshot))
-            ?? NetworkGuard.CheckProvider(handle.Adapter, adapter, args.Enabled, snapshot);
+        // Two interface rows with this GUID: never treat the adapter as "not listed".
+        var block = snapshot.Interfaces.Rows.Count(r => !r.FilterInterface && r.InterfaceGuid == guid) > 1 ? NetworkChangeBlock.IdentityMismatch
+            : !args.Enabled && adapter is not null ? NetworkGuard.Check(adapter, false, set, snapshot) ?? NetworkGuard.CheckProvider(handle.Adapter, adapter, false, snapshot)
+            : NetworkGuard.CheckProvider(handle.Adapter, adapter, args.Enabled, snapshot);
         if (block is { } reason)
         {
             return Task.FromResult(ToolOutcome.Error(Data(previous, false, reason),
@@ -87,10 +91,27 @@ public sealed class NetworkSetAdapterEnabledTool(INetworkPlatform platform, IDev
                 RefusalMessage(reason)));
         }
 
+        // The provider enumeration can take seconds: read the interface table again and judge the same object once more
+        // immediately before the start point (a link that came up meanwhile refuses the change).
+        if (!args.Enabled && adapter is not null)
+        {
+            var fresh = snapshot with { Interfaces = platform.ReadInterfaces() };
+            var freshSet = NetworkAdapters.Identify(fresh.Interfaces);
+            var again = freshSet.Find(target.Id) is { } now && now.Row.Luid == adapter.Row.Luid && now.Row.Index == adapter.Row.Index
+                ? NetworkGuard.Check(now, false, freshSet, fresh)
+                : NetworkChangeBlock.IdentityMismatch;
+            if (again is { } late)
+            {
+                return Task.FromResult(ToolOutcome.Error(Data(previous, false, late),
+                    late == NetworkChangeBlock.Unsupported ? ErrorCodes.NotSupported : ErrorCodes.TargetProtected,
+                    RefusalMessage(late)));
+            }
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
+        execution.BeginSideEffect();
         using (changes.Begin())
         {
-            execution.BeginSideEffect();
             uint result;
             try
             {
@@ -108,7 +129,9 @@ public sealed class NetworkSetAdapterEnabledTool(INetworkPlatform platform, IDev
                 return Task.FromResult(new ToolOutcome<NetworkSetAdapterEnabledData>(Data(current, true), Verification.Verified));
             }
 
-            if (current == previous && result != 0)
+            // 4096 is the CIM "job started" value: still running, not a refusal. Other non-zero values with the state read
+            // back unchanged are refusals (the method's return codes are not documented beyond the class page).
+            if (current == previous && result is not (0 or 4096))
             {
                 return Task.FromResult(ToolOutcome.Error(Data(current, false), ErrorCodes.OsApiError, "Windows refused the change; the administrative state is unchanged."));
             }
@@ -123,9 +146,10 @@ public sealed class NetworkSetAdapterEnabledTool(INetworkPlatform platform, IDev
     {
         var wanted = enabled ? NetworkAdminState.Enabled : NetworkAdminState.Disabled;
         var state = NetworkAdminState.Unknown;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         for (var attempt = 0; attempt < ReadBackAttempts; attempt++)
         {
-            if (attempt > 0 && cancellationToken.WaitHandle.WaitOne(ReadBackDelay))
+            if (attempt > 0 && (System.Diagnostics.Stopwatch.GetElapsedTime(started) > ReadBackBudget || cancellationToken.WaitHandle.WaitOne(ReadBackDelay)))
             {
                 break;
             }

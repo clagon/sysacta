@@ -116,13 +116,14 @@ public sealed class WindowsNetwork : INetworkPlatform
     }
 
     /// <summary>
-    /// The MSFT_NetAdapter instances with this InterfaceGuid. The query is a constant; the instance is selected here by the
+    /// The MSFT_NetAdapter instances with this InterfaceGuid (semisynchronous enumeration, so the 5 s timeout applies to
+    /// each step). The query is a constant; the instance is selected here by the
     /// parsed GUID rather than by building a query from the id.
     /// </summary>
     private static List<(ManagementObject Instance, ProviderAdapter Adapter)> Enumerate(Guid interfaceGuid, CancellationToken cancellationToken) => Guard(() =>
     {
         using var searcher = new ManagementObjectSearcher(new ManagementScope(@"\\.\root\StandardCimv2"), new ObjectQuery(ProviderQuery),
-            new System.Management.EnumerationOptions { Timeout = ProviderTimeout, ReturnImmediately = false, Rewindable = false });
+            new System.Management.EnumerationOptions { Timeout = ProviderTimeout, ReturnImmediately = true, Rewindable = false });
         using var collection = searcher.Get();
         var matches = new List<(ManagementObject, ProviderAdapter)>(1);
         var count = 0;

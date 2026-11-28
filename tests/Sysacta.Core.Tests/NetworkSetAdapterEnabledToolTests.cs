@@ -219,6 +219,10 @@ public partial class NetworkToolTests
         { "provider-index", ErrorCodes.TargetProtected, "identity_mismatch" },
         { "bluetooth-medium", ErrorCodes.NotSupported, "unsupported" },
         { "no-connector", ErrorCodes.NotSupported, "unsupported" },
+        { "addresses-empty", ErrorCodes.TargetProtected, "information_incomplete" },
+        { "routes-empty", ErrorCodes.TargetProtected, "information_incomplete" },
+        { "link-came-up", ErrorCodes.TargetProtected, "active_adapter" },
+        { "luid-changed-late", ErrorCodes.TargetProtected, "identity_mismatch" },
     };
 
     [Theory]
@@ -269,6 +273,12 @@ public partial class NetworkToolTests
             case "provider-index": Provider(p => p with { InterfaceIndex = 99 }); break;
             case "bluetooth-medium": s.N.Update(SpareGuid, r => r with { PhysicalMediumType = 10 }); break;
             case "no-connector": s.N.Update(SpareGuid, r => r with { ConnectorPresent = false }); break;
+            case "addresses-empty": s.N.Addresses.Clear(); break;
+            case "routes-empty": s.N.Routes.Clear(); break;
+            // The link comes up (or the interface is re-created) while the provider is enumerated: the re-read just
+            // before the start point refuses.
+            case "link-came-up": s.N.OnInterfaceRead = i => { if (i == 1) s.N.Update(SpareGuid, r => r with { OperStatus = 1, MediaConnectState = 1 }); }; break;
+            case "luid-changed-late": s.N.OnInterfaceRead = i => { if (i == 1) s.N.Update(SpareGuid, r => r with { Luid = 0x2002 }); }; break;
         }
 
         var r = await Set(s, target, false);
@@ -278,6 +288,96 @@ public partial class NetworkToolTests
         Assert.DoesNotContain("192.0.2", r.Error.Message, StringComparison.Ordinal);
         Assert.Empty(s.N.Invocations);
         Assert.Equal(AuditOutcome.Error, s.H.Audit.Final(r.RequestId).Outcome);
+    }
+
+    [Fact]
+    public async Task An_idle_Wi_Fi_radio_is_not_disabled_while_a_hotspot_or_Wi_Fi_Direct_interface_may_be_in_use()
+    {
+        var s = Create();
+        s.N.Update(WifiGuid, r => r with { OperStatus = 2, MediaConnectState = 2 });
+        s.N.SetProviderState(WifiGuid, 2);
+        var i = s.N.Providers.FindIndex(p => p.InterfaceGuid == WifiGuid);
+        s.N.Providers[i] = s.N.Providers[i] with { MediaConnectState = 2 };
+        s.N.Addresses.RemoveAll(a => a.Luid == 0x3000);
+        s.N.Routes.RemoveAll(r => r.Luid == 0x3000);
+        s.N.Interfaces.Add(Row(Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"), 0xF000, 60, 71, 9, "Local Area Connection* 2", oper: 1, media: 1, hardware: false));
+        var r = await Set(s, Wifi, false);
+        Assert.Equal((ErrorCodes.TargetProtected, "dependency_present"), (r.Error?.Code, Str(Data(r)["blocked_reason"])));
+        Assert.Empty(s.N.Invocations);
+
+        s.N.Update(Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"), row => row with { OperStatus = 2, MediaConnectState = 2 });
+        r = await Set(s, Wifi, false); // the hosted interface is down and disconnected with no address
+        Assert.Equal((ToolStatus.Success, Verification.Verified), (r.Status, r.Verification));
+        Assert.Equal([(WifiGuid, false)], s.N.Invocations);
+    }
+
+    [Fact]
+    public async Task Return_values_never_override_the_read_back_state()
+    {
+        var s = Create();
+        s.N.InvokeResult = 1; // non-zero, yet the provider reports the requested state
+        s.N.DuringInvoke = () => s.N.SetProviderState(SpareGuid, 3);
+        var r = await Set(s, Spare, false);
+        Assert.Equal((ToolStatus.Success, Verification.Verified), (r.Status, r.Verification));
+
+        s.N.DuringInvoke = null;
+        s.N.SetProviderState(SpareGuid, 2);
+        s.N.InvokeResult = 4096; // CIM "job started": the state may still change
+        r = await Set(s, Spare, false);
+        Assert.Equal((ToolStatus.Unknown, ErrorCodes.VerificationFailed), (r.Status, r.Error?.Code));
+    }
+
+    [Fact]
+    public async Task A_disabled_adapter_can_be_re_enabled_even_if_IP_Helper_reports_other_flags_or_index_meanwhile()
+    {
+        var s = Create();
+        Assert.True((await Set(s, Spare, false)).IsSuccess);
+        // While disabled, NDIS may report the interface as not hardware, without a connector and with a new index.
+        s.N.Update(SpareGuid, r => r with { AdminStatus = 2, HardwareInterface = false, ConnectorPresent = false, PhysicalMediumType = 0, Index = 90 });
+        var r = await Set(s, Spare, true);
+        Assert.Equal((ToolStatus.Success, Verification.Verified), (r.Status, r.Verification));
+
+        // A different LUID for the same GUID is not the same object.
+        s.N.SetProviderState(SpareGuid, 3);
+        s.N.Update(SpareGuid, row => row with { Luid = 0x2999 });
+        Assert.Equal("identity_mismatch", Str(Data(await Set(s, Spare, true))["blocked_reason"]));
+    }
+
+    [Fact]
+    public async Task Two_interface_rows_with_the_target_guid_are_never_treated_as_an_unlisted_adapter()
+    {
+        var s = Create();
+        s.N.SetProviderState(SpareGuid, 3);
+        s.N.Interfaces.Add(s.N.Interfaces.Single(r => r.InterfaceGuid == SpareGuid) with { Luid = 0x2100, Index = 70 });
+        var r = await Set(s, Spare, true);
+        Assert.Equal("identity_mismatch", Str(Data(r)["blocked_reason"]));
+        Assert.Empty(s.N.Invocations);
+    }
+
+    [Fact]
+    public async Task The_stack_walk_passes_through_chained_filters_and_finds_the_interface_above()
+    {
+        var s = Create();
+        // 12 (spare) <- 16 (filter) <- 17 (filter) <- 43 (team)
+        s.N.Interfaces.Add(Row(Guid.NewGuid(), 0x7100, 17, 6, 14, "Second filter", 2, 2, false) with { FilterInterface = true });
+        s.N.Interfaces.Add(Row(Guid.NewGuid(), 0xC300, 43, 6, 0, "Team", 2, 2, false));
+        s.N.Stack.RemoveAll(l => l.HigherIndex == 0 && l.LowerIndex == 16);
+        s.N.Stack.AddRange([new(17, 16), new(43, 17), new(0, 43)]);
+        Assert.Equal("dependency_present", Str(Data(await Set(s, Spare, false))["blocked_reason"]));
+
+        s.N.Stack.RemoveAll(l => l.HigherIndex == 43);
+        Assert.True((await Set(s, Spare, false)).IsSuccess); // filters alone are not a dependency
+    }
+
+    [Fact]
+    public async Task A_start_refused_by_authorization_is_not_counted_as_a_Sysacta_change()
+    {
+        var s = Create();
+        s.N.OnInterfaceRead = i => { if (i == 1) s.H.Update(() => s.H.Store.Revoke("c1")); }; // just before the start point
+        var r = await Set(s, Spare, false);
+        Assert.Equal(ErrorCodes.PermissionDenied, r.Error?.Code);
+        Assert.Empty(s.N.Invocations);
+        Assert.Equal(0, s.Changes.Generation);
     }
 
     [Fact]
@@ -337,7 +437,7 @@ public partial class NetworkToolTests
         await WaitUntil(() => !s.N.Invocations.IsEmpty);
         var snapshots = s.N.Snapshots;
         var second = Set(s, Id(otherGuid), false);
-        await Task.Delay(100, Ct);
+        await WaitUntil(() => s.H.Executor.TrackedLockCount == 3); // waiting for network:topology
         Assert.False(second.IsCompleted);
         Assert.Equal(snapshots, s.N.Snapshots); // judged only after the lock
 
@@ -383,7 +483,7 @@ public partial class NetworkToolTests
         var first = Set(s, Spare, false);
         await WaitUntil(() => !s.N.Invocations.IsEmpty);
         var second = Set(s, Id(otherGuid), false, late);
-        await Task.Delay(100, Ct);
+        await WaitUntil(() => s.H.Executor.TrackedLockCount == 3); // past the early checks, waiting for network:topology
         s.H.Update(() => s.H.Store.Revoke("c2"));
         block.Release(10);
         await first.WaitAsync(Bound, Ct);

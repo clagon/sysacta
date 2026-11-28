@@ -30,7 +30,7 @@ public sealed record NetworkTrafficEntry(
     string? Name,
     NetworkAdapterKind Kind,
     NetworkOperState OperState,
-    [property: Description("OS cumulative received bytes (64-bit counter) at the end of the window. JSON clients that use IEEE doubles lose precision above 2^53.")] ulong ReceivedBytesTotal,
+    [property: Description("OS cumulative received bytes (64-bit counter) at the end of the window (the first sample when the second failed). JSON clients that use IEEE doubles lose precision above 2^53.")] ulong ReceivedBytesTotal,
     [property: Description("OS cumulative sent bytes (64-bit counter) at the end of the window.")] ulong SentBytesTotal,
     [property: Description("Bytes received during the window; null with rate_unavailable_reason.")] ulong? ReceivedBytesDelta,
     [property: Description("Bytes sent during the window; null with rate_unavailable_reason.")] ulong? SentBytesDelta,

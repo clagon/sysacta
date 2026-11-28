@@ -42,6 +42,20 @@ public static class NetworkGuard
             return NetworkChangeBlock.ActiveAdapter;
         }
 
+        // A running Windows always has loopback addresses and routes: an empty table is not trusted as "nothing uses it".
+        if (snapshot.Addresses.Rows.Count == 0 || snapshot.Routes.Rows.Count == 0)
+        {
+            return NetworkChangeBlock.InformationIncomplete;
+        }
+
+        // Mobile Hotspot / Wi-Fi Direct run on separate virtual 802.11 interfaces over the same radio, without a stack
+        // relation: while any of them may be in use, the physical Wi-Fi adapter is not disabled.
+        if (adapter.Kind == NetworkAdapterKind.Wifi && snapshot.Interfaces.Rows.Any(r => r.IfType == 71 && !r.HardwareInterface && !r.FilterInterface
+            && (r.OperStatus is not (2 or 6 or 7) || r.MediaConnectState != 2 || snapshot.Addresses.Rows.Any(a => a.Luid == r.Luid))))
+        {
+            return NetworkChangeBlock.DependencyPresent;
+        }
+
         if (snapshot.Addresses.Rows.Any(a => a.Luid == adapter.Row.Luid))
         {
             return NetworkChangeBlock.AddressAssigned;
@@ -51,8 +65,8 @@ public static class NetworkGuard
     }
 
     /// <summary>
-    /// The provider part of the rules. <paramref name="adapter"/> is the same adapter in the IP Helper table, or null when it
-    /// is not listed there (only possible for enabling a disabled adapter, after a complete table read).
+    /// The provider part of the rules, and for enabling the only part: <paramref name="adapter"/> is the same adapter in the
+    /// IP Helper table, or null when it is not listed there.
     /// </summary>
     public static NetworkChangeBlock? CheckProvider(ProviderAdapter provider, NetworkAdapter? adapter, bool enable, NetworkSnapshot snapshot)
     {
@@ -61,28 +75,37 @@ public static class NetworkGuard
             return NetworkChangeBlock.Unsupported;
         }
 
-        if (adapter is null)
+        if (!enable)
         {
-            // Not in the interface table: only enabling, and only with every table complete (absence is then real).
-            if (!enable)
+            if (adapter is null)
             {
                 return NetworkChangeBlock.InformationIncomplete;
             }
 
-            if (!snapshot.Interfaces.IsComplete || !snapshot.Stack.IsComplete || provider.InterfaceIndex == 0)
+            if (provider.NetLuid != adapter.Row.Luid || provider.InterfaceIndex != adapter.Row.Index)
             {
-                return NetworkChangeBlock.InformationIncomplete;
+                return NetworkChangeBlock.IdentityMismatch;
             }
 
-            return HasDependency(provider.InterfaceIndex, snapshot) ? NetworkChangeBlock.DependencyPresent : null;
+            return provider.MediaConnectState != 2 ? NetworkChangeBlock.ActiveAdapter : null;
         }
 
-        if (provider.NetLuid != adapter.Row.Luid || provider.InterfaceIndex != adapter.Row.Index)
+        // Enabling a disabled adapter: NDIS may report it with other flags, another index (both documents say the index can
+        // change on disable/enable) or not at all, so kind and identity come from the provider (GUID, and the LUID when the
+        // interface is listed); IP Helper contributes the stack relations only. Without a known index the stack is not
+        // checked: re-enabling must stay possible for an adapter Sysacta itself disabled.
+        if (!snapshot.Interfaces.IsComplete || !snapshot.Stack.IsComplete)
+        {
+            return NetworkChangeBlock.InformationIncomplete;
+        }
+
+        if (adapter is not null && adapter.Row.Luid != provider.NetLuid)
         {
             return NetworkChangeBlock.IdentityMismatch;
         }
 
-        return !enable && provider.MediaConnectState != 2 ? NetworkChangeBlock.ActiveAdapter : null;
+        var index = adapter?.Row.Index ?? provider.InterfaceIndex;
+        return index != 0 && HasDependency(index, snapshot) ? NetworkChangeBlock.DependencyPresent : null;
     }
 
     /// <summary>MSFT_NetAdapter.State: 2 started → enabled, 3 disabled → disabled, anything else unknown.</summary>
