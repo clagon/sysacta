@@ -134,6 +134,9 @@ public sealed class SysactaDatabase
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
         Execute(connection, $"PRAGMA journal_size_limit = {WalSizeLimitBytes};");
+        // Every commit is synced to disk before it returns (WAL + FULL), so an intent record written before a power
+        // transition survives the shutdown it may cause. Set explicitly instead of relying on the build default.
+        Execute(connection, "PRAGMA synchronous = FULL;");
         return connection;
     }
 

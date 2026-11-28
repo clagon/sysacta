@@ -3,6 +3,7 @@ using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
+using Sysacta.Core.Tools.Power;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Experimental.Audio;
 
@@ -14,7 +15,7 @@ namespace Sysacta.App;
 /// </summary>
 internal static class ToolCatalog
 {
-    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery, IMediaSessions media)
+    public static IReadOnlyList<SysactaTool> Create(IDeviceAliases aliases, IAudioEndpoints audio, IDisplays displays, DisplayModeRecovery recovery, IMediaSessions media, IPower power, PowerTransitionGate powerGate)
     {
         var sessions = new CoreAudioSessions();
         var defaultEndpoints = new PolicyConfigDefaultEndpoints();
@@ -44,8 +45,16 @@ internal static class ToolCatalog
             new MediaNextTrackTool(media),
             new MediaPreviousTrackTool(media),
             new MediaSeekTool(media),
-            // Local console only (tray menu / device page); never listed or callable over MCP.
+            new PowerGetStateTool(power),
+            new PowerListPlansTool(power),
+            new PowerSetPlanTool(power),
+            new PowerLockTool(power),
+            new PowerSleepTool(power),
+            new PowerShutdownTool(power),
+            new PowerRestartTool(power),
+            // Local console only (tray menu / device page / overview); never listed or callable over MCP.
             new DisplayRestoreModeTool(displays, recovery),
+            new PowerReleaseGateTool(powerGate),
         ];
     }
 }

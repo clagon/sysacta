@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sysacta.App.Platform;
+using Sysacta.Core.Tools;
 using Sysacta.Infrastructure;
 using Sysacta.Mcp;
 using Wpf.Ui.Controls;
@@ -31,6 +32,15 @@ public sealed partial class OverviewViewModel(SysactaRuntime runtime) : PageView
     [ObservableProperty]
     private bool _hasRecentEvents;
 
+    [ObservableProperty]
+    private bool _isPowerGateActive;
+
+    [ObservableProperty]
+    private bool _canReleasePowerGate;
+
+    [ObservableProperty]
+    private string _powerGateText = "";
+
     public string PrivilegeText { get; } = Privilege.IsElevated ? "管理者権限(非推奨)" : "標準ユーザー権限";
 
     public ObservableCollection<AuditRow> RecentEvents { get; } = [];
@@ -48,6 +58,7 @@ public sealed partial class OverviewViewModel(SysactaRuntime runtime) : PageView
             _ => "停止",
         };
         EndpointUrl = runtime.LocalEndpointUrl;
+        ApplyPowerGate(runtime.PowerGate.State);
         Activity = $"処理中のHTTPリクエスト {host.ActiveRequests} 件 / 実行・待機中のツール呼び出し {runtime.Executor.InFlight} 件";
         if (host.State == ServerState.Faulted && host.LastError is { } error)
         {
@@ -93,6 +104,33 @@ public sealed partial class OverviewViewModel(SysactaRuntime runtime) : PageView
         await runtime.StopServerAsync();
         await RefreshAsync();
     });
+
+    private void ApplyPowerGate(PowerGateState state)
+    {
+        IsPowerGateActive = state.Phase != PowerGatePhase.Idle;
+        CanReleasePowerGate = state.Phase == PowerGatePhase.Held;
+        PowerGateText = Sysacta.App.PowerGateText.Describe(state);
+    }
+
+    [RelayCommand]
+    private async Task ReleasePowerGateAsync()
+    {
+        // The confirmation applies to the transition shown now; a later one is refused by the tool (TARGET_CHANGED).
+        var confirmed = runtime.PowerGate.State;
+        if (confirmed.Phase != PowerGatePhase.Held || !await ConfirmAsync(Sysacta.App.PowerGateText.ConfirmTitle, Sysacta.App.PowerGateText.ConfirmMessage, Sysacta.App.PowerGateText.ConfirmAction))
+        {
+            return;
+        }
+
+        await RunAsync(async () =>
+        {
+            ClearMessage();
+            var (ok, title, message) = Sysacta.App.PowerGateText.DescribeRelease(await runtime.ReleasePowerGateAsync(confirmed.Generation));
+            Notify(ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning, title, message);
+
+            ApplyPowerGate(runtime.PowerGate.State);
+        });
+    }
 
     [RelayCommand]
     private void CopyEndpoint()

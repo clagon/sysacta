@@ -77,6 +77,9 @@ public static class ToolJson
                                     schema["minLength"] = s.MinimumLength;
                                 }
                                 break;
+                            case RegularExpressionAttribute re:
+                                schema["pattern"] = re.Pattern;
+                                break;
                             case DefaultValueAttribute dv:
                                 schema["default"] = JsonSerializer.SerializeToNode(dv.Value, Options);
                                 break;

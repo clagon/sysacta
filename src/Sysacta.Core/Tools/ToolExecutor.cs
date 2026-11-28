@@ -13,7 +13,7 @@ public sealed record ExecutorLimits(int MaxConcurrent = 8, int MaxQueued = 32);
 /// <see cref="ExecuteAsync"/>, which applies in order:
 /// <list type="number">
 /// <item>tool lookup, authorization (global ∩ client ∩ capability) and strict argument validation;</item>
-/// <item>admission control (queue limit) and target resolution;</item>
+/// <item>admission control (queue limit), the power transition gate (state changes only) and target resolution;</item>
 /// <item>resource locks (state-changing tools only) and a concurrency slot;</item>
 /// <item>re-authorization immediately before execution (revocations while queued take effect);</item>
 /// <item>a persisted "pending" audit record before any state change (refuses to run if it cannot be written);</item>
@@ -31,15 +31,18 @@ public sealed partial class ToolExecutor
     private readonly TimeProvider _time;
     private readonly ExecutorLimits _limits;
     private readonly AuthorizationGate _gate;
+    private readonly PowerTransitionGate _power;
     private readonly ResourceLocks _locks = new();
     private readonly SemaphoreSlim _slots;
     private int _admitted;
 
     /// <param name="gate">The same gate instance the permission store uses for its updates (see <see cref="AuthorizationGate"/>).</param>
-    public ToolExecutor(ToolRegistry registry, AccessPolicy policy, IAuditLog audit, TimeProvider time, AuthorizationGate gate, ExecutorLimits? limits = null)
+    /// <param name="power">The process-wide power transition gate (one per process; a new one when omitted, for tests).</param>
+    public ToolExecutor(ToolRegistry registry, AccessPolicy policy, IAuditLog audit, TimeProvider time, AuthorizationGate gate, ExecutorLimits? limits = null, PowerTransitionGate? power = null)
     {
         _registry = registry;
         _gate = gate;
+        _power = power ?? new PowerTransitionGate();
         _policy = policy;
         _audit = audit;
         _time = time;
@@ -48,6 +51,9 @@ public sealed partial class ToolExecutor
     }
 
     public ToolRegistry Registry => _registry;
+
+    /// <summary>The power transition gate this executor admits state changes through.</summary>
+    public PowerTransitionGate PowerGate => _power;
 
     /// <summary>Calls admitted and not yet finished (queued + running, including isolated timed-out native calls).</summary>
     public int InFlight => Volatile.Read(ref _admitted);
@@ -107,8 +113,24 @@ public sealed partial class ToolExecutor
             return call.Finish(AuditOutcome.Denied, ToolResult.Fail(ErrorCodes.Busy, "The server is busy. Retry later.", retryable: true));
         }
 
+        // Before target resolution, locks and the slot: a state change is admitted only while no power transition runs or
+        // is held, and a power transition only while no other state change is admitted (one atomic check each).
+        var transition = tool.Descriptor.Transition;
+        // The local-only release of a held transition is the single exception (ToolDescriptor.ReleasesPowerGate).
+        var gated = !tool.Descriptor.ReadOnly && !tool.Descriptor.ReleasesPowerGate;
+        if (gated && !(transition is { } kind ? _power.TryEnterTransition(kind) : _power.TryEnterChange()))
+        {
+            Interlocked.Decrement(ref _admitted);
+            return call.Finish(AuditOutcome.Denied, ToolResult.Fail(ErrorCodes.Busy, transition is null
+                ? "A power transition is in progress or has not been released; state changes are refused."
+                : "Another state change or power transition is in progress. Retry later.", retryable: true));
+        }
+
         // From here on, Release() must run exactly once: either in finally, or after an isolated native call completes.
-        var resources = new HeldResources(this, CancellationTokenSource.CreateLinkedTokenSource(cancellationToken));
+        var resources = new HeldResources(this, CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            Gate = !gated ? GateRole.None : transition is null ? GateRole.Change : GateRole.Transition,
+        };
         resources.Cancellation.CancelAfter(tool.Descriptor.EffectiveTimeout);
         var token = resources.Cancellation.Token;
         var handedOff = false;
@@ -169,11 +191,12 @@ public sealed partial class ToolExecutor
             {
                 var d = _policy.Evaluate(caller, tool);
                 return d == AccessDecision.Allowed ? null : AccessPolicy.ToResult(d, tool);
-            }, _gate);
+            }, _gate, transition is null ? null : _power.MarkStarted);
             // Cancellation competes atomically with the start point, even before the waiting caller resumes.
             // The registration lives with the linked token source until the actual work has finished.
             _ = token.UnsafeRegister(static state => { _ = ((ToolExecution)state!).TryAbandon(); }, execution);
             var work = Task.Run(() => tool.RunAsync(args, execution, token), CancellationToken.None);
+            resources.Work = work;
             try
             {
                 var run = await work.WaitAsync(token).ConfigureAwait(false);
@@ -288,14 +311,35 @@ public sealed partial class ToolExecutor
     private static string AuditToolName(ToolRegistry registry, string toolName) =>
         registry.Find(toolName) is { } tool ? tool.Name : "(unknown tool)";
 
+    private enum GateRole
+    {
+        None,
+        Change,
+        Transition,
+    }
+
     private sealed class HeldResources(ToolExecutor owner, CancellationTokenSource cancellation)
     {
         public CancellationTokenSource Cancellation { get; } = cancellation;
         public ResourceLocks.Lease? Lease { get; set; }
         public bool HasSlot { get; set; }
+        public GateRole Gate { get; init; }
+        public Task<ToolRun>? Work { get; set; }
 
         public void Release()
         {
+            // Runs only when the call, including an isolated native call, has really ended.
+            switch (Gate)
+            {
+                case GateRole.Change:
+                    owner._power.ExitChange();
+                    break;
+                case GateRole.Transition:
+                    // Only an error the tool returned (not threw) proves that the OS did not execute the request.
+                    owner._power.ExitTransition(notExecuted: Work is { IsCompletedSuccessfully: true } w && w.Result is { Status: ToolStatus.Error, Error: not null });
+                    break;
+            }
+
             Lease?.Dispose();
             if (HasSlot)
             {

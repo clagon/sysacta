@@ -10,6 +10,7 @@ using Sysacta.Mcp;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Display;
 using Sysacta.Windows.Media;
+using Sysacta.Windows.Power;
 
 namespace Sysacta.App;
 
@@ -42,9 +43,19 @@ public sealed class SysactaRuntime : IAsyncDisposable
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
-        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions));
+        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
-        Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate);
+        Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate, power: PowerGate);
+        // Suspend/resume evidence for a held sleep, including an unattended wake. Never releases a shutdown. Without
+        // notifications a held sleep is released locally only.
+        try
+        {
+            _powerNotifications = new SuspendResumeNotifications(PowerGate.NotifySuspend, PowerGate.NotifyResume);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or DllNotFoundException or EntryPointNotFoundException)
+        {
+            _powerNotifications = null;
+        }
         Host = new McpServerHost(Executor, new TokenAuthenticator(Access, _time), Audit, _time, Version);
     }
 
@@ -65,6 +76,19 @@ public sealed class SysactaRuntime : IAsyncDisposable
     public SettingsStore SettingsStore { get; }
     public ToolRegistry Registry { get; }
     public ToolExecutor Executor { get; }
+
+    /// <summary>The single power transition gate of this process (executor admission, console status and release).</summary>
+    public PowerTransitionGate PowerGate { get; } = new();
+
+    /// <summary>
+    /// Releases the held power transition the local user confirmed (<paramref name="generation"/>, read before the
+    /// confirmation) through the executor, as the local console (validated, audited, start point).
+    /// </summary>
+    public Task<ToolResult> ReleasePowerGateAsync(long generation) =>
+        Task.Run(() => Executor.ExecuteAsync(Caller.LocalConsole, "power_release_gate",
+            System.Text.Json.JsonSerializer.SerializeToElement(new { generation }), CancellationToken.None));
+
+    private readonly SuspendResumeNotifications? _powerNotifications;
     public McpServerHost Host { get; }
 
     /// <summary>Restores the latest display mode change through the executor, as the local console (locks, audit, timeout).</summary>
@@ -179,6 +203,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _powerNotifications?.Dispose();
         await Host.DisposeAsync().ConfigureAwait(false);
         if (Executor.InFlight == 0)
         {

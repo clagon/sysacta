@@ -31,15 +31,21 @@ Sysacta is a Windows 11 desktop utility that exposes structured system-managemen
 | `media_play` / `media_pause` / `media_stop` | Request an explicit playback state | Enabled |
 | `media_next_track` / `media_previous_track` | Request one track skip | Enabled |
 | `media_seek` | Request an absolute position within the reported seek range | Enabled |
+| `power_get_state` | AC power, battery (presence, charging, percent, estimated time), battery saver, active plan and sleep/hibernate/Modern Standby support; unknown values are null | Enabled |
+| `power_list_plans` | Power plans (id, OS name, active) | Enabled |
+| `power_set_plan` | Makes an existing plan active and verifies it (kept by Windows after restart) | Disabled |
+| `power_lock` | Locks the Windows session (accepted only; the lock state cannot be read) | Enabled |
+| `power_sleep` | Requests normal sleep (never hibernation or forced) | Disabled |
+| `power_shutdown` / `power_restart` | Request a normal, non-forced shutdown / restart; apps with unsaved work or the user can stop it | Disabled |
 
 "Enabled" applies to new installations. Experimental tools and newly added tools on upgrade start disabled and are not granted to existing clients. Device aliases are managed on the **デバイス** (Devices) page of the console. Display support depends on the monitor, cable, dock and the monitor's DDC/CI setting; mirrored displays cannot be adjusted over DDC/CI. `display_get_state` with `include_switching: true` reports the power state and the `input_id` values (the capabilities query can take several seconds). A monitor that is switched off or to an input without a signal may stop answering, so Sysacta cannot always switch it back: make sure the monitor's power button and menu are within reach before enabling these tools.
+
+Power transitions report `verification: "accepted"`: Windows accepted the request, which does not prove that the PC locked, slept or stopped. While a transition runs every other state change is refused with `BUSY`. After an accepted sleep, state changes resume when Windows reports the resume; after an accepted shutdown or restart that did not happen, the local user resumes them from the **概要** (Overview) page. No power operation has been verified on real hardware yet ([progress](docs/phase-1e-progress.md)).
 
 ## Planned features
 
 | Category | Capabilities |
 | --- | --- |
-| Media | Playback control and media session information |
-| Power | Lock, sleep, shutdown, restart and power plans |
 | System | CPU, GPU, memory, storage and supported hardware sensors |
 | Apps & processes | App discovery, allowlisted launch and process management |
 | Network | Connection information, traffic and adapter management |
@@ -111,7 +117,7 @@ For contributors (and coding agents): [AGENTS.md](AGENTS.md) (rules), [docs/tool
 ## Roadmap
 
 - [x] Phase 0 — MCP server, authentication, authorization, settings UI and audit logs (see [progress](docs/phase-0-progress.md) for items verified only by automated tests)
-- [ ] Phase 1 — Audio (standard tools done; default-device change pending), display (done except changes on the primary display; writes not yet verified on hardware), media (implementation under verification), power, system monitoring and notifications
+- [ ] Phase 1 — Audio (standard tools done; default-device change pending), display (done except changes on the primary display; writes not yet verified on hardware), media (implementation under verification), power (implemented; not verified on hardware), system monitoring and notifications
 - [ ] Phase 2 — Apps and processes, networking and Bluetooth
 - [ ] Phase 3 — Testing, security review and Windows distribution
 

@@ -62,4 +62,46 @@ public class DisplayRecoveryUiTests
         Assert.All([modes, power, input], i => Assert.True(i.HasCaution));
         Assert.False(on.HasCaution);
     }
+
+    [Fact]
+    public void Enable_all_in_power_enables_only_reads_and_lock_and_every_power_change_has_a_caution()
+    {
+        var tools = new ToolsViewModel(null!);
+        Sysacta.Core.Tools.Power.IPower power = null!; // availability checks catch the failure and stay available
+        var items = new[]
+        {
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerGetStateTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerListPlansTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerLockTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerSetPlanTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerSleepTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerShutdownTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerRestartTool(power), enabled: false),
+        };
+
+        new ToolCategoryGroup("電源", items).EnableAllCommand.Execute(null);
+
+        Assert.Equal(["power_get_state", "power_list_plans", "power_lock"], items.Where(i => i.IsEnabled).Select(i => i.Name));
+        Assert.All(items.Skip(2), i => Assert.True(i.HasCaution));
+        Assert.All(items, i => Assert.False(i.CanTest && !i.Name.Contains("_get_", StringComparison.Ordinal) && !i.Name.Contains("_list_", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Release_results_are_described_without_tool_messages()
+    {
+        static ToolResult Ok(string value) => new() { Status = ToolStatus.Success, Data = new JsonObject { ["result"] = value } };
+        Assert.Equal((true, "状態変更を再開しました"), Short(PowerGateText.DescribeRelease(Ok("released"))));
+        Assert.Equal((true, "解除は不要です"), Short(PowerGateText.DescribeRelease(Ok("not_held"))));
+        var busy = PowerGateText.DescribeRelease(ToolResult.Fail(ErrorCodes.Busy, "The power transition is still running."));
+        Assert.False(busy.Ok);
+        Assert.Contains("まだ終わっていません", busy.Message, StringComparison.Ordinal);
+        var changed = PowerGateText.DescribeRelease(ToolResult.Fail(ErrorCodes.TargetChanged, "Another power transition replaced the confirmed one."));
+        Assert.False(changed.Ok);
+        Assert.Contains("別の電源操作", changed.Message, StringComparison.Ordinal);
+        var other = PowerGateText.DescribeRelease(ToolResult.Fail(ErrorCodes.InternalError, "secret detail"));
+        Assert.DoesNotContain("まだ終わっていません", other.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", other.Title + other.Message, StringComparison.Ordinal);
+
+        static (bool, string) Short((bool Ok, string Title, string Message) d) => (d.Ok, d.Title);
+    }
 }

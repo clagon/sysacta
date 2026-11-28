@@ -439,15 +439,7 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
     }
 
-    internal static string? SafeText(string? value)
-    {
-        if (value is null || value.Length > 4096 || string.IsNullOrWhiteSpace(value)) return null;
-        var cleaned = new string(value.Where(c => !char.IsControl(c) && char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format).ToArray()).Trim();
-        // Relative paths and embedded URLs are private too; prefer omission to leaking a path.
-        if (cleaned.IndexOfAny(['/', '\\']) >= 0 || Uri.TryCreate(cleaned, UriKind.Absolute, out _) || SensitiveText().IsMatch(cleaned)) return null;
-        var result = new string(cleaned.Take(256).ToArray());
-        return result.Length == 0 ? null : result;
-    }
+    internal static string? SafeText(string? value) => UntrustedText.Sanitize(value, 256);
 
     internal static string? SafeAppLabel(string? value) =>
         value is { Length: > 0 and <= 256 } && SafeAppLabelPattern().IsMatch(value) ? value : null;
@@ -458,8 +450,6 @@ public sealed partial class WindowsMediaSessions : IMediaSessions, IDisposable
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._!+-]{0,255}$", RegexOptions.CultureInvariant)]
     private static partial Regex SafeAppLabelPattern();
 
-    [GeneratedRegex(@"(?i)(?:(?:^|\s)[a-z]:|\b(?:file|mailto|data|javascript|http|https|ftp|smb):)", RegexOptions.CultureInvariant)]
-    private static partial Regex SensitiveText();
 
     private void EnsureEventTracking()
     {

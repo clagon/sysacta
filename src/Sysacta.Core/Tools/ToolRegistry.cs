@@ -25,6 +25,16 @@ public sealed partial class ToolRegistry
 
             tool.ValidateAuditedArguments();
 
+            if (d.Transition is not null && (d.ReadOnly || d.LocalOnly))
+            {
+                throw new ArgumentException($"Power transition tool '{d.Name}' must be a state-changing MCP tool.");
+            }
+
+            if (d.ReleasesPowerGate && (!d.LocalOnly || d.ReadOnly || d.Transition is not null))
+            {
+                throw new ArgumentException($"Tool '{d.Name}' releases the power gate and must be a local-only state change.");
+            }
+
             if (d.EffectiveTimeout <= TimeSpan.Zero)
             {
                 throw new ArgumentException($"Tool '{d.Name}' has a non-positive timeout.");
