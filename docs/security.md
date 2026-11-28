@@ -36,6 +36,7 @@
 | 2 | 実効権限 = 能力 (`GetAvailability`) ∩ サーバー全体 (`tools.enabled`) ∩ クライアント (`client_permissions`、明示許可のみ) ∩ クライアントが有効(未失効・期限内) | NOT_SUPPORTED / TOOL_DISABLED / PERMISSION_DENIED |
 | 3 | 引数検証: 未知プロパティ・型変換・重複・範囲外・`null`(省略で表す)・公開した綴り以外の列挙値・制御文字(`[NoControlCharacters]`)を拒否 | INVALID_ARGUMENT(メッセージには既知の引数名だけを含め、値や未知の名前は返さない) |
 | 4 | 待機キュー上限 (同時実行 8 + 待機 32) | BUSY (retryable) |
+| 4b | 電源遷移ゲート(状態変更のみ。Phase 1E): 通常の変更は遷移が実行中/保持中なら拒否、遷移は他の変更か遷移が 1 件でもあれば拒否。1 つのロックで原子的に判定 | BUSY (retryable、監査 `denied`。何も実行していない) |
 | 5 | 対象解決 → リソースロック(状態変更のみ、キー順に取得)→ 実行スロット | TIMEOUT/CANCELLED (retryable。何も実行していない) |
 | 6 | 状態変更ツールは監査 `pending` を永続化 | AUDIT_UNAVAILABLE(実行しない) |
 | 7 | 再認可(実行の直前。待機中や pending 書き込み中の変更を早めに検出する) | PERMISSION_DENIED / TOOL_DISABLED(pending を拒否で置き換える) |
@@ -51,7 +52,7 @@
 
 管理コンソールの「動作確認」も同じ経路を `Caller.LocalConsole` で通ります(クライアント別許可の代わりにローカルユーザーとして扱うが、サーバー全体の許可・検証・監査は適用)。
 
-ローカル専用ツール(`ToolDescriptor.LocalOnly`。現在は `display_restore_mode` のみ)は MCP には存在しないものとして扱います: `tools/list` に出ず、MCP クライアントからの呼び出しは未知のツール(プロトコルエラー)で、引数の検証・解決・ロックの前に拒否されます。全体・クライアント別の許可を持たず、`Caller.LocalConsole` だけが実行できます(検証・ロック・pending 監査・開始点・最終監査は通常どおり)。
+ローカル専用ツール(`ToolDescriptor.LocalOnly`。現在は `display_restore_mode` と `power_release_gate`)は MCP には存在しないものとして扱います: `tools/list` に出ず、MCP クライアントからの呼び出しは未知のツール(プロトコルエラー)で、引数の検証・解決・ロックの前に拒否されます。全体・クライアント別の許可を持たず、`Caller.LocalConsole` だけが実行できます(検証・ロック・pending 監査・開始点・最終監査は通常どおり)。
 
 ## トークン
 
@@ -174,3 +175,13 @@
 - `media_list_sessions` の `app_label` は選択補助として、SourceAppUserModelId のうち ASCII 英数字・ピリオド・アンダースコア・感嘆符・ハイフン・プラスだけから成る 256 文字以内の値に限って返す。パスや URI を含む値は null にする。同じラベルでもセッションは統合しない。このラベルはセッション同一性・ロック・権限には使わない。
 - アプリ ID、タイトル、アーティスト、生の入力 ID と例外本文は監査しない。監査対象は解決された不透明 ID と `position_ms` のみ。文字列は長さ・制御文字を制限し、既知のパス・URL 形式を除外する。タイトル内のあらゆる秘密を検出できる保証はない。
 - 通常権限の Windows 11 で読み取り専用の列挙・状態取得と再列挙時の ID 保持を確認した。現在セッションと一覧の COM 同一性が一致しない環境では照合できない省略指定を拒否する。複数セッション切替・終了・再生成の実機寿命と実メディア制御は未検証であり、進捗は [Phase 1D 記録](phase-1d-progress.md)を参照する。
+
+## 電源遷移と特権（Phase 1E）
+
+- 電源遷移ゲートはプロセスに 1 つで、`ToolExecutor` の待機キュー判定の直後(対象解決・ロック・スロットより前、認可・引数検証の後)に取得し、既存の `HeldResources.Release`(隔離されたネイティブ処理の実終了時を含む)でだけ解放する。未認可・不正な要求はゲートを保持できない。MCP 層・設定変更・ホスト再起動はゲートに触れない。
+- 遷移の区別は信頼済みの `ToolDescriptor.Transition` だけで、クライアントの引数では選べない。
+- シャットダウン/再起動の受理後(または不明)は、ローカル利用者が概要画面から確認のうえ解除するまで状態変更を拒否する。解除はローカル専用ツール `power_release_gate`(MCP には存在しない、executor 経由・監査あり)で、実行中は拒否する。スリープは開始点後に suspend→resume を観測したときにも解除する。経過時間・切断・ホスト再開では解除しない。
+- `SeShutdownPrivilege` はプロセストークンでは有効にしない。複製した偽装トークンで有効化し(未保持なら拒否、`ERROR_NOT_ALL_ASSIGNED` を検査)、`BeginSideEffect` の後に呼び出しスレッドへ設定して OS 要求 1 回だけ行い、`finally` で `RevertToSelf`(失敗時はプロセス終了)。MCP から昇格・UAC・特権付与を要求する経路はない。
+- 状態変更前の pending 監査は `PRAGMA synchronous = FULL`(WAL)でコミット時に永続化される。OS の停止で最終監査が書けない場合は次回起動時に `unknown`。
+- 残存リスク: SetSuspendState が偽装トークンの特権を使うことは文書化されていない(使われなければ OS 拒否で安全側)。resume 通知が届かない環境では復帰後もローカル解除までゲートが残る。詳細は [Phase 1E 進捗](phase-1e-progress.md)。
+

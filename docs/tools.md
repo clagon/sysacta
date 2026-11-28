@@ -18,6 +18,8 @@
 | 画面消失の恐れがある変更・ローカル専用の復旧ツール | Core + App | `src/Sysacta.Core/Tools/Display/DisplayModeTools.cs`（`DisplaySetModeTool` / `DisplayRestoreModeTool`） |
 | 固定の許可リストに限った低レベル操作・通信消失時の `accepted` | Core + Windows | `src/Sysacta.Core/Tools/Display/DisplaySwitchTools.cs`, `Mccs.cs`, `src/Sysacta.Windows/Display/DdcCiSwitchControl.cs` |
 
+| PC 全体の電源遷移（他の状態変更との排他、ローカル解除） | Core + Windows + App | `src/Sysacta.Core/Tools/Power/PowerTools.cs`, `src/Sysacta.Core/Tools/PowerTransitionGate.cs`, `src/Sysacta.Windows/Power/WindowsPower.cs` |
+
 ## 1 回の呼び出しで起きること
 
 ```
@@ -29,6 +31,7 @@ MCP tools/call ─▶ RequestGuards (Host/Origin → Bearer認証 → 監査:認
                    2. 認可: 能力 ∩ サーバー全体の許可 ∩ クライアント別の許可
                    3. 引数の厳格な検証 (未知の項目・型変換・範囲外を拒否)
                    4. 待機キュー上限 (超過 → BUSY)
+                   4b. 電源遷移ゲート (状態変更のみ。遷移中/保持中 → BUSY、遷移は先行変更があれば BUSY)
                    5. ResolveTargetAsync: ID/別名/既定 → 具体的なID とロックキー
                    6. リソースロック (状態変更ツールのみ) → 実行スロット
                    7. 監査 pending を永続化 (状態変更のみ。失敗 → 実行しない)
@@ -178,3 +181,11 @@ MCP では `structuredContent` にこの JSON、`content` に同じ JSON テキ�
 ### メディア（Phase 1D）
 
 メディア操作は `Sysacta.Core/Tools/Media/` の共通フローを通す。対象解決後にセッション単位で排他し、一覧変更・現在セッション・操作可否・シーク範囲を再確認する。最終準備で必要な WinRT 読み取りを完了し、`BeginSideEffect` の直後に初めて書き込み API を開始する。操作の受理は状態変化の証明ではない。一覧の `app_label` は安全な選択表示であり、同一性や権限には使用しない。現在セッションを列挙結果と安全に照合できない場合、省略指定は拒否されるため、`media_list_sessions` の `app_label` と明示 `session_id` を使用する。実メディア制御は未検証。[進捗](phase-1d-progress.md)を参照する。
+
+### 電源（Phase 1E）
+
+- PC 全体に影響する遷移（ロック・スリープ・シャットダウン・再起動）は `ToolDescriptor(Transition: PowerTransition.X)` を付けるだけで、executor が `PowerTransitionGate` で排他的に受け付ける。ツール側で独自の排他やゲートを作らない。通常の状態変更ツールは何もしなくても共有側で参加する（遷移中は BUSY）。
+- 特権が必要な OS 呼び出しは、準備（特権の有効化）を開始点より前に済ませ、`BeginSideEffect` → 偽装 → 要求 1 回 → 復元の順にする（`WindowsPower.WithShutdownPrivilege`）。プロセストークンを変更しない。
+- 開始点後に OS が未実行を返した場合は例外ではなく `ToolOutcome.Error` を返す（executor はそれを「未実行確定」としてゲートを解放する。例外は未確定扱い）。
+- 受理は完了ではない。遷移は常に `accepted`。詳細は [Phase 1E 進捗](phase-1e-progress.md)。
+

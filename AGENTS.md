@@ -51,7 +51,8 @@ Sysacta.App ──▶ Sysacta.Mcp ─────────▶ Sysacta.Core
 9. **DB スキーマは `SysactaDatabase.Migrations` に追記するだけ。** 出荷済みのマイグレーションを書き換えない。
 10. **ページは `ScrollViewer.CanContentScroll="False"` を付け、自分でスクロールする**(`PageScroll` スタイル、または高さいっぱいの Grid + 内側の ScrollViewer)。付けないと WPF UI 4.x の NavigationView(Page の既定値を true に変更している)が高さ無制限の DynamicScrollViewer で包み、内側のリストがスクロールできなくなる(App.Tests が検査)。リストは `ui:ListView` / `ui:DataGrid` を使い、素の WPF コントロールを使わない。破壊的操作のボタンは色で強調せず、確認ダイアログで止める。
 11. **HTTP の新しい検査・拒否は `RequestGuards` の要求予算の後に置き、監査は `AuditLog` の上限を通す**(SEC-05/06。docs/security.md)。認証前に DB を使う処理や、拒否ごとの監査書き込みを予算の前に追加しない。監査の上限・集約・予約枠を迂回する書き込み経路を作らない。
-12. **UI スレッドをブロックしない。** SQLite・OS API・サーバー起動は `Task.Run` / async で実行する(`PageViewModel.RunAsync` を使う)。
+12. **電源遷移は `ToolDescriptor.Transition` で宣言し、独自の排他を作らない。** PC 全体の遷移(ロック・スリープ・停止・再起動)は executor の `PowerTransitionGate` が全状態変更と排他する。状態変更を executor・ゲートの外で実行する経路を作らない。特権は開始点より前に準備し、プロセストークンを変更せず、要求 1 回のスコープで必ず戻す(docs/phase-1e-progress.md)。
+13. **UI スレッドをブロックしない。** SQLite・OS API・サーバー起動は `Task.Run` / async で実行する(`PageViewModel.RunAsync` を使う)。
 
 ## コーディング規約
 
