@@ -9,6 +9,7 @@ using Sysacta.Core.Tools;
 using Sysacta.Core.Tools.Audio;
 using Sysacta.Core.Tools.Display;
 using Sysacta.Core.Tools.Media;
+using Sysacta.Core.Tools.Power;
 using Sysacta.Infrastructure;
 using Sysacta.Tests;
 
@@ -32,6 +33,8 @@ public sealed class ServerFixture : IAsyncDisposable
     public DisplayModeRecovery Recovery { get; } = new();
     public BlockingTool Blocking { get; } = new();
     public FakeMediaSessions Media { get; } = new();
+    public FakePower Power { get; } = new();
+    public PowerTransitionGate PowerGate { get; } = new();
 
     /// <summary>Clock of the HTTP layer (budgets, last-used time). The executor and the store use the system clock.</summary>
     public ManualTime Time { get; } = new();
@@ -39,7 +42,7 @@ public sealed class ServerFixture : IAsyncDisposable
     /// <summary>What the authentication layer sees of the store; counts its database calls.</summary>
     public CountingStore Counted { get; }
 
-    private ServerFixture(AuditLimits? limits, bool includeMedia)
+    private ServerFixture(AuditLimits? limits, bool includeMedia, bool includePower)
     {
         Database = new SysactaDatabase(Path.Combine(_dir, "sysacta.db"));
         Database.Migrate();
@@ -71,17 +74,20 @@ public sealed class ServerFixture : IAsyncDisposable
             .. includeMedia ? new SysactaTool[] { new MediaListSessionsTool(Media), new MediaGetStateTool(Media),
                 new MediaPlayTool(Media), new MediaPauseTool(Media), new MediaStopTool(Media),
                 new MediaNextTrackTool(Media), new MediaPreviousTrackTool(Media), new MediaSeekTool(Media) } : [],
+            .. includePower ? new SysactaTool[] { new PowerGetStateTool(Power), new PowerListPlansTool(Power), new PowerSetPlanTool(Power),
+                new PowerLockTool(Power), new PowerSleepTool(Power), new PowerShutdownTool(Power), new PowerRestartTool(Power),
+                new PowerReleaseGateTool(PowerGate) } : [],
             Blocking,
         ]);
         Store.SyncTools(registry.All.Select(t => t.Descriptor), "test");
         Store.SetToolEnabled(Blocking.Name, true);
-        Executor = new ToolExecutor(registry, new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, Gate);
+        Executor = new ToolExecutor(registry, new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, Gate, power: PowerGate);
         Host = new McpServerHost(Executor, new TokenAuthenticator(Counted, Time), Audit, Time, "test");
     }
 
-    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false)
+    public static async Task<ServerFixture> StartAsync(ServerEndpointOptions? options = null, AuditLimits? limits = null, bool includeMedia = false, bool includePower = false)
     {
-        var fixture = new ServerFixture(limits, includeMedia);
+        var fixture = new ServerFixture(limits, includeMedia, includePower);
         await fixture.Host.StartAsync(options ?? new ServerEndpointOptions { Port = 0 }, TestContext.Current.CancellationToken);
         return fixture;
     }

@@ -33,6 +33,11 @@ public enum DefaultPolicy
 /// permission, and it is not shown in the tool and client pages. It still runs through <see cref="ToolExecutor"/>
 /// (validation, locks, timeout, audit).
 /// </param>
+/// <param name="Transition">
+/// Set only for PC-wide power transitions (lock, sleep, shutdown, restart). The executor then admits the call exclusively
+/// through <see cref="PowerTransitionGate"/>: only when no other state change is admitted, and every new state change is
+/// refused while it runs or is held. Never derived from client input.
+/// </param>
 public sealed record ToolDescriptor(
     string Name,
     string Category,
@@ -42,7 +47,8 @@ public sealed record ToolDescriptor(
     bool ReadOnly,
     IReadOnlyList<string> AuditedArguments,
     TimeSpan? Timeout = null,
-    bool LocalOnly = false)
+    bool LocalOnly = false,
+    PowerTransition? Transition = null)
 {
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
 

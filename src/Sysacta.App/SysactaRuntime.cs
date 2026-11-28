@@ -10,6 +10,8 @@ using Sysacta.Mcp;
 using Sysacta.Windows.Audio;
 using Sysacta.Windows.Display;
 using Sysacta.Windows.Media;
+using Sysacta.Windows.Power;
+using Microsoft.Win32;
 
 namespace Sysacta.App;
 
@@ -42,9 +44,11 @@ public sealed class SysactaRuntime : IAsyncDisposable
         SettingsStore = new SettingsStore(Database, _time);
         (Settings, InvalidSettingKeys) = SettingsStore.Load();
 
-        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions));
+        Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
-        Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate);
+        Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate, power: PowerGate);
+        // Suspend/resume evidence for a held sleep (SystemEvents runs its own message window). Never releases a shutdown.
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
         Host = new McpServerHost(Executor, new TokenAuthenticator(Access, _time), Audit, _time, Version);
     }
 
@@ -65,6 +69,26 @@ public sealed class SysactaRuntime : IAsyncDisposable
     public SettingsStore SettingsStore { get; }
     public ToolRegistry Registry { get; }
     public ToolExecutor Executor { get; }
+
+    /// <summary>The single power transition gate of this process (executor admission, console status and release).</summary>
+    public PowerTransitionGate PowerGate { get; } = new();
+
+    /// <summary>Releases a held power transition through the executor, as the local console (validated, audited).</summary>
+    public Task<ToolResult> ReleasePowerGateAsync() =>
+        Task.Run(() => Executor.ExecuteAsync(Caller.LocalConsole, "power_release_gate", null, CancellationToken.None));
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        switch (e.Mode)
+        {
+            case PowerModes.Suspend:
+                PowerGate.NotifySuspend();
+                break;
+            case PowerModes.Resume:
+                PowerGate.NotifyResume();
+                break;
+        }
+    }
     public McpServerHost Host { get; }
 
     /// <summary>Restores the latest display mode change through the executor, as the local console (locks, audit, timeout).</summary>
@@ -179,6 +203,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         await Host.DisposeAsync().ConfigureAwait(false);
         if (Executor.InFlight == 0)
         {

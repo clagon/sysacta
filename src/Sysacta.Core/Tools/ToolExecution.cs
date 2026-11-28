@@ -15,16 +15,18 @@ public sealed class ToolExecution
 
     private readonly Func<ToolResult?> _authorize;
     private readonly AuthorizationGate _gate;
+    private readonly Action? _onStarted;
     private int _state;
     private int _detached;
     private JsonNode? _progress;
     private JsonNode? _acceptedProgress;
 
-    internal ToolExecution(ToolTarget target, Func<ToolResult?> authorize, AuthorizationGate gate)
+    internal ToolExecution(ToolTarget target, Func<ToolResult?> authorize, AuthorizationGate gate, Action? onStarted = null)
     {
         Target = target;
         _authorize = authorize;
         _gate = gate;
+        _onStarted = onStarted;
     }
 
     /// <summary>The resolved target (from ResolveTargetAsync).</summary>
@@ -64,6 +66,7 @@ public sealed class ToolExecution
                 throw new OperationCanceledException("The call was abandoned before its side effect started.");
             }
 
+            _onStarted?.Invoke();
             return 0;
         });
     }

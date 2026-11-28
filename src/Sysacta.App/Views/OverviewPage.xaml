@@ -50,6 +50,20 @@
         </Grid>
       </Border>
 
+      <Border Margin="0,12,0,0" Style="{StaticResource Surface}" Visibility="{Binding IsPowerGateActive, Converter={StaticResource BoolToVisibility}}">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock FontWeight="SemiBold" Style="{StaticResource Body}" Text="電源操作中" />
+            <TextBlock Margin="0,4,0,0" Style="{StaticResource Body}" Text="{Binding PowerGateText}" TextWrapping="Wrap" />
+          </StackPanel>
+          <ui:Button Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top" Command="{Binding ReleasePowerGateCommand}" Content="状態変更を再開" Visibility="{Binding CanReleasePowerGate, Converter={StaticResource BoolToVisibility}}" />
+        </Grid>
+      </Border>
+
       <Grid Margin="0,12,0,0">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*" />

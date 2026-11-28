@@ -62,4 +62,27 @@ public class DisplayRecoveryUiTests
         Assert.All([modes, power, input], i => Assert.True(i.HasCaution));
         Assert.False(on.HasCaution);
     }
+
+    [Fact]
+    public void Enable_all_in_power_enables_only_reads_and_lock_and_every_power_change_has_a_caution()
+    {
+        var tools = new ToolsViewModel(null!);
+        Sysacta.Core.Tools.Power.IPower power = null!; // availability checks catch the failure and stay available
+        var items = new[]
+        {
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerGetStateTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerListPlansTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerLockTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerSetPlanTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerSleepTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerShutdownTool(power), enabled: false),
+            new ToolItem(tools, new Sysacta.Core.Tools.Power.PowerRestartTool(power), enabled: false),
+        };
+
+        new ToolCategoryGroup("電源", items).EnableAllCommand.Execute(null);
+
+        Assert.Equal(["power_get_state", "power_list_plans", "power_lock"], items.Where(i => i.IsEnabled).Select(i => i.Name));
+        Assert.All(items.Skip(2), i => Assert.True(i.HasCaution));
+        Assert.All(items, i => Assert.False(i.CanTest && !i.Name.Contains("_get_", StringComparison.Ordinal) && !i.Name.Contains("_list_", StringComparison.Ordinal)));
+    }
 }

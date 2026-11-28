@@ -201,8 +201,12 @@ internal sealed class Harness
     {
     }
 
-    public Harness(Func<FakeAccessStore, IEnumerable<SysactaTool>> tools, ExecutorLimits? limits = null)
+    public Harness(Func<FakeAccessStore, IEnumerable<SysactaTool>> tools, ExecutorLimits? limits = null, PowerTransitionGate? power = null)
     {
-        Executor = new ToolExecutor(new ToolRegistry(tools(Store)), new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, Gate, limits);
+        Power = power ?? new PowerTransitionGate();
+        Executor = new ToolExecutor(new ToolRegistry(tools(Store)), new AccessPolicy(Store, TimeProvider.System), Audit, TimeProvider.System, Gate, limits, Power);
     }
+
+    /// <summary>The executor's power transition gate.</summary>
+    public PowerTransitionGate Power { get; }
 }
