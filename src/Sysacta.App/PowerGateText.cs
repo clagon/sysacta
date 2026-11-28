@@ -13,7 +13,7 @@ internal static class PowerGateText
     /// <summary>User-facing outcome of a release (never the tool's own message).</summary>
     public static (bool Ok, string Title, string Message) DescribeRelease(ToolResult result) => result switch
     {
-        { IsSuccess: true } when result.Data?["result"]?.GetValue<string>() == "not_held" => (true, "解除は不要です", "状態変更はすでに受け付けています。"),
+        { IsSuccess: true } when (result.Data?["result"] as System.Text.Json.Nodes.JsonValue)?.TryGetValue<string>(out var r) == true && r == "not_held" => (true, "解除は不要です", "状態変更はすでに受け付けています。"),
         { IsSuccess: true } => (true, "状態変更を再開しました", ""),
         { Error.Code: ErrorCodes.Busy } => (false, "解除できませんでした", "電源操作の処理がまだ終わっていません。しばらくしてからやり直してください。"),
         _ => (false, "解除できませんでした", "操作をやり直してください。続く場合は監査ログを確認してください。"),

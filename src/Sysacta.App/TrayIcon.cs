@@ -26,6 +26,7 @@ internal sealed class TrayIcon : IDisposable
     private readonly DisplayModeRecovery? _recovery;
     private readonly MenuItem _releasePower;
     private readonly PowerTransitionGate? _powerGate;
+    private bool _disposed;
 
     public TrayIcon(SysactaRuntime runtime, Action<Type?> show, Action exit)
         : this(runtime.Host, () => runtime.LocalEndpointUrl, runtime.StartServerAsync, runtime.StopServerAsync, show, exit,
@@ -111,6 +112,7 @@ internal sealed class TrayIcon : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _host.StateChanged -= OnStateChanged;
         if (_recovery is not null)
         {
@@ -140,21 +142,34 @@ internal sealed class TrayIcon : IDisposable
 
     private async Task ReleasePowerAsync(Func<Task<ToolResult>>? release)
     {
-        if (release is null || System.Windows.MessageBox.Show(PowerGateText.ConfirmMessage, PowerGateText.ConfirmTitle, System.Windows.MessageBoxButton.OKCancel, MessageBoxImage.Question, System.Windows.MessageBoxResult.Cancel) != System.Windows.MessageBoxResult.OK)
+        if (release is null || !_releasePower.IsEnabled)
         {
             return;
         }
 
-        _releasePower.IsEnabled = false;
+        _releasePower.IsEnabled = false; // one confirmation at a time
         try
         {
+            if (System.Windows.MessageBox.Show(PowerGateText.ConfirmMessage, PowerGateText.ConfirmTitle, System.Windows.MessageBoxButton.OKCancel, MessageBoxImage.Question, System.Windows.MessageBoxResult.Cancel) != System.Windows.MessageBoxResult.OK)
+            {
+                return;
+            }
+
             var (ok, title, message) = PowerGateText.DescribeRelease(await release());
+            if (_disposed)
+            {
+                return;
+            }
+
             _icon.ShowNotification(title, message.Length == 0 ? " " : message, ok ? NotificationIcon.Info : NotificationIcon.Warning);
         }
         finally
         {
             _releasePower.IsEnabled = true;
-            UpdatePowerGate();
+            if (!_disposed)
+            {
+                UpdatePowerGate();
+            }
         }
     }
 

@@ -68,6 +68,8 @@ public sealed class SuspendResumeNotifications : IDisposable
             _parameters = IntPtr.Zero;
         }
 
+        // Whether unregistering waits for a callback in flight is undocumented: the runtime keeps this object (and the
+        // delegate) referenced until the process exits, so a late callback still finds a live delegate.
         GC.KeepAlive(_callback);
     }
 
