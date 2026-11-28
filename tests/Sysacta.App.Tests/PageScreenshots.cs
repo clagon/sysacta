@@ -37,6 +37,11 @@ public class PageScreenshots
                 foreach (var (name, page) in Pages())
                 {
                     Save(page, Path.Combine(directory!, $"{name}-{theme.ToString().ToLowerInvariant()}.png"));
+                    if (name == "apps")
+                    {
+                        // 150 % scaling: a smaller layout area rendered at 144 DPI.
+                        Save(page, Path.Combine(directory!, $"{name}-150-{theme.ToString().ToLowerInvariant()}.png"), 820, 560, 144);
+                    }
                 }
             }
 
@@ -142,9 +147,8 @@ public class PageScreenshots
             ErrorCode = i % 3 == 0 ? "MissingCredentials" : null,
         });
 
-    private static void Save(Page page, string path)
+    private static void Save(Page page, string path, int width = 1100, int height = 760, double dpi = 96)
     {
-        const int width = 1100, height = 760;
         // A Page can only be parented by a Window or Frame; render its content with the same DataContext instead.
         var content = (UIElement)page.Content;
         page.Content = null;
@@ -154,7 +158,7 @@ public class PageScreenshots
         host.Arrange(new Rect(0, 0, width, height));
         host.UpdateLayout();
 
-        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        var bitmap = new RenderTargetBitmap((int)(width * dpi / 96), (int)(height * dpi / 96), dpi, dpi, PixelFormats.Pbgra32);
         bitmap.Render(host);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));

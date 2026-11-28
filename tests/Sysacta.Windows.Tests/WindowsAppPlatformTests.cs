@@ -227,6 +227,39 @@ public sealed class WindowsAppPlatformTests : IDisposable
         Assert.DoesNotContain(_os.ScanSession([key], Ct).Processes, p => p.AppId == app.Id);
     }
 
+    [Theory]
+    [InlineData("close", true)]
+    [InlineData("refuse-close", false)]
+    public void A_normal_close_request_reaches_the_single_window_and_never_forces(string mode, bool exits)
+    {
+        RequireWindows();
+        var app = Approve(CopyTarget(), "--window", mode);
+        LaunchResult result;
+        using (var prepared = _os.PrepareLaunch(app, Ct))
+        {
+            result = prepared.Start();
+        }
+
+        Assert.Equal(LaunchStatus.Started, result.Status);
+        _launched.Add(result.Pid!.Value);
+        using var process = _os.OpenProcess(result.Pid.Value, result.CreationTime!.Value, [AppMatchKey.For(app)], terminate: true);
+        var windows = 0;
+        for (var i = 0; i < 100 && (windows = process.FindCloseableWindows()) == 0; i++)
+        {
+            Thread.Sleep(50);
+        }
+
+        Assert.Equal(1, windows);
+        Assert.Equal(CloseRequestStatus.Posted, process.RequestClose());
+        // A window that ignores WM_CLOSE (a pending save prompt) keeps running: accepted, not exited, nothing forced.
+        Assert.Equal(exits, process.WaitForExit(TimeSpan.FromSeconds(2)));
+        if (!exits)
+        {
+            Assert.True(process.Terminate());
+            Assert.True(process.WaitForExit(TimeSpan.FromSeconds(5)));
+        }
+    }
+
     [Fact]
     public void Sysacta_itself_is_listed_with_its_exact_creation_time_and_marked_self()
     {
