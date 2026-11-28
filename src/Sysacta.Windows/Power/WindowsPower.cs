@@ -59,7 +59,7 @@ public sealed class WindowsPower : IPower
         }
     }
 
-    public PowerPlanEnumeration ListPlans(int max)
+    public PowerPlanEnumeration ListPlans(int max, bool names)
     {
         var plans = new List<PowerPlanEntry>();
         for (uint index = 0; ; index++)
@@ -82,7 +82,7 @@ public sealed class WindowsPower : IPower
                 return new(plans, true); // one more exists
             }
 
-            plans.Add(new(guid, ReadName(guid)));
+            plans.Add(new(guid, names ? ReadName(guid) : null));
         }
     }
 

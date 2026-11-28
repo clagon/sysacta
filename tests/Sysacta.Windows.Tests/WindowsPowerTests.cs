@@ -46,7 +46,7 @@ public class WindowsPowerTests
         Assert.NotEqual(PowerSource.Unknown, status.AcPower);
         _ = power.ReadCapabilities();
         var active = power.ReadActivePlan();
-        var plans = power.ListPlans(PowerStatus.MaxEnumerated);
+        var plans = power.ListPlans(PowerStatus.MaxEnumerated, names: true);
         Assert.Contains(plans.Plans, p => p.PlanId == active);
         Assert.Equal(active, power.ReadActivePlan()); // unchanged
     }
@@ -110,6 +110,13 @@ public class WindowsPowerTests
         Assert.Throws<InvalidOperationException>(() => WindowsPower.WithShutdownPrivilege(() => { }, () => throw new InvalidOperationException()));
 
         Assert.False(HasThreadToken());
+    }
+
+    [Fact]
+    public void Suspend_resume_notifications_register_and_unregister_without_a_window()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
+        using var notifications = new SuspendResumeNotifications(() => { }, () => { });
     }
 
     private static bool HasThreadToken()

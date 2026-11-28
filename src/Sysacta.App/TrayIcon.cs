@@ -148,8 +148,8 @@ internal sealed class TrayIcon : IDisposable
         _releasePower.IsEnabled = false;
         try
         {
-            var ok = (await release()).IsSuccess;
-            _icon.ShowNotification(ok ? "状態変更を再開しました" : "解除できませんでした", ok ? " " : "電源操作の処理がまだ終わっていません。しばらくしてからやり直してください。", ok ? NotificationIcon.Info : NotificationIcon.Warning);
+            var (ok, title, message) = PowerGateText.DescribeRelease(await release());
+            _icon.ShowNotification(title, message.Length == 0 ? " " : message, ok ? NotificationIcon.Info : NotificationIcon.Warning);
         }
         finally
         {

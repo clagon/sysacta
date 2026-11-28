@@ -26,7 +26,7 @@
 | [ExitWindowsEx](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-exitwindowsex) | シャットダウン・再起動 | 不採用 | 特権は「呼び出しプロセス」と記載されており、スレッド限定の特権スコープの根拠にならないため InitiateShutdownW を選んだ |
 | [AdjustTokenPrivileges](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-adjusttokenprivileges) | 特権の有効化 | 採用 | 成功でも ERROR_NOT_ALL_ASSIGNED(1300) なら未保持（何も変更されない場合あり）。新しい特権は追加できない |
 | [DuplicateTokenEx](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-duplicatetokenex) / [SetThreadToken](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadtoken) / [RevertToSelf](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-reverttoself) / [OpenThreadToken](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthreadtoken) | スレッド限定の特権 | 採用 | TokenImpersonation + SecurityImpersonation の複製。RevertToSelf が失敗したら「プロセスを終了すべき」と明記 |
-| [PBT_APMSUSPEND](https://learn.microsoft.com/en-us/windows/win32/power/pbt-apmsuspend) / [PBT_APMRESUMESUSPEND](https://learn.microsoft.com/en-us/windows/win32/power/pbt-apmresumesuspend) / [PBT_APMRESUMEAUTOMATIC](https://learn.microsoft.com/en-us/windows/win32/power/pbt-apmresumeautomatic) | 復帰検知 | 採用（.NET `SystemEvents.PowerModeChanged` 経由） | RESUMESUSPEND は「サスペンド前に APMSUSPEND を受け取った場合だけ」届く。RESUMEAUTOMATIC は毎回届くがユーザー不在を示さない。[SystemEvents.PowerModeChanged](https://learn.microsoft.com/en-us/dotnet/api/microsoft.win32.systemevents.powermodechanged) はメッセージポンプが必要（WPF アプリでは利用可） |
+| [PBT_APMSUSPEND](https://learn.microsoft.com/en-us/windows/win32/power/pbt-apmsuspend) / [PBT_APMRESUMESUSPEND](https://learn.microsoft.com/en-us/windows/win32/power/pbt-apmresumesuspend) / [PBT_APMRESUMEAUTOMATIC](https://learn.microsoft.com/en-us/windows/win32/power/pbt-apmresumeautomatic) | 復帰検知 | 採用（[PowerRegisterSuspendResumeNotification](https://learn.microsoft.com/en-us/windows/win32/api/powerbase/nf-powerbase-powerregistersuspendresumenotification)、DEVICE_NOTIFY_CALLBACK=2、Windows 8 以降、ウィンドウ不要） | コールバックの Type は PBT_APMSUSPEND / PBT_APMRESUMESUSPEND / PBT_APMRESUMEAUTOMATIC。RESUMESUSPEND は「サスペンド前に APMSUSPEND を受け取った場合だけ」かつユーザー操作後に届く。RESUMEAUTOMATIC は「復帰のたびに」届く（無人ウェイクを含む）。.NET の `SystemEvents.PowerModeChanged` は RESUMEAUTOMATIC を Resume にしないため不採用（コードレビュー指摘）。DEVICE_NOTIFY_CALLBACK の値は learn に記載がなく winuser.h の定義による |
 | [WM_ENDSESSION](https://learn.microsoft.com/en-us/windows/win32/shutdown/wm-endsession) | 停止中止の検知 | 不採用 | wParam=FALSE は「セッションが終了しない」だが、Sysacta が QUERYENDSESSION を受ける前に中止された場合などに届く保証がない。中止の確実な証拠にならないため解除条件にしない |
 | [Modern Standby](https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/modern-standby) | 制約 | — | S3 と Modern Standby は同時に有効にならず、切替は OS 再インストールが必要。SetSuspendState の Modern Standby での挙動は文書化されていない |
 
@@ -132,7 +132,7 @@
 - **ゲートを executor 内部に置き、ツールは Descriptor の 1 項目で参加**: 既存の admission/HeldResources に数行足すだけで、全カテゴリ（将来のツールを含む）が例外なく対象になる。ツールごとの排他は作らない。
 - **drain ではなく即時 BUSY**: 先行変更があれば遷移を副作用前に拒否する（計画の初期案どおり）。
 - **シャットダウン/再起動はローカル解除のみ**: WM_ENDSESSION(FALSE) 等は Sysacta が問い合わせを受ける前の中止で届かない可能性があり、「確実な中止情報」にならない。計画の「より単純で安全な方式」を採用。
-- **スリープは suspend→resume の両方を要求**: RESUMEAUTOMATIC だけの復帰（遠隔ウェイク）では .NET の PowerModes.Resume が届かない可能性がある（PowerModeChanged の実装は RESUMESUSPEND/RESUMECRITICAL を Resume とする想定。実機未確認）。届かなければローカル解除で戻せる。
+- **スリープは開始点後の suspend→resume の両方を要求**: 単独の resume や開始前の通知を証拠にしない。resume には RESUMEAUTOMATIC（無人ウェイク）と RESUMESUSPEND の両方を使う。通知の登録に失敗した場合や通知が届かない場合はローカル解除で戻せる。
 - **Modern Standby だけの PC ではスリープ非公開**: SetSuspendState の挙動が文書化されていないため、S1–S3 がなければ NOT_SUPPORTED（電源モデルは再インストールなしに変わらないので恒常条件）。実行時にも再確認する。
 - **ロックの no-op なし**: ロック状態を判定する公式関数がないと明記されているため推測しない。
 - **管理画面の「動作確認」**: 既存仕様で読み取り専用・引数なしのツールだけ実行可能。電源の状態変更は実行できない（App.Tests）。
@@ -146,12 +146,16 @@
 
 ## 8. 検証結果
 
-（レビュー対応後の最終結果で更新する）
+- Linux (WSL2, .NET SDK 10.0.404): `dotnet build Sysacta.sln -c Release` 警告・エラーゼロ。`dotnet test Sysacta.sln -c Release` は Core 592、Infrastructure 50、MCP 116、Windows 60 成功（Windows 実機専用 25 件スキップ）。App.Tests (WPF) は Linux では対象外。電源関連の Core テスト 119 件を 5 回繰り返して安定。
+- 主なテスト: 7 ツールの厳格なスキーマと既定値、既存 DB で無効・既存クライアントへ非付与、未許可/全体無効の直接呼び出し拒否、未知引数（force/delay 等）・不正 GUID の拒否、状態の解釈（AC/DC/unknown、バッテリーなし/不明/充電、予約値）、プランの上限・名前のサニタイズ・現在プラン不明・部分失敗、プラン変更の no-op/検証/不一致/失敗/読み戻し失敗/直前の消失/書き込み回数、4 遷移の 1 回だけの要求と特権スコープの開閉、OS の拒否・BUSY・失敗、準備失敗、開始点での失効・再発行・権限剥奪・期限切れ・全体無効（特権スコープも閉じる）、pending 監査が要求より先で DB に永続化済み、監査不可で副作用ゼロ、中断した pending の回復、DB/WAL/CSV/JSON にプラン名が残らない、先行変更・隔離中の変更・解決中のハングによる遷移拒否、遷移中/保持中の全カテゴリ・ローカル復旧の拒否と読み取り許可、200 並列で変更と遷移が重ならない、キュー満杯でのリークなし、キャンセル後もネイティブ処理の実終了までゲート保持、スリープの通知順序（開始前の通知を無視、resume 単独では解除しない、要求中の suspend→resume）、ホスト再起動でリセットされない、ローカル解除の制限（MCP から不可、実行中は不可）。
+- Windows CI 用（Linux ではスキップ）: 読み取り専用の状態・能力・プラン取得、特権スコープ（要求中だけスレッドに特権、プロセストークン不変、例外・開始点拒否でも偽装が残らない）、通知の登録/解除。エラーコードの対応と「FALSE なのに last error 0」でも受理にしないことは全 OS で実行。
+- レビュー: 独立コードレビューとセキュリティレビュー（共通実行基盤・特権管理）を実施。重大・高の指摘なし。対応: (1) BOOL API が FALSE で last error が 0 のとき `Accepted` になり得た → `Failed` に修正、(2) 無人ウェイク（RESUMEAUTOMATIC のみ）で保持中のスリープが解除されない → `PowerRegisterSuspendResumeNotification` に変更、(3) 表示モード変更で概要画面が映らない場合に解除できない → トレイメニューにも解除を追加、(4) 読み戻しが第三のプランなら `unknown`、(5) プラン確認時に名前を読まない、(6) 解除結果の文言を結果別に、(7) 遷移ツールの「開始後の Error は未実行確定のときだけ」規則をコードに明記、(8) 解決中のハングのテスト追加。文書化のみ: 他者の停止処理中の BUSY、スリープの通常応答が `unknown`、偽の通知は脅威モデル外。未対応（低優先）: `GetAvailability` の能力照会のキャッシュ（安価なため）、PowerReadFriendlyName が間接文字列を返す場合に組み込みプラン名が null になり得る点（実機 P2 で確認）。
+- Windows CI（windows-latest）とスモークテストは PR で確認する。
 
 ## 9. 実機検証の範囲
 
 - 実機では何も実行していない（開発環境は WSL2。Windows 実機での読み取り確認も未実施）。Windows CI で `WindowsPowerTests`（読み取り・構造体サイズ・特権スコープ）が実行される。
-- 未検証: 各電源 API の実際の受理と結果、SetSuspendState の戻るタイミングと偽装トークンでの特権、PowerModeChanged の通知順序と欠落、Modern Standby・ノート PC・バッテリーでの読み取り、リモートデスクトップでの挙動、プラン変更の永続性。manual-tests.md の Phase 1E 表を参照。
+- 未検証: 各電源 API の実際の受理と結果、SetSuspendState の戻るタイミングと偽装トークンでの特権、suspend/resume 通知の実際の順序と欠落（特に Modern Standby）、Modern Standby・ノート PC・バッテリーでの読み取り、リモートデスクトップでの挙動、プラン変更の永続性。manual-tests.md の Phase 1E 表を参照。
 
 ## 10. 残存リスク
 
@@ -161,7 +165,7 @@
 - OS が先に停止した場合、最終監査と応答は失われ、pending → 次回起動で unknown。
 - 他者(利用者・Windows Update 等)の停止処理が既に進行中/予約済みの場合、Sysacta の要求は `BUSY` で未実行のため、ゲートは Idle に戻り状態変更を受け付け続ける(Sysacta 自身の遷移ではないため。停止処理中の変更は通常時と同じ扱い)。
 - 対象解決がネイティブ処理で戻らない状態変更は、戻るまで共有 admission を保持し、その間の電源遷移は BUSY になる(安全側。遷移を遅らせる既知の方法)。
-- 同一ユーザーのプロセスが偽の WM_POWERBROADCAST を SystemEvents のウィンドウへ送れば保持中のスリープを解除できるが、そのプロセスは電源 API を直接呼べるため脅威モデルの範囲外。
+- 同一ユーザーのプロセスが電源通知を偽装して保持中のスリープを解除できたとしても、そのプロセスは電源 API を直接呼べるため脅威モデルの範囲外。
 - `LockWorkStation` などの受理は完了を意味しない。結果は常に `accepted` で、実際の状態は観測しない。
 - 偽装中の RevertToSelf 失敗時はプロセスを即時終了する（文書の推奨。監査は次回起動で unknown）。
 - プラン名のサニタイズは既知のパス・間接文字列を除外するだけで、名前に含まれ得る任意の情報を完全には検出できない。

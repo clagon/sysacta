@@ -11,7 +11,6 @@ using Sysacta.Windows.Audio;
 using Sysacta.Windows.Display;
 using Sysacta.Windows.Media;
 using Sysacta.Windows.Power;
-using Microsoft.Win32;
 
 namespace Sysacta.App;
 
@@ -47,8 +46,16 @@ public sealed class SysactaRuntime : IAsyncDisposable
         Registry = new ToolRegistry(ToolCatalog.Create(Access, AudioEndpoints, Displays, DisplayModeRecovery, MediaSessions, new WindowsPower(), PowerGate));
         Access.SyncTools(Registry.All.Select(t => t.Descriptor), Version);
         Executor = new ToolExecutor(Registry, new AccessPolicy(Access, _time), Audit, _time, gate, power: PowerGate);
-        // Suspend/resume evidence for a held sleep (SystemEvents runs its own message window). Never releases a shutdown.
-        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        // Suspend/resume evidence for a held sleep, including an unattended wake. Never releases a shutdown. Without
+        // notifications a held sleep is released locally only.
+        try
+        {
+            _powerNotifications = new SuspendResumeNotifications(PowerGate.NotifySuspend, PowerGate.NotifyResume);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or DllNotFoundException or EntryPointNotFoundException)
+        {
+            _powerNotifications = null;
+        }
         Host = new McpServerHost(Executor, new TokenAuthenticator(Access, _time), Audit, _time, Version);
     }
 
@@ -77,18 +84,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
     public Task<ToolResult> ReleasePowerGateAsync() =>
         Task.Run(() => Executor.ExecuteAsync(Caller.LocalConsole, "power_release_gate", null, CancellationToken.None));
 
-    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
-    {
-        switch (e.Mode)
-        {
-            case PowerModes.Suspend:
-                PowerGate.NotifySuspend();
-                break;
-            case PowerModes.Resume:
-                PowerGate.NotifyResume();
-                break;
-        }
-    }
+    private readonly SuspendResumeNotifications? _powerNotifications;
     public McpServerHost Host { get; }
 
     /// <summary>Restores the latest display mode change through the executor, as the local console (locks, audit, timeout).</summary>
@@ -203,7 +199,7 @@ public sealed class SysactaRuntime : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        _powerNotifications?.Dispose();
         await Host.DisposeAsync().ConfigureAwait(false);
         if (Executor.InFlight == 0)
         {

@@ -10,6 +10,15 @@ internal static class PowerGateText
     public const string ConfirmMessage = "PC が停止・スリープしないことを確認してから解除してください。解除すると、MCP クライアントからの状態変更を再び受け付けます。Windows に送った停止要求は取り消されません。";
     public const string ConfirmAction = "解除";
 
+    /// <summary>User-facing outcome of a release (never the tool's own message).</summary>
+    public static (bool Ok, string Title, string Message) DescribeRelease(ToolResult result) => result switch
+    {
+        { IsSuccess: true } when result.Data?["result"]?.GetValue<string>() == "not_held" => (true, "解除は不要です", "状態変更はすでに受け付けています。"),
+        { IsSuccess: true } => (true, "状態変更を再開しました", ""),
+        { Error.Code: ErrorCodes.Busy } => (false, "解除できませんでした", "電源操作の処理がまだ終わっていません。しばらくしてからやり直してください。"),
+        _ => (false, "解除できませんでした", "操作をやり直してください。続く場合は監査ログを確認してください。"),
+    };
+
     public static string Describe(PowerGateState state)
     {
         var name = state.Transition switch

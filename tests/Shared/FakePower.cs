@@ -58,7 +58,7 @@ public sealed class FakePower : IPower
         return Active ?? throw new ToolFailureException(ErrorCodes.OsApiError, "active");
     }
 
-    public PowerPlanEnumeration ListPlans(int max)
+    public PowerPlanEnumeration ListPlans(int max, bool names)
     {
         if (ListFails)
         {
@@ -67,7 +67,7 @@ public sealed class FakePower : IPower
 
         lock (Plans)
         {
-            return new([.. Plans.Take(max)], Plans.Count > max);
+            return new([.. Plans.Take(max).Select(p => names ? p : p with { Name = null })], Plans.Count > max);
         }
     }
 

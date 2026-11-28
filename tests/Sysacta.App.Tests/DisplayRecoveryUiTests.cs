@@ -85,4 +85,20 @@ public class DisplayRecoveryUiTests
         Assert.All(items.Skip(2), i => Assert.True(i.HasCaution));
         Assert.All(items, i => Assert.False(i.CanTest && !i.Name.Contains("_get_", StringComparison.Ordinal) && !i.Name.Contains("_list_", StringComparison.Ordinal)));
     }
+
+    [Fact]
+    public void Release_results_are_described_without_tool_messages()
+    {
+        static ToolResult Ok(string value) => new() { Status = ToolStatus.Success, Data = new JsonObject { ["result"] = value } };
+        Assert.Equal((true, "状態変更を再開しました"), Short(PowerGateText.DescribeRelease(Ok("released"))));
+        Assert.Equal((true, "解除は不要です"), Short(PowerGateText.DescribeRelease(Ok("not_held"))));
+        var busy = PowerGateText.DescribeRelease(ToolResult.Fail(ErrorCodes.Busy, "The power transition is still running."));
+        Assert.False(busy.Ok);
+        Assert.Contains("まだ終わっていません", busy.Message, StringComparison.Ordinal);
+        var other = PowerGateText.DescribeRelease(ToolResult.Fail(ErrorCodes.InternalError, "secret detail"));
+        Assert.DoesNotContain("まだ終わっていません", other.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", other.Title + other.Message, StringComparison.Ordinal);
+
+        static (bool, string) Short((bool Ok, string Title, string Message) d) => (d.Ok, d.Title);
+    }
 }

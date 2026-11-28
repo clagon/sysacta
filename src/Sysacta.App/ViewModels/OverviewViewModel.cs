@@ -123,15 +123,8 @@ public sealed partial class OverviewViewModel(SysactaRuntime runtime) : PageView
         await RunAsync(async () =>
         {
             ClearMessage();
-            var result = await runtime.ReleasePowerGateAsync();
-            if (result.IsSuccess)
-            {
-                Notify(InfoBarSeverity.Success, "状態変更を再開しました");
-            }
-            else
-            {
-                Notify(InfoBarSeverity.Warning, "解除できませんでした", "電源操作の処理がまだ終わっていません。しばらくしてからやり直してください。");
-            }
+            var (ok, title, message) = Sysacta.App.PowerGateText.DescribeRelease(await runtime.ReleasePowerGateAsync());
+            Notify(ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning, title, message);
 
             ApplyPowerGate(runtime.PowerGate.State);
         });

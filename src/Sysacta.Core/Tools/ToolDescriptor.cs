@@ -36,7 +36,8 @@ public enum DefaultPolicy
 /// <param name="Transition">
 /// Set only for PC-wide power transitions (lock, sleep, shutdown, restart). The executor then admits the call exclusively
 /// through <see cref="PowerTransitionGate"/>: only when no other state change is admitted, and every new state change is
-/// refused while it runs or is held. Never derived from client input.
+/// refused while it runs or is held. Never derived from client input. Such a tool may return <c>status: error</c> after its
+/// start point only when the OS definitely did not execute the request (the gate is then released).
 /// </param>
 public sealed record ToolDescriptor(
     string Name,

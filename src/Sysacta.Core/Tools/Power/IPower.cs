@@ -38,7 +38,8 @@ public interface IPower
 
     Guid ReadActivePlan();
 
-    PowerPlanEnumeration ListPlans(int max);
+    /// <param name="names">Read display names (null otherwise); not needed to confirm a plan id.</param>
+    PowerPlanEnumeration ListPlans(int max, bool names);
 
     /// <summary>PowerSetActiveScheme, once. Call only after BeginSideEffect. Never throws.</summary>
     PowerRequestResult SetActivePlan(Guid planId);

@@ -324,6 +324,26 @@ public class PowerGateTests
     }
 
     [Fact]
+    public async Task A_state_change_hanging_in_target_resolution_blocks_transitions_until_it_returns()
+    {
+        var r = new Rig();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        r.Probe.ResolveBlock = new SemaphoreSlim(0);
+        var hung = r.Call(r.Probe.Name, new { value = 1 }, cts.Token);
+        await Until(() => r.Gate.State.RunningChanges == 1);
+        await cts.CancelAsync();
+        Assert.Equal(ErrorCodes.Cancelled, (await hung).Error!.Code);
+
+        AssertBusy(await r.Call("power_restart"));
+        Assert.Equal(0, r.Power.Requests);
+
+        r.Probe.ResolveBlock.Release();
+        await Until(() => r.H.Executor.InFlight == 0);
+        Assert.Equal(0, r.Gate.State.RunningChanges);
+        Assert.True((await r.Call("power_lock")).IsSuccess);
+    }
+
+    [Fact]
     public async Task Sleep_is_released_only_by_a_suspend_and_resume_after_its_start_point()
     {
         var r = new Rig();
@@ -475,10 +495,16 @@ public class PowerGateTests
     {
         public Action? Body { get; set; }
 
+        /// <summary>When set, target resolution blocks (ignoring cancellation) like a hung OS call.</summary>
+        public SemaphoreSlim? ResolveBlock { get; set; }
+
         public override ToolDescriptor Descriptor { get; } = new("audio_set_probe", ToolCategories.Audio, "Probe", "Probe", DefaultPolicy.On, false, ["value"]);
 
-        protected override ValueTask<ToolTarget> ResolveTargetAsync(EchoArgs args, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ToolTarget([$"probe:{args.Value}"], null));
+        protected override ValueTask<ToolTarget> ResolveTargetAsync(EchoArgs args, CancellationToken cancellationToken)
+        {
+            ResolveBlock?.Wait(CancellationToken.None);
+            return ValueTask.FromResult(new ToolTarget([$"probe:{args.Value}"], null));
+        }
 
         protected override Task<ToolOutcome<EchoData>> ExecuteAsync(EchoArgs args, ToolExecution execution, CancellationToken cancellationToken)
         {

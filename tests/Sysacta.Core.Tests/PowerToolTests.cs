@@ -331,6 +331,7 @@ public class PowerToolTests
         p2.Plans.Add(new(other, "Other"));
         p2.AfterWrite = _ => other;
         var mismatch = await Call(h2, c2, "power_set_plan", SetPlan(FakePower.Saver));
+        Assert.Equal(ToolStatus.Unknown, mismatch.Status); // something changed, but not to the requested plan
         Assert.Equal(ErrorCodes.VerificationFailed, mismatch.Error!.Code);
         Assert.Equal(1, p2.PlanWrites);
     }

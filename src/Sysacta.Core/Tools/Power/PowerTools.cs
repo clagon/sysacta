@@ -156,7 +156,7 @@ public sealed class PowerListPlansTool(IPower power) : SysactaTool<PowerNoArgs, 
 
     protected override Task<ToolOutcome<PowerPlanList>> ExecuteAsync(PowerNoArgs args, ToolExecution execution, CancellationToken cancellationToken)
     {
-        var all = power.ListPlans(PowerStatus.MaxEnumerated);
+        var all = power.ListPlans(PowerStatus.MaxEnumerated, names: true);
         Guid? active = null;
         try
         {
@@ -234,13 +234,13 @@ public sealed class PowerSetPlanTool(IPower power) : SysactaTool<PowerSetPlanArg
 
         return Task.FromResult(current == requested
             ? new ToolOutcome<PowerSetPlanData>(data, Verification.Verified)
-            : ToolOutcome.Error(data, ErrorCodes.VerificationFailed, "The active power plan read back does not match the requested plan."));
+            : ToolOutcome.Unknown(data, ErrorCodes.VerificationFailed, "The active power plan read back does not match the requested plan."));
     }
 
     /// <summary>The plan must be in the OS's current list exactly once; a truncated list cannot confirm a missing plan.</summary>
     private Guid Listed(Guid id)
     {
-        var all = power.ListPlans(PowerStatus.MaxEnumerated);
+        var all = power.ListPlans(PowerStatus.MaxEnumerated, names: false);
         return all.Plans.Count(p => p.PlanId == id) switch
         {
             1 => id,
@@ -255,6 +255,8 @@ public sealed class PowerSetPlanTool(IPower power) : SysactaTool<PowerSetPlanArg
 /// Shared flow of the four transitions: one non-forced OS request, through <see cref="IPower.Request"/>, whose
 /// privilege preparation completes before the start point. The executor admits these exclusively
 /// (<see cref="ToolDescriptor.Transition"/>, <see cref="PowerTransitionGate"/>).
+/// Rule: after the start point, return <c>ToolOutcome.Error</c> only when the OS definitely did not execute the request;
+/// the executor then releases the gate. Anything uncertain must be unknown or thrown (the gate stays held).
 /// </summary>
 public abstract class PowerTransitionTool(IPower power) : SysactaTool<PowerNoArgs, PowerTransitionData>
 {
